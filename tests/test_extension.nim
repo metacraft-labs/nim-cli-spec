@@ -1,7 +1,7 @@
 ## A consumer attaches its own declarations through the model's extension
 ## slots, and the library parser fills them without knowing what they are.
 ##
-## The extension below is a small documentation vocabulary — ``help = …`` on
+## The extension below is a small documentation vocabulary — ``note = …`` on
 ## parameters, ``summary`` / ``example`` / ``needs`` statements on commands —
 ## chosen because it exercises every part of the hook contract: an argument
 ## the library does not take, a statement the library does not know,
@@ -15,7 +15,7 @@ import clispec
 
 type
   DocParam = object
-    help: string
+    note: string
     secret: bool
 
   DocCommand = object
@@ -29,8 +29,8 @@ type
 proc parseCliParamExtension(ext: var DocParam; kind: CliParamKind;
                             arg: NimNode): bool =
   case cliIdentText(arg[0]).normalize
-  of "help":
-    ext.help = cliStrLit(arg[1], "help")
+  of "note":
+    ext.note = cliStrLit(arg[1], "note")
     true
   of "secret":
     if kind != cpkFlag:
@@ -92,16 +92,16 @@ suite "parameter extension":
 
   const model = docModel:
     call:
-      flag output is string, alias = "-o", help = "where to write",
+      flag output is string, alias = "-o", note = "where to write",
         secret = true, unclaimed = 1
-      pos input is string, help = "what to read", position = 3
+      pos input is string, note = "what to read", position = 3
 
   let cmd = model.commands[0]
 
   test "the hook fills the parameter's extension":
-    check cmd.paramNamed("output").ext.help == "where to write"
+    check cmd.paramNamed("output").ext.note == "where to write"
     check cmd.paramNamed("output").ext.secret
-    check cmd.paramNamed("input").ext.help == "what to read"
+    check cmd.paramNamed("input").ext.note == "what to read"
     check not cmd.paramNamed("input").ext.secret
 
   test "the library still reads its own arguments around the extension's":
@@ -184,7 +184,7 @@ suite "the empty extension":
     const plain = plainCliModel:
       summary "ignored"
       call:
-        flag output is string, help = "ignored"
+        flag output is string, note = "ignored"
     check plain.commands[0].params[0].name == "output"
     check plain.commands[0].params[0].alias == ""
     check ($plain.commands[0].params[0]).contains("ext: ()")

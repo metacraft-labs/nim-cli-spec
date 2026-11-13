@@ -9,5 +9,6 @@ skipDirs      = @["tests"]
 requires "nim >= 2.0.0"
 
 task test, "Run the test suite":
-  for t in ["test_dsl_model", "test_extension"]:
+  for t in ["test_dsl_model", "test_extension", "test_cs_m2_model_round_trip",
+            "test_cs_m2_invalid_declarations_fail_to_compile"]:
     exec "nim c -r --hints:off tests/" & t & ".nim"

@@ -20,8 +20,13 @@ mechanism; read it first.
 - `src/clispec/dsl.nim`: the compile-time parser, the extension hooks'
   contract, and the `cli`-prefixed AST helpers extension hooks use.
 - `tests/`: `test_dsl_model.nim` (every construct of the language parses into
-  the model) and `test_extension.nim` (a consumer extension, driven through
-  the real parser).
+  the model), `test_extension.nim` (a consumer extension, driven through
+  the real parser), `test_cs_m2_model_round_trip.nim` (every named argument a
+  program declares about itself, field by field) and
+  `test_cs_m2_invalid_declarations_fail_to_compile.nim`, which runs
+  `nim check` on each fixture in `tests/fixtures/cs_m2_invalid/` (one invalid
+  line each, marked `# clispec-invalid`, with the expected message in an
+  `## expect:` header) and again with that line removed.
 
 ## Rules
 
@@ -40,7 +45,11 @@ mechanism; read it first.
 - **Tests run the real parser.** Each test feeds a real `cli:` body through
   the compile-time parser and checks the model. A test that expects a
   compile error pairs it with the same body made valid, so the check cannot
-  pass because the body was malformed in some other way.
+  pass because the body was malformed in some other way. A new class of
+  invalid declaration gets a fixture in `tests/fixtures/cs_m2_invalid/`.
+- **Every diagnostic names what it is about.** Errors about a parameter go
+  through `cliParamError` (`clispec: parameter '<name>': ...`); errors about a
+  command name it with `cliCommandLabel`.
 - Every Nim compile keeps its nimcache inside the checkout (`config.nims`).
   The Justfile passes `--skipParentCfg`, so each recipe names its own
   `--nimcache:` under `.nimcache/`.

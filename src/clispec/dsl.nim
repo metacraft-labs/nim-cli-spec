@@ -24,16 +24,62 @@
 ## * Named arguments follow the head. A flag accepts ``alias = "<spelling>"``,
 ##   ``required = true|false``, ``format = separate|concat|equals``,
 ##   ``placement = after|before`` and ``repeated = true|false``. A positional
-##   accepts ``position = <int>`` and ``repeated = true|false``.
+##   accepts ``position = <int>``, ``repeated = true|false`` and
+##   ``required = true|false`` (it is required unless it says otherwise or
+##   has a ``default``).
+## * Every parameter also accepts what a program declares about its own
+##   command line: ``help = "<text>"``, ``default = <expr>``,
+##   ``env = ["NAME", ...]``, ``values = [a, b, c]``,
+##   ``complete = <completer>``, ``key = "<dotted.key>"``,
+##   ``sources = {cli, env, file}``,
+##   ``merge = replace|append|errorOnConflict|<combine proc>``,
+##   ``separator = ","``, ``implies = [<param> = <value>, ...]`` and
+##   ``visibility = shown|internal|hidden``; a flag also ``short = 'x'``,
+##   ``optionalValue = <expr>``, ``negatable = true`` and
+##   ``counted = true``. ``clispec/model`` documents what each one means and
+##   how expressions and configuration keys are kept.
 ## * ``call:`` opens the anonymous command, ``subcmd "<name>":`` a named one;
 ##   both nest. A nested scope sees the parameters its enclosing scopes
-##   declared before it opened.
+##   declared before it opened. The head takes ``help``, ``visibility`` and
+##   (``subcmd`` only) ``aliases = ["<word>", ...]``:
+##   ``subcmd "build", help = "...", aliases = ["b"]:``,
+##   ``call(help = "..."):``.
+## * ``help "<text>"`` as a statement gives the scope's command its help
+##   (the only way to give the root command one).
+## * ``group "<title>"[, help = "<text>"]:`` lists the declarations inside it
+##   under one help heading; it opens no command and changes no scoping.
 ## * A flag declared directly under ``cli:`` is placed before the subcommand
 ##   word (``placement = before``); everywhere else the default is after it.
 ##
 ## Anything else — an unknown statement, or a named argument the parameter
 ## kind does not take — is offered to the consumer's extension (below) and
-## ignored when no extension claims it.
+## ignored when no extension claims it. The library's own words above never
+## reach the extension.
+##
+## Invalid declarations
+## ====================
+##
+## A declaration that cannot mean anything is a compile error that names the
+## parameter (``clispec: parameter '<name>': ...``) or the command: a name
+## declared twice in one command (compared as Nim compares identifiers,
+## inherited parameters included); a ``short``, ``alias`` or ``--<name>``
+## spelling used twice among the flags of one placement; a configuration key
+## used twice in one command; ``default`` or ``optionalValue`` together with
+## ``required = true``; ``key`` when ``sources`` exclude ``file``; ``env``
+## when they exclude ``env``; ``counted`` on a non-integer; ``negatable`` on
+## a non-``bool``; a counted flag that is negatable or has an
+## ``optionalValue``; ``negatable`` or ``counted`` set to anything but
+## ``true`` or ``false``; a flag-only argument on a positional; ``implies``
+## naming no parameter of the command, or the parameter itself; one of the
+## library's arguments given twice; two subcommands of one command answering
+## to the same word; ``aliases`` on ``call:``; and a ``help`` statement
+## inside a ``group`` section.
+##
+## Whether a ``default``, ``optionalValue``, ``values`` entry or ``implies``
+## value is a value of the parameter's type is checked here when the type is
+## a builtin and the value a literal; otherwise it needs the compiler, and
+## ``cliModelTypeChecks`` generates the check as code for the consumer's
+## macro to place in its output (``plainCliModel`` does).
 ##
 ## Extensions
 ## ==========
@@ -261,20 +307,173 @@ proc parseCliParamExtension*(ext: var NoCliExtension; kind: CliParamKind;
   ## The empty extension claims no argument.
   false
 
+# ---------------------------------------------------------------------------
+# Validation helpers.
+# ---------------------------------------------------------------------------
+
+proc cliParamError*(param, message: string; node: NimNode) =
+  ## A compile error about the parameter ``param``. Every diagnostic about a
+  ## parameter goes through here, so each one names it the same way:
+  ## ``clispec: parameter '<name>': <message>``.
+  error("clispec: parameter '" & param & "': " & message, node)
+
+proc cliCommandLabel*(path: seq[string]; isRoot = true): string =
+  ## A command for diagnostics: ``command 'build target'``, ``the root
+  ## command``, or — for a ``call:`` directly under ``cli:``, which has no
+  ## path either — ``the anonymous call: command``.
+  if path.len > 0: "command '" & path.join(" ") & "'"
+  elif isRoot: "the root command"
+  else: "the anonymous call: command"
+
+proc cliExprOf*(node: NimNode): CliExpr =
+  ## Keeps an expression of the description in the model: its source text
+  ## and where it was written (see "Expressions" in ``clispec/model``).
+  let info = node.lineInfoObj()
+  CliExpr(code: node.repr, sourceFile: info.filename, sourceLine: info.line,
+    sourceColumn: info.column)
+
+proc cliStrList(node: NimNode; param, what: string): seq[string] =
+  ## A string literal, or a bracketed list of string literals, each
+  ## non-empty.
+  var items: seq[NimNode] = @[]
+  if node.kind == nnkBracket:
+    for child in node:
+      items.add(child)
+  else:
+    items.add(node)
+  if items.len == 0:
+    cliParamError(param, what & " must name at least one entry", node)
+  for item in items:
+    if item.kind notin {nnkStrLit..nnkTripleStrLit} or item.strVal.len == 0:
+      cliParamError(param, what & " entries must be non-empty string " &
+        "literals, got: " & item.repr, item)
+    result.add(item.strVal)
+
+proc cliSourcesLit(node: NimNode; param: string): set[CliSource] =
+  ## ``{cli, env, file}``.
+  if node.kind notin {nnkCurly, nnkBracket}:
+    cliParamError(param, "sources must be a set such as {cli, env, file}, " &
+      "got: " & node.repr, node)
+  for item in node:
+    case cliIdentText(item).normalize
+    of "cli": result.incl(csCli)
+    of "env": result.incl(csEnv)
+    of "file": result.incl(csFile)
+    else:
+      cliParamError(param, "unknown source '" & item.repr &
+        "' (expected cli, env or file)", item)
+  if result.len == 0:
+    cliParamError(param, "sources must name at least one source", node)
+
+proc cliVisibilityLit*(node: NimNode; owner: string): CliVisibility =
+  ## ``shown`` / ``internal`` / ``hidden``; anything else is a compile error
+  ## naming ``owner``.
+  case cliIdentText(node).normalize
+  of "shown", "cvshown": cvShown
+  of "internal", "cvinternal": cvInternal
+  of "hidden", "cvhidden": cvHidden
+  else:
+    error("clispec: " & owner & ": visibility must be shown, internal or " &
+      "hidden, got: " & node.repr, node)
+
+type
+  TypeClass = enum
+    ## What the parser can tell about a declared type from its spelling.
+    ## ``tcUnknown`` (aliases, enums, user types) is checked by the code
+    ## ``cliModelTypeChecks`` generates instead.
+    tcUnknown, tcBool, tcString, tcChar, tcInt, tcFloat, tcSeq
+
+proc typeClassOf(nimType: string): TypeClass =
+  let t = nimType.strip()
+  if t.startsWith("seq["):
+    return tcSeq
+  case t
+  of "bool": tcBool
+  of "string": tcString
+  of "char": tcChar
+  of "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16",
+     "uint32", "uint64", "Natural", "Positive", "byte":
+    tcInt
+  of "float", "float32", "float64":
+    tcFloat
+  else:
+    tcUnknown
+
+proc literalFits(tc: TypeClass; value: NimNode): bool =
+  ## False only when ``value`` is a literal that certainly is not a value of
+  ## a type of class ``tc``. Expressions, and types the parser cannot
+  ## classify, are left to the generated checks.
+  if tc == tcUnknown:
+    return true
+  case value.kind
+  of nnkStrLit..nnkTripleStrLit:
+    tc == tcString
+  of nnkCharLit:
+    tc == tcChar
+  of nnkIntLit..nnkUInt64Lit:
+    tc in {tcInt, tcFloat}
+  of nnkFloatLit..nnkFloat128Lit:
+    tc == tcFloat
+  of nnkIdent:
+    if ($value).normalize in ["true", "false"]: tc == tcBool
+    else: true
+  of nnkBracket:
+    tc == tcSeq
+  of nnkPrefix:
+    if value.len == 2 and value[0].eqIdent("@") and value[1].kind == nnkBracket:
+      tc == tcSeq
+    else:
+      true
+  else:
+    true
+
+proc requireLiteralFits(param, what, nimType: string; value: NimNode) =
+  if not literalFits(typeClassOf(nimType), value):
+    cliParamError(param, what & " `" & value.repr & "` is not a valid " &
+      nimType, value)
+
+proc strictBoolLit(node: NimNode; param, what: string): bool =
+  ## ``true`` or ``false`` for an argument the library introduced: anything
+  ## else is a compile error rather than a silent fallback, so a typo such as
+  ## ``negatable = yes`` cannot leave the flag quietly unnegatable.
+  if node.kind == nnkIdent:
+    case ($node).normalize
+    of "true": return true
+    of "false": return false
+    else: discard
+  cliParamError(param, what & " must be true or false, got: " & node.repr,
+    node)
+
+proc elementTypeOf(nimType: string): string =
+  ## The element type of a ``seq[T]`` spelling, else the type itself.
+  let t = nimType.strip()
+  if t.startsWith("seq[") and t.endsWith("]"): t[4 .. ^2].strip() else: t
+
+# ---------------------------------------------------------------------------
+# One parameter.
+# ---------------------------------------------------------------------------
+
+const
+  commonParamKeys = ["help", "default", "env", "values", "complete", "key",
+    "sources", "merge", "separator", "implies", "visibility"]
+    ## The named arguments every parameter takes, normalised.
+  flagOnlyParamKeys = ["short", "optionalvalue", "negatable", "counted"]
+    ## The named arguments only a flag takes, normalised.
+
 proc parseCliParam*[P](node: NimNode): CliParam[P] =
   ## Parses one ``pos`` / ``flag`` / ``boolFlag`` declaration. Named
   ## arguments the declaration kind does not take go to the extension hook
   ## ``parseCliParamExtension`` (see the module documentation), and are
-  ## ignored when it does not claim them.
+  ## ignored when it does not claim them. Declarations that cannot mean
+  ## anything are compile errors naming the parameter (see "Invalid
+  ## declarations" in the module documentation).
   mixin parseCliParamExtension
   let kindName = cliCalleeName(node).normalize
   let info = node.lineInfoObj()
-  var headMatched = false
   if kindName == "pos":
     if node.len < 2:
       error("pos requires a parameter name", node)
     let head = parseCliTypedHead(node[1], "pos parameter")
-    headMatched = head.matched
     result.kind = cpkPositional
     result.name = if head.matched: head.name else: cliIdentText(node[1])
     if head.matched:
@@ -288,7 +487,6 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
     if node.len < 2:
       error(kindName & " requires a parameter name", node)
     let head = parseCliTypedHead(node[1], kindName & " parameter")
-    headMatched = head.matched
     result.kind = cpkFlag
     result.name = if head.matched: head.name else: cliIdentText(node[1])
     if kindName == "boolflag":
@@ -305,44 +503,162 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
   else:
     error("unsupported CLI parameter DSL form: " & node.repr, node)
   result.position = 0
-  # The named arguments start after the head: after ``<name> is <Type>``,
-  # or after ``<name>, <Type>`` in the older call spelling. A ``boolFlag``
-  # written without ``is`` therefore has its first argument skipped; that is
-  # how this grammar has always read it, and changing it would change what
-  # existing declarations mean.
-  let optionStart = if headMatched: 2 else: 3
-  for i in optionStart ..< node.len:
+  result.sources = {csFile, csEnv, csCli}
+  let name = result.name
+  # The named arguments start right after the name: the type of the older
+  # call spelling (``flag(<name>, <Type>, ...)``) sits at index 2 but is not
+  # a ``name = value`` node, so the loop passes over it. (Before this
+  # version a ``boolFlag`` written without ``is bool`` lost its first named
+  # argument, because the loop started at index 3 for every form without an
+  # ``is`` head.)
+  var given: seq[string] = @[]
+  var requiredNode: NimNode = nil
+  var keyNode, envNode, defaultNode: NimNode = nil
+  for i in 2 ..< node.len:
     let arg = node[i]
     if arg.kind != nnkExprEqExpr:
       continue
-    let key = cliIdentText(arg[0]).normalize
+    let spelled = cliIdentText(arg[0])
+    let key = spelled.normalize
     let value = arg[1]
+    if key in commonParamKeys or key in flagOnlyParamKeys:
+      if key in given:
+        cliParamError(name, "`" & spelled & "` is given twice", arg)
+      given.add(key)
+      if key in flagOnlyParamKeys and result.kind == cpkPositional:
+        cliParamError(name, "`" & spelled & "` applies to flags only, " &
+          "not to a positional", arg)
     var consumed = true
-    case result.kind
-    of cpkPositional:
-      case key
-      of "position":
-        result.position = cliIntLit(value, result.position)
-      of "repeated":
-        result.repeated = cliBoolLit(value, result.repeated)
+    case key
+    of "help":
+      result.help = cliStrLit(value, "help")
+    of "default":
+      result.default = cliExprOf(value)
+      defaultNode = value
+    of "env":
+      result.env = cliStrList(value, name, "env")
+      envNode = value
+    of "values":
+      if value.kind != nnkBracket or value.len == 0:
+        cliParamError(name, "values must be a non-empty list such as " &
+          "[a, b, c], got: " & value.repr, value)
+      for item in value:
+        requireLiteralFits(name, "values entry", elementTypeOf(result.nimType),
+          item)
+        result.values.add(cliExprOf(item))
+    of "complete":
+      result.complete = cliExprOf(value)
+    of "key":
+      let text = cliStrLit(value, "key")
+      if text.len == 0 or text.startsWith(".") or text.endsWith(".") or
+          ".." in text:
+        cliParamError(name, "key must be a non-empty dotted name such as " &
+          "\"section.name\", got: \"" & text & "\"", value)
+      result.configKey = text
+      result.keyDeclared = true
+      keyNode = value
+    of "sources":
+      result.sources = cliSourcesLit(value, name)
+    of "merge":
+      case cliIdentText(value).normalize
+      of "replace": result.merge = cmrReplace
+      of "append": result.merge = cmrAppend
+      of "erroronconflict": result.merge = cmrErrorOnConflict
       else:
-        consumed = false
-    of cpkFlag:
-      case key
-      of "alias":
-        result.alias = cliStrLit(value, "param alias")
-      of "required":
-        result.required = cliBoolLit(value, result.required)
-      of "format":
-        result.format = cliFormatLit(value, result.format)
-      of "placement":
-        result.placement = cliPlacementLit(value, result.placement)
-      of "repeated":
-        result.repeated = cliBoolLit(value, result.repeated)
-      else:
-        consumed = false
+        result.merge = cmrCombine
+        result.combine = cliExprOf(value)
+    of "separator":
+      result.separator = cliStrLit(value, "separator")
+      if result.separator.len == 0:
+        cliParamError(name, "separator must not be empty", value)
+    of "implies":
+      if value.kind != nnkBracket or value.len == 0:
+        cliParamError(name, "implies must be a non-empty list such as " &
+          "[other = value], got: " & value.repr, value)
+      for item in value:
+        if item.kind != nnkExprEqExpr or
+            item[0].kind notin {nnkIdent, nnkSym, nnkAccQuoted}:
+          cliParamError(name, "implies entries are written " &
+            "<parameter> = <value>, got: " & item.repr, item)
+        result.implies.add(CliImplication(param: cliIdentText(item[0]),
+          value: cliExprOf(item[1])))
+    of "visibility":
+      result.visibility = cliVisibilityLit(value, "parameter '" & name & "'")
+    of "short":
+      if value.kind != nnkCharLit or
+          char(value.intVal) notin {'a'..'z', 'A'..'Z', '0'..'9'}:
+        cliParamError(name, "short must be a letter or digit character " &
+          "literal such as 'v', got: " & value.repr, value)
+      result.short = char(value.intVal)
+    of "optionalvalue":
+      requireLiteralFits(name, "optionalValue", result.nimType, value)
+      result.optionalValue = cliExprOf(value)
+    of "negatable":
+      result.negatable = strictBoolLit(value, name, spelled)
+    of "counted":
+      result.counted = strictBoolLit(value, name, spelled)
+    of "required":
+      # Both kinds take ``required``: a flag is optional and a positional
+      # required unless it says otherwise. The value is read leniently, as
+      # it always has been for flags, so no existing declaration changes
+      # meaning.
+      result.required = cliBoolLit(value, result.required)
+      requiredNode = arg
+    else:
+      case result.kind
+      of cpkPositional:
+        case key
+        of "position":
+          result.position = cliIntLit(value, result.position)
+        of "repeated":
+          result.repeated = cliBoolLit(value, result.repeated)
+        else:
+          consumed = false
+      of cpkFlag:
+        case key
+        of "alias":
+          result.alias = cliStrLit(value, "param alias")
+        of "format":
+          result.format = cliFormatLit(value, result.format)
+        of "placement":
+          result.placement = cliPlacementLit(value, result.placement)
+        of "repeated":
+          result.repeated = cliBoolLit(value, result.repeated)
+        else:
+          consumed = false
     if not consumed:
       discard parseCliParamExtension(result.ext, result.kind, arg)
+
+  # Combinations that cannot mean anything.
+  if result.default.isSet:
+    requireLiteralFits(name, "default", result.nimType, defaultNode)
+    if result.required and not requiredNode.isNil:
+      cliParamError(name, "`default` and `required = true` are mutually " &
+        "exclusive: a required parameter never takes its default",
+        requiredNode)
+    # A positional with a default is optional (a flag already is).
+    result.required = false
+  if result.optionalValue.isSet and result.required:
+    cliParamError(name, "`optionalValue` and `required = true` are " &
+      "mutually exclusive: a required flag always has a value",
+      if requiredNode.isNil: node else: requiredNode)
+  if result.keyDeclared and csFile notin result.sources:
+    cliParamError(name, "`key` names a configuration-file key, but " &
+      "`sources` exclude file", keyNode)
+  if result.env.len > 0 and csEnv notin result.sources:
+    cliParamError(name, "`env` names environment variables, but `sources` " &
+      "exclude env", envNode)
+  let tc = typeClassOf(result.nimType)
+  if result.counted and tc notin {tcUnknown, tcInt}:
+    cliParamError(name, "counted requires an integer type, not " &
+      result.nimType, node)
+  if result.negatable and tc notin {tcUnknown, tcBool}:
+    cliParamError(name, "negatable requires bool, not " & result.nimType, node)
+  if result.counted and result.negatable:
+    cliParamError(name, "a counted flag cannot also be negatable", node)
+  if result.counted and result.optionalValue.isSet:
+    cliParamError(name, "a counted flag takes no value, so it cannot have " &
+      "an optionalValue", node)
   result.sourceFile = info.filename
   result.sourceLine = info.line
 
@@ -376,17 +692,230 @@ proc parseCliCommandExtension*[P](cmd: var CliCommand[NoCliExtension, P];
   ## The empty command extension claims no statement.
   false
 
-proc parseCliScope*[C, P](body: NimNode; path: seq[string]; isRoot: bool;
+type
+  CliCommandHeader = object
+    ## What a ``subcmd`` / ``call`` head says about the command it opens.
+    help: string
+    aliases: seq[string]
+    visibility: CliVisibility
+
+proc flagSpellings(param: CliParam): seq[string] =
+  ## The spellings a flag answers to, for collision checks: its canonical
+  ## ``--<name>``, its ``alias`` (without a trailing ``=``) and ``-<short>``.
+  if param.kind != cpkFlag:
+    return
+  result.add("--" & param.name)
+  var alias = param.alias
+  while alias.endsWith("="):
+    alias.setLen(alias.len - 1)
+  if alias.len > 0 and alias notin result:
+    result.add(alias)
+  if param.short != '\0' and ("-" & param.short) notin result:
+    result.add("-" & param.short)
+
+proc checkNewParam[P](params: seq[CliParam[P]]; param: CliParam[P];
+                      label: string; node: NimNode) =
+  ## ``param`` is about to join ``params`` (what its command already sees):
+  ## its name, spellings and configuration key must be its own.
+  let normName = nimIdentNormalize(param.name)
+  let mine = flagSpellings(param)
+  for other in params:
+    let where = " (" & other.sourceFile & ":" & $other.sourceLine & ")"
+    if nimIdentNormalize(other.name) == normName:
+      cliParamError(param.name, "declared twice in " &
+        label & "; the other declaration is '" & other.name &
+        "'" & where, node)
+    if param.kind == cpkFlag and other.kind == cpkFlag and
+        param.placement == other.placement:
+      if param.short != '\0' and param.short == other.short:
+        cliParamError(param.name, "short '-" & param.short &
+          "' is already used by '" & other.name & "' in " &
+          label & where, node)
+      for spelling in flagSpellings(other):
+        if spelling in mine:
+          cliParamError(param.name, "spelling '" & spelling &
+            "' is already used by '" & other.name & "' in " &
+            label & where, node)
+    if param.configKey.len > 0 and param.configKey == other.configKey:
+      cliParamError(param.name, "configuration key '" & param.configKey &
+        "' is already used by '" & other.name & "' in " &
+        label & where, node)
+
+proc noteGroup(groups: var seq[CliGroup]; name, help: string; node: NimNode) =
+  ## Records a ``group`` section. A group may be opened in several scopes;
+  ## its help, given once or given identically, is the group's.
+  for group in groups.mitems:
+    if group.name == name:
+      if help.len > 0:
+        if group.help.len > 0 and group.help != help:
+          error("clispec: group '" & name & "' is given two different " &
+            "help texts (the other at " & group.sourceFile & ":" &
+            $group.sourceLine & ")", node)
+        group.help = help
+      return
+  let info = node.lineInfoObj()
+  groups.add(CliGroup(name: name, help: help, sourceFile: info.filename,
+    sourceLine: info.line))
+
+proc parseCommandHeader(stmt: NimNode; isCall: bool;
+                        path: seq[string]): CliCommandHeader =
+  ## The named arguments of ``subcmd "<name>", ...:`` or ``call(...):``.
+  ## Arguments the library does not know are ignored, as always.
+  let label = cliCommandLabel(path, isRoot = false)
+  let first = if isCall: 1 else: 2
+  var given: seq[string] = @[]
+  for i in first ..< stmt.len - 1:
+    let arg = stmt[i]
+    if arg.kind != nnkExprEqExpr:
+      continue
+    let key = cliIdentText(arg[0]).normalize
+    if key in ["help", "aliases", "visibility"]:
+      if key in given:
+        error("clispec: " & label & ": `" & cliIdentText(arg[0]) &
+          "` is given twice", arg)
+      given.add(key)
+    case key
+    of "help":
+      result.help = cliStrLit(arg[1], "help")
+    of "aliases":
+      if isCall:
+        error("clispec: " & label & ": the anonymous `call:` command has " &
+          "no command word, so it cannot have aliases", arg)
+      var items: seq[NimNode] = @[]
+      if arg[1].kind == nnkBracket:
+        for child in arg[1]:
+          items.add(child)
+      else:
+        items.add(arg[1])
+      if items.len == 0:
+        error("clispec: " & label & ": aliases must name at least one " &
+          "spelling", arg)
+      for item in items:
+        if item.kind notin {nnkStrLit..nnkTripleStrLit} or
+            item.strVal.len == 0:
+          error("clispec: " & label & ": aliases entries must be " &
+            "non-empty string literals, got: " & item.repr, item)
+        result.aliases.add(item.strVal)
+    of "visibility":
+      result.visibility = cliVisibilityLit(arg[1], label)
+    else:
+      discard
+
+proc nodeAt(file: string; line: int): NimNode =
+  ## A node that carries only a source position, for a diagnostic about a
+  ## declaration whose AST is no longer at hand.
+  result = newEmptyNode()
+  result.setLineInfo(file, line, 0)
+
+type
+  ScopeContext = object
+    ## What every statement of one scope shares.
+    isRoot: bool
+    path: seq[string]
+    wholeBody: NimNode
+
+proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
                           parent: CliCommand[C, P]; wholeBody: NimNode;
-                          commands: var seq[CliCommand[C, P]]):
-    CliCommand[C, P] =
-  ## Parses one scope — the root ``cli:`` body, or a ``call:`` /
-  ## ``subcmd`` body — in source order and returns its command. The scope
-  ## starts from ``parent``'s parameters and extension (what the enclosing
-  ## scope had declared when this one opened). Every nested scope is
-  ## appended to ``commands`` after the scopes nested inside it; the root is
-  ## not appended.
+                          header: CliCommandHeader;
+                          commands: var seq[CliCommand[C, P]];
+                          groups: var seq[CliGroup]): CliCommand[C, P]
+
+proc addScopeParam[C, P](cmd: var CliCommand[C, P]; stmt: NimNode;
+                         group: string; ctx: ScopeContext) =
+  ## Parses a parameter declaration of the scope and adds it to ``cmd``,
+  ## with what only the scope knows: its placement under ``cli:``, its group,
+  ## the declaring path and the configuration key derived from it.
+  var param = parseCliParam[P](stmt)
+  if ctx.isRoot and param.kind == cpkFlag:
+    param.placement = capBeforeSubcommand
+  param.group = group
+  param.declaredIn = ctx.path
+  if csFile notin param.sources:
+    param.configKey = ""
+  elif not param.keyDeclared:
+    param.configKey = (ctx.path & @[param.name]).join(".")
+  checkNewParam(cmd.params, param, cliCommandLabel(ctx.path, ctx.isRoot),
+    stmt)
+  cmd.params.add(param)
+
+proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
+                     group: string; ctx: ScopeContext;
+                     commands: var seq[CliCommand[C, P]];
+                     groups: var seq[CliGroup]; helpGiven: var bool;
+                     childWords: var seq[tuple[word, owner: string]]) =
+  ## Reads the statements of a scope (or of a ``group`` inside it) in
+  ## source order.
   mixin parseCliCommandExtension
+  for stmt in stmts:
+    let head = cliCalleeName(stmt).normalize
+    case head
+    of "pos", "flag", "boolflag":
+      addScopeParam(cmd, stmt, group, ctx)
+    of "call", "subcmd":
+      let isCall = head == "call"
+      if stmt.len < 2 or stmt[^1].kind != nnkStmtList or
+          (not isCall and stmt.len < 3):
+        error("clispec: " & head & " requires " &
+          (if isCall: "a body" else: "a name and a body"), stmt)
+      let childName = if isCall: "" else: cliNameLit(stmt[1])
+      var childPath = ctx.path
+      if childName.len > 0:
+        childPath.add(childName)
+      let childHeader = parseCommandHeader(stmt, isCall, childPath)
+      if not isCall:
+        for word in @[childName] & childHeader.aliases:
+          for seen in childWords:
+            if seen.word == word:
+              error("clispec: " & cliCommandLabel(childPath) &
+                ": the word '" & word & "' is already used by " &
+                cliCommandLabel(ctx.path & @[seen.owner]), stmt)
+          childWords.add((word, childName))
+      discard parseScopeImpl[C, P](stmt[^1], childPath, false, cmd,
+        ctx.wholeBody, childHeader, commands, groups)
+    of "group":
+      if group.len > 0:
+        error("clispec: group '" & group & "' cannot contain another " &
+          "group", stmt)
+      if stmt.len < 3 or stmt[^1].kind != nnkStmtList or
+          stmt[1].kind notin {nnkStrLit..nnkTripleStrLit} or
+          stmt[1].strVal.len == 0:
+        error("clispec: group is written group \"<title>\"[, help = " &
+          "\"<text>\"]: <declarations>", stmt)
+      let title = stmt[1].strVal
+      var groupHelp = ""
+      for i in 2 ..< stmt.len - 1:
+        let helpValue = cliNamedArg(stmt[i], "help")
+        if not helpValue.isNil:
+          groupHelp = cliStrLit(helpValue, "group help")
+      noteGroup(groups, title, groupHelp, stmt)
+      walkScope[C, P](cmd, stmt[^1], title, ctx, commands, groups, helpGiven,
+        childWords)
+    of "help":
+      if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2:
+        error("clispec: help is written help \"<text>\"", stmt)
+      if group.len > 0:
+        # Inside a section the statement would read as the section's help
+        # but give the command its help; the section's own help goes in its
+        # head.
+        error("clispec: help inside group '" & group & "' would describe " &
+          cliCommandLabel(ctx.path, ctx.isRoot) & "; give the group its " &
+          "help as group \"" & group & "\", help = \"<text>\":", stmt)
+      if cmd.help.len > 0 or helpGiven:
+        error("clispec: " & cliCommandLabel(ctx.path, ctx.isRoot) &
+          " is given help " &
+          "twice", stmt)
+      cmd.help = cliStrLit(stmt[1], "help")
+      helpGiven = true
+    else:
+      discard parseCliCommandExtension(cmd, stmt,
+        CliScope(isRoot: ctx.isRoot, path: ctx.path,
+          wholeBody: ctx.wholeBody))
+
+proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
+                          parent: CliCommand[C, P]; wholeBody: NimNode;
+                          header: CliCommandHeader;
+                          commands: var seq[CliCommand[C, P]];
+                          groups: var seq[CliGroup]): CliCommand[C, P] =
   let info = body.lineInfoObj()
   result.sourceFile = info.filename
   result.sourceLine = info.line
@@ -394,28 +923,60 @@ proc parseCliScope*[C, P](body: NimNode; path: seq[string]; isRoot: bool;
   result.name = if path.len == 0: "" else: path[^1]
   result.params = parent.params
   result.ext = parent.ext
-  for stmt in body:
-    let head = cliCalleeName(stmt).normalize
-    case head
-    of "pos":
-      result.params.add(parseCliParam[P](stmt))
-    of "flag", "boolflag":
-      var param = parseCliParam[P](stmt)
-      if isRoot:
-        param.placement = capBeforeSubcommand
-      result.params.add(param)
-    of "call", "subcmd":
-      let childName = if head == "call": "" else: cliNameLit(stmt[1])
-      var childPath = path
-      if childName.len > 0:
-        childPath.add(childName)
-      discard parseCliScope(stmt[stmt.len - 1], childPath, false, result,
-        wholeBody, commands)
-    else:
-      discard parseCliCommandExtension(result, stmt,
-        CliScope(isRoot: isRoot, path: path, wholeBody: wholeBody))
+  result.help = header.help
+  result.aliases = header.aliases
+  result.visibility = header.visibility
+  let inherited = parent.params.len
+  var helpGiven = false
+  # The subcommand words opened in this scope (names and aliases), each with
+  # the subcommand that owns it, for the collision check.
+  var childWords: seq[tuple[word, owner: string]] = @[]
+  walkScope[C, P](result, body, "",
+    ScopeContext(isRoot: isRoot, path: path, wholeBody: wholeBody),
+    commands, groups, helpGiven, childWords)
+
+  # ``implies`` may name any parameter the implying one's command sees once
+  # its scope is complete, but not itself.
+  for i in inherited ..< result.params.len:
+    let param = result.params[i]
+    for implication in param.implies:
+      if nimIdentNormalize(implication.param) == nimIdentNormalize(param.name):
+        error("clispec: parameter '" & param.name & "': implies itself",
+          nodeAt(param.sourceFile, param.sourceLine))
+      var found = false
+      for other in result.params:
+        if nimIdentNormalize(other.name) ==
+            nimIdentNormalize(implication.param):
+          found = true
+          break
+      if not found:
+        error("clispec: parameter '" & param.name & "': implies '" &
+          implication.param & "', which is not a parameter of " &
+          cliCommandLabel(path, isRoot),
+          nodeAt(param.sourceFile, param.sourceLine))
   if not isRoot:
     commands.add(result)
+
+proc parseCliScope*[C, P](body: NimNode; path: seq[string]; isRoot: bool;
+                          parent: CliCommand[C, P]; wholeBody: NimNode;
+                          commands: var seq[CliCommand[C, P]];
+                          groups: var seq[CliGroup]): CliCommand[C, P] =
+  ## Parses one scope — the root ``cli:`` body, or a ``call:`` /
+  ## ``subcmd`` body — in source order and returns its command. The scope
+  ## starts from ``parent``'s parameters and extension (what the enclosing
+  ## scope had declared when this one opened). Every nested scope is
+  ## appended to ``commands`` after the scopes nested inside it; the root is
+  ## not appended. ``group`` sections are recorded in ``groups``.
+  parseScopeImpl[C, P](body, path, isRoot, parent, wholeBody,
+    CliCommandHeader(), commands, groups)
+
+proc parseCliScope*[C, P](body: NimNode; path: seq[string]; isRoot: bool;
+                          parent: CliCommand[C, P]; wholeBody: NimNode;
+                          commands: var seq[CliCommand[C, P]]):
+    CliCommand[C, P] =
+  ## ``parseCliScope`` for a caller that does not keep ``group`` sections.
+  var groups: seq[CliGroup] = @[]
+  parseCliScope[C, P](body, path, isRoot, parent, wholeBody, commands, groups)
 
 proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
   ## Parses a whole ``cli:`` body. ``rootExt`` is the root command's
@@ -424,17 +985,123 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
   var root: CliCommand[C, P]
   root.ext = rootExt
   result.root = parseCliScope[C, P](body, @[], true, root, body,
-    result.commands)
+    result.commands, result.groups)
+
+# ---------------------------------------------------------------------------
+# Type checks of the expressions a model holds.
+# ---------------------------------------------------------------------------
+
+template cliAccepts*(T: typedesc; value: untyped): bool =
+  ## Whether ``value`` is a valid value of ``T``. Used by the checks
+  ## ``cliModelTypeChecks`` generates.
+  compiles((block:
+    let clispecProbe {.used.}: T = value
+    clispecProbe))
+
+template cliElementAccepts*(T: typedesc; value: untyped): bool =
+  ## Whether ``value`` is a valid element of ``T`` when ``T`` is a
+  ## collection (other than ``string``), else a valid ``T``. ``values``
+  ## entries of a list parameter are elements.
+  when T is string:
+    cliAccepts(T, value)
+  elif compiles((for clispecItem in default(T): discard)):
+    cliAccepts(typeof(items(default(T)), typeOfIter), value)
+  else:
+    cliAccepts(T, value)
+
+proc failWhenNot(cond: NimNode; message: string; file: string; line,
+                 column: int): NimNode =
+  ## ``when not cond: {.error: message.}``, reported at ``file:line``.
+  let pragma = nnkPragma.newTree(nnkExprColonExpr.newTree(ident("error"),
+    newLit(message)))
+  pragma.setLineInfo(file, line, column)
+  result = nnkWhenStmt.newTree(nnkElifBranch.newTree(
+    nnkPrefix.newTree(ident("not"), nnkPar.newTree(cond)),
+    newStmtList(pragma)))
+  result.setLineInfo(file, line, column)
+
+proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
+  ## Code that checks, where it is placed, what the parser cannot check from
+  ## spellings alone: that ``default``, ``optionalValue``, ``values`` entries
+  ## and ``implies`` values are values of their parameter's type, that a
+  ## ``counted`` parameter is an integer and that a ``negatable`` one is a
+  ## ``bool``. Each failing check is a compile error naming the parameter,
+  ## reported where the offending argument was written. A macro that builds
+  ## a model places these checks in its output, in the scope where the
+  ## description's types are visible (``plainCliModel`` does). The checks
+  ## call ``cliAccepts`` and ``cliElementAccepts``, so that scope must see
+  ## ``clispec/dsl``.
+  result = newStmtList()
+  var seen: seq[string] = @[]
+  var scopes = @[model.root]
+  scopes.add(model.commands)
+  for cmd in scopes:
+    for param in cmd.params:
+      let id = param.sourceFile & ":" & $param.sourceLine & ":" & param.name
+      if id in seen:
+        continue
+      seen.add(id)
+      let name = param.name
+      let prefix = "clispec: parameter '" & name & "': "
+      let typeNode = parseExpr(param.nimType)
+      if param.default.isSet:
+        let d = param.default
+        result.add(failWhenNot(newCall(bindSym("cliAccepts"), typeNode,
+          parseExpr(d.code)), prefix & "default `" & d.code &
+          "` is not a valid " & param.nimType, d.sourceFile, d.sourceLine,
+          d.sourceColumn))
+      if param.optionalValue.isSet:
+        let o = param.optionalValue
+        result.add(failWhenNot(newCall(bindSym("cliAccepts"), typeNode,
+          parseExpr(o.code)), prefix & "optionalValue `" & o.code &
+          "` is not a valid " & param.nimType, o.sourceFile, o.sourceLine,
+          o.sourceColumn))
+      for v in param.values:
+        result.add(failWhenNot(newCall(bindSym("cliElementAccepts"),
+          typeNode, parseExpr(v.code)), prefix & "values entry `" & v.code &
+          "` is not a valid value of " & param.nimType, v.sourceFile,
+          v.sourceLine, v.sourceColumn))
+      for implication in param.implies:
+        var targetType = ""
+        for other in cmd.params:
+          if nimIdentNormalize(other.name) ==
+              nimIdentNormalize(implication.param):
+            targetType = other.nimType
+        if targetType.len == 0:
+          continue
+        let v = implication.value
+        result.add(failWhenNot(newCall(bindSym("cliAccepts"),
+          parseExpr(targetType), parseExpr(v.code)), prefix & "implies " &
+          implication.param & " = `" & v.code & "`, which is not a valid " &
+          targetType & " (the type of '" & implication.param & "')",
+          v.sourceFile, v.sourceLine, v.sourceColumn))
+      if param.counted:
+        result.add(failWhenNot(infix(typeNode, "is", ident("SomeInteger")),
+          prefix & "counted requires an integer type, not " & param.nimType,
+          param.sourceFile, param.sourceLine, 0))
+      if param.negatable:
+        result.add(failWhenNot(infix(typeNode, "is", ident("bool")),
+          prefix & "negatable requires bool, not " & param.nimType,
+          param.sourceFile, param.sourceLine, 0))
 
 macro plainCliModel*(body: untyped): untyped =
-  ## The model of a ``cli:`` body with no extension, as a constant:
+  ## The model of a ``cli:`` body with no extension, as a constant, after
+  ## the type checks of ``cliModelTypeChecks``:
   ##
   ## .. code-block:: nim
   ##   const model = plainCliModel:
   ##     subcmd "run":
   ##       pos script is string
-  newLit(parseCliModel[NoCliExtension, NoCliExtension](body,
-    NoCliExtension()))
+  let model = parseCliModel[NoCliExtension, NoCliExtension](body,
+    NoCliExtension())
+  let checks = cliModelTypeChecks(model)
+  if checks.len == 0:
+    result = newLit(model)
+  else:
+    result = nnkStmtListExpr.newTree()
+    for check in checks:
+      result.add(check)
+    result.add(newLit(model))
 
 # ---------------------------------------------------------------------------
 # Parameter groups.
@@ -448,7 +1115,14 @@ proc collectCliParamGroup*(node: NimNode):
   ##
   ## .. code-block:: nim
   ##   template commonFlags() =
+  ##     help "Options every command takes"
   ##     boolFlag verbose is bool, alias = "-v"
+  ##
+  ## When the body starts with a ``help "<text>"`` statement, the group is
+  ## also a help section: its declarations come back wrapped in one
+  ## ``group "<template name>", help = "<text>":`` statement, so the
+  ## parameters it declares carry the group in the model. A group without
+  ## ``help`` expands to its bare declarations.
   if node.kind != nnkTemplateDef:
     error("CLI parameter group must be a template definition", node)
   result.name = cliIdentText(node[0]).normalize
@@ -457,15 +1131,33 @@ proc collectCliParamGroup*(node: NimNode):
   let body = node[^1]
   if body.kind != nnkStmtList:
     error("CLI parameter group template must contain a statement body", body)
-  for stmt in body:
-    result.statements.add(stmt)
+  var first = 0
+  var help = ""
+  if body.len > 0 and cliCalleeName(body[0]).normalize == "help":
+    if body[0].len != 2:
+      error("clispec: help is written help \"<text>\"", body[0])
+    help = cliStrLit(body[0][1], "group help")
+    first = 1
+  if help.len == 0:
+    for stmt in body:
+      result.statements.add(stmt)
+  else:
+    var inner = newStmtList()
+    for i in first ..< body.len:
+      inner.add(body[i])
+    let wrapper = nnkCommand.newTree(ident("group"),
+      newLit(cliIdentText(node[0])),
+      nnkExprEqExpr.newTree(ident("help"), newLit(help)), inner)
+    wrapper.copyLineInfo(body[0])
+    result.statements.add(wrapper)
 
 proc expandCliParamGroups*(stmt: NimNode; groups: CliParamGroups;
                            stack: var seq[string]): seq[NimNode] =
   ## ``stmt`` itself, or — when it names a group (``commonFlags()``) — the
-  ## group's statements, with nested groups expanded. ``stack`` holds the
-  ## groups being expanded, so a group that includes itself is a compile
-  ## error instead of an endless expansion.
+  ## group's statements, with nested groups expanded (inside a ``group``
+  ## section too). ``stack`` holds the groups being expanded, so a group
+  ## that includes itself is a compile error instead of an endless
+  ## expansion.
   let groupName = cliCalleeName(stmt).normalize
   if groupName.len > 0 and groups.hasKey(groupName) and stmt.len == 1:
     if stack.find(groupName) >= 0:
@@ -475,5 +1167,16 @@ proc expandCliParamGroups*(stmt: NimNode; groups: CliParamGroups;
       for expandedStmt in expandCliParamGroups(groupedStmt, groups, stack):
         result.add(expandedStmt)
     discard stack.pop()
+  elif groupName == "group" and stmt.len >= 3 and
+      stmt[^1].kind == nnkStmtList:
+    var copy = stmt.copyNimNode()
+    for i in 0 ..< stmt.len - 1:
+      copy.add(stmt[i])
+    var body = newStmtList()
+    for inner in stmt[^1]:
+      for expandedStmt in expandCliParamGroups(inner, groups, stack):
+        body.add(expandedStmt)
+    copy.add(body)
+    result.add(copy)
   else:
     result.add(stmt)

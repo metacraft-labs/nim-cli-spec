@@ -21,7 +21,7 @@ alias fmt := format
 src-paths := "--path:src"
 nim-flags := "--skipParentCfg --skipUserCfg --hints:off"
 nimcache := ".nimcache"
-tests := "test_dsl_model test_extension"
+tests := "test_dsl_model test_extension test_cs_m2_model_round_trip test_cs_m2_invalid_declarations_fail_to_compile"
 
 # Compile every test module without running it.
 build:

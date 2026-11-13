@@ -129,8 +129,12 @@ suite "flag-only and positional-only arguments":
     let p = cmd.paramNamed("input")
     check p.alias == ""
     check p.format == cafSeparate
-    check p.required
     check p.placement == capAfterSubcommand
+
+  test "a positional reads required":
+    # ``required`` is not flag-only: a positional is required unless it says
+    # ``required = false`` (or has a default).
+    check not cmd.paramNamed("input").required
 
   test "a flag ignores position":
     check cmd.paramNamed("mode").position == 0
