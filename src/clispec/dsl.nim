@@ -109,7 +109,7 @@
 ## that forgets one gets a compile error naming the hook, not a silent
 ## no-op. ``NoCliExtension`` has both hooks, returning ``false``.
 
-import std/[macros, strutils, tables]
+import std/[macros, options, strutils, tables]
 
 import ./model
 
@@ -698,6 +698,7 @@ type
     help: string
     aliases: seq[string]
     visibility: CliVisibility
+    anonymous: bool
 
 proc flagSpellings(param: CliParam): seq[string] =
   ## The spellings a flag answers to, for collision checks: its canonical
@@ -762,6 +763,7 @@ proc parseCommandHeader(stmt: NimNode; isCall: bool;
   ## The named arguments of ``subcmd "<name>", ...:`` or ``call(...):``.
   ## Arguments the library does not know are ignored, as always.
   let label = cliCommandLabel(path, isRoot = false)
+  result.anonymous = isCall
   let first = if isCall: 1 else: 2
   var given: seq[string] = @[]
   for i in first ..< stmt.len - 1:
@@ -926,6 +928,8 @@ proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
   result.help = header.help
   result.aliases = header.aliases
   result.visibility = header.visibility
+  result.anonymous = header.anonymous
+  result.depth = if isRoot: 0 else: parent.depth + 1
   let inherited = parent.params.len
   var helpGiven = false
   # The subcommand words opened in this scope (names and aliases), each with
@@ -1001,9 +1005,13 @@ template cliAccepts*(T: typedesc; value: untyped): bool =
 template cliElementAccepts*(T: typedesc; value: untyped): bool =
   ## Whether ``value`` is a valid element of ``T`` when ``T`` is a
   ## collection (other than ``string``), else a valid ``T``. ``values``
-  ## entries of a list parameter are elements.
+  ## entries of a list parameter are elements, and those of an ``Option``
+  ## parameter are values of the type it holds (``values = [1, 2]`` for an
+  ## ``Option[int]``), which is how the generated parser checks them.
   when T is string:
     cliAccepts(T, value)
+  elif T is Option:
+    cliAccepts(typeof(default(T).get()), value)
   elif compiles((for clispecItem in default(T): discard)):
     cliAccepts(typeof(items(default(T)), typeOfIter), value)
   else:

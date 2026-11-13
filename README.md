@@ -1,8 +1,7 @@
 # nim-cli-spec
 
 Clispec is a Nim library for describing a command line once, declaratively,
-and deriving everything else from that description. This release provides the
-first two layers:
+and deriving everything else from that description. This release provides:
 
 - **`clispec/model`**: a typed model of a command tree: commands and
   subcommands with their aliases, help and visibility; positional parameters
@@ -11,13 +10,19 @@ first two layers:
   value sets, completers and implications.
 - **`clispec/dsl`**: the `cli:` description language, parsed at compile time
   into that model.
+- **`clispec/program`**: `cliProgram`, which generates from a description a
+  typed configuration object, the parser that fills it from argv, and help
+  text in human-readable and machine-readable (JSON) form. The run-time
+  pieces it generates code for are `clispec/grammar` (the parser's tables),
+  `clispec/parser`, `clispec/help`, `clispec/values` (text to typed values)
+  and `clispec/errors` (the usage-error taxonomy).
 
-The layers planned on top of the model generate code from it: a typed
-configuration object, an argv parser, help text, shell completion and layered
-loading of configuration files, with a record of where every value came from.
-Clispec is meant to replace [confutils](https://github.com/status-im/nim-confutils)
-for programs that describe their own command line. It also describes the
-command lines of external tools that a program runs.
+The layers planned next are shell completion and layered loading of
+configuration files and the environment, with a record of where every value
+came from. Clispec is meant to replace
+[confutils](https://github.com/status-im/nim-confutils) for programs that
+describe their own command line. It also describes the command lines of
+external tools that a program runs.
 
 ## The `cli:` language
 
@@ -170,6 +175,219 @@ template commonFlags() =
 A group whose body starts with `help "<text>"` is also a help section: it
 expands into a `group "<template name>", help = "<text>":` section, so the
 parameters it declares carry the group in the model.
+
+## A program's own command line
+
+`cliProgram` turns a description into a configuration object type and the
+procedures that fill it, in the style of confutils: you declare the command
+line once and get back a fully populated, typed value.
+
+```nim
+import std/options
+import clispec
+
+type Color = enum red, green, blue
+
+cliProgram(Tool, "tool"):
+  help "Builds things"
+  boolFlag verbose is bool, short = 'v', negatable = true, help = "Talk more"
+  flag quiet is int, counted = true, short = 'q', help = "Talk less"
+  subcmd "build", help = "Build a project", aliases = ["b"]:
+    flag jobs is int, short = 'j', default = 4, implies = [verbose = true],
+      help = "Parallel jobs"
+    flag color is Color, default = green
+    flag tags is seq[string], separator = ",", values = ["fast", "safe"]
+    flag report is string, optionalValue = "report.json"
+    flag limit is Option[int]
+    pos target is string, help = "What to build"
+  subcmd "run", help = "Run a script":
+    call:
+      pos script is string
+      pos args is seq[string], repeated = true, required = false
+
+let conf = Tool.load(@["-v", "build", "-j8", "--tags=fast,safe", "--report",
+  "app"])
+assert conf.verbose and conf.command == ToolCommand.build
+assert conf.build.jobs == 8 and conf.build.color == green
+assert conf.build.tags == @["fast", "safe"]
+assert conf.build.report == "report.json" and conf.build.target == "app"
+assert conf.build.limit.isNone
+
+let run = Tool.load(@["-qq", "run", "x.sh", "--", "-n"])
+assert run.quiet == 2 and run.run.script == "x.sh" and run.run.args == @["-n"]
+
+# In a real program: `Tool.load()` reads the process's arguments.
+proc main(argv: seq[string]): int =
+  try:
+    let conf = Tool.load(argv)
+    discard conf # ... run the program ...
+  except CliHelpRequest as e:
+    stdout.write e.text
+  except CliUsageError as e:
+    stderr.writeLine "tool: ", e.msg
+    return e.exitCode
+
+assert main(@["build", "--jobs", "many", "app"]) == 2
+assert main(@["--help"]) == 0
+```
+
+### The configuration object
+
+Each command gets an object type with one field per parameter it declares,
+named and typed as declared: the root's is the name given to `cliProgram`
+(`Tool`), a subcommand's is its parent's name followed by its word in
+CamelCase (`ToolBuild`; `debug-dump` would be `ToolDebugDump`). A command
+with subcommands holds the chosen one in a case object: a discriminator
+`command` of the pure enum `<Type>Command`, with one value per subcommand
+word in camelCase, and a branch field of the same name holding that
+subcommand's object. Subcommands are nested objects rather than fields of
+one flat case object because Nim requires field names to be unique across
+all branches, and two subcommands may well both declare `--output`; the case
+branch keeps only the chosen subcommand's object in existence. A `call:`
+adds its parameters to the object of the command holding it when that
+command has no subcommands (`run` above); next to subcommands it is one more
+branch, `call`, of type `<Type>Call`. A parameter is a field of the command
+that declares it, even though nested commands accept it too.
+
+A field holds the value from the command line, else the value that an
+`implies` of a parameter given on the command line sets (the first such, in
+declaration order; implications do not chain), else its `default`, else the
+type's zero value (`none` for an `Option`). A `required` parameter that gets
+no value is a usage error. Supported types are `string`, `bool`, `char`,
+every integer and float type (range types included, bounds checked), enums,
+distinct types over these (`std/paths.Path`), `Option[T]` and `seq[T]`.
+Declare `proc parseCliValue(text: string; value: var YourType)` (raising
+`CliValueError`) to support another. `values` entries must be constant
+expressions; those of a `seq[T]` or `Option[T]` parameter are values of `T`.
+
+Generated for `Tool` (exported when written `cliProgram(Tool*, ...)`):
+
+| Procedure                                               | Does                                                           |
+| ------------------------------------------------------- | -------------------------------------------------------------- |
+| `Tool.load(argv, options = CliOptions())`               | parses `argv` (without the program name)                       |
+| `Tool.load(options = CliOptions())`                     | parses the process's own arguments                             |
+| `Tool.helpText(path = [])` / `Tool.helpJson(path = [])` | the help of the command reached by the subcommand words `path` |
+| `Tool.cliGrammar` / `Tool.cliModel`                     | the parser's tables and the model, both constants              |
+
+`CliOptions` sets the program name used in messages, the exit code of usage
+errors (`usageExitCode`, 2 when not set) and `disableHelpFlag`. A consumer
+whose model carries an extension generates the same code from its own macro
+with `cliProgramCode(model, typeName, program, exported)`.
+
+### Accepted forms
+
+- `--name` is every flag's canonical spelling; `alias` adds a spelling and
+  `short = 'x'` adds `-x`.
+- A flag that takes a value accepts `--flag=value` on any `--` spelling. With
+  `format = separate` (the default) it also takes the next word, whatever it
+  looks like; with `format = equals` it never does; with `format = concat`
+  the value follows the spelling directly (`-DFOO`).
+- Short spellings follow POSIX `getopt`: `-j 4`, `-j4`, and switches cluster
+  (`-vqq`); a letter that takes a value takes the rest of the word, or the
+  next word when it is last.
+- A `bool` is a switch: bare it is `true`, `--flag=false` works, and
+  `negatable = true` adds `--no-<name>`. `counted = true` counts
+  occurrences. An `optionalValue` flag is bare or `--flag=value`, never
+  followed by its value as a separate word.
+- A `seq` collects every occurrence, each split on its `separator` if it has
+  one. Any other parameter given twice keeps its last value.
+- `--` ends the flags. The first bare word after a command with subcommands
+  names one (or one of its `aliases`); when the command also has a `call:`,
+  any other word, or a flag (or a cluster of short flags) that only the
+  `call:` declares, runs the `call:`.
+- Positionals fill in `position` order; a list positional takes every word
+  that the positionals after it do not need. A command with subcommands
+  declares its positionals in its `call:` (the word after it is a
+  subcommand word), which `cliProgram` enforces at compile time, along with
+  at most one list positional per command and no subcommands inside a
+  `call:`.
+- `hidden` and `internal` items are accepted like any other.
+
+### Errors
+
+`load` never ends the process. A command line it rejects raises a
+`CliUsageError` whose `kind` is one of `CliErrorKind`; each kind has one
+wording, and every wording names the command (`'tool build'`):
+
+| Kind                      | Wording                                                                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `cekUnknownFlag`          | `unknown flag '--nope' for 'tool build'`                                                                                 |
+| `cekUnknownSubcommand`    | `unknown subcommand 'frob' for 'tool'; expected one of: build, run`                                                      |
+| `cekMissingSubcommand`    | `'tool' needs a subcommand; expected one of: build, run`                                                                 |
+| `cekMissingValue`         | `flag '--jobs' of 'tool build' needs a value`                                                                            |
+| `cekInvalidValue`         | `invalid value 'many' for '--jobs' of 'tool build'; expected an integer`                                                 |
+| `cekUnexpectedPositional` | `unexpected argument 'extra' for 'tool build'`                                                                           |
+| `cekMissingRequired`      | `missing required parameter '<target>' of 'tool build'`                                                                  |
+| `cekConflictingSources`   | `conflicting values for '--jobs' of 'tool build': ...` (raised once configuration files and the environment are sources) |
+
+The error also carries the offending argv index, the spelling, the value,
+what was expected and `exitCode`, the program's declared usage exit code.
+
+### Help
+
+`--help` and `-h` raise `CliHelpRequest` with the help of the command they
+were given to in `text`; `--help=json` gives the machine-readable form. A
+program turns this off with `CliOptions(disableHelpFlag: true)`, and a flag
+the program itself spells `--help` or `-h` takes precedence. The help of a
+command lists its subcommands, its positionals and every flag it accepts,
+ungrouped flags under `Options:` and then each `group` section. For a
+smaller program than the one above, it looks like this:
+
+```text
+Usage: tool build [options] <target>
+
+Build a project
+
+Aliases: b
+
+Arguments:
+  <target>  What to build
+
+Options:
+  -v, --[no-]verbose  Talk more
+  -j, --jobs <int>    Parallel jobs [default: 4]
+```
+
+`hidden` items are never listed. `internal` items are listed only in the help
+of the command that holds them (a subcommand in its parent's, a parameter in
+its declaring command's) and never in the root command's help, which is the
+program's primary help; an internal command's own help is complete, so
+`tool internal --help` documents what `tool --help` leaves out.
+
+The machine-readable form, `helpJson`, is a JSON document with the schema
+name `clispec-help/1`, meant for completion and editor hints:
+
+```text
+{"schema": "clispec-help/1", "program": "tool", "command": COMMAND}
+COMMAND   = {"name", "path", "aliases", "help", "visibility", "usage",
+             "parameters": [PARAMETER, ...], "commands": [COMMAND, ...]}
+PARAMETER = {"name", "kind": "flag" | "positional", "spellings",
+             "negation": string | null, "value": "none" | "required" | "optional",
+             "format": "separate" | "equals" | "concat",
+             "valueName", "choices", "list", "separator": string | null,
+             "counted", "required", "default": string | null, "env", "help",
+             "group": string | null, "visibility", "position" (positionals),
+             "declaredIn", "dynamicCompletion", "completer": string | null}
+```
+
+`value` says whether a flag takes a value and `format` how (see
+[Accepted forms](#accepted-forms)); `choices` is the closed value set, empty
+when the set is open; `completer` is the `complete` expression as written.
+
+`commands` nests the listed subcommands recursively, and the listing rules
+above decide what appears. Keys are always emitted in this order. Within
+`clispec-help/1` keys are only ever added, never renamed or removed, and
+their meaning does not change; anything else gets a new schema name.
+
+### How parsing is layered
+
+Parsing runs in phases, each a procedure of `clispec/parser`, so later layers
+can reuse them: `cliTokenize` reads argv against the grammar and collects the
+_candidates_ each parameter receives, each with its argv index and the
+spelling used; `cliMerge` picks the winners; `cliDecide` settles each
+parameter (from a source, implied, default, or unset) and reports a missing
+required one; the generated code then converts the decisions into the typed
+object. `cliResolve` runs the first three.
 
 ## Extending the model
 

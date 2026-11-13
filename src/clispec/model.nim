@@ -227,6 +227,15 @@ type
       ## spellings of the subcommand word.
     visibility*: CliVisibility
       ## ``subcmd "<name>", visibility = internal:``.
+    anonymous*: bool
+      ## The scope is a ``call:``: the command run when no subcommand word
+      ## follows its enclosing scope. It shares that scope's ``path``, so this
+      ## is what tells the two apart.
+    depth*: int
+      ## How many scopes enclose this one: 0 for the root, 1 for a scope
+      ## directly under ``cli:``. A ``call:`` counts, although it adds no
+      ## ``path`` segment, so ``depth`` and ``path`` together place a scope
+      ## in the tree.
     sourceFile*: string
     sourceLine*: int
     ext*: C
