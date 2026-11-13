@@ -3,7 +3,8 @@
 ## Recipes:
 ##   * `build` compiles every test module without running it.
 ##   * `test` runs the test suite (`tests/test_*.nim`), the same files
-##     `nimble test` runs.
+##     `nimble test` runs and `repro.nim` builds and runs
+##     (`tests/test_suite_lists_agree.nim` keeps the three lists equal).
 ##   * `lint` is `nim check` over the umbrella module and every test module.
 ##   * `format` runs `nimpretty` when it is available.
 ##
@@ -26,7 +27,7 @@ alias fmt := format
 src-paths := "--path:src"
 nim-flags := "--skipParentCfg --skipUserCfg --hints:off"
 nimcache := ".nimcache"
-tests := "test_dsl_model test_extension test_cs_m2_model_round_trip test_cs_m2_invalid_declarations_fail_to_compile test_cs_m3_parser_accepts_declared_forms test_cs_m3_parser_error_taxonomy test_cs_m3_help_matches_model test_readme_examples test_cs_m4_precedence_and_origins test_cs_m4_merge_rules test_cs_m4_enforced_value_explained test_cs_m4_default_never_overrides_file test_cs_m4_unknown_key_rejected"
+tests := "test_dsl_model test_extension test_cs_m2_model_round_trip test_cs_m2_invalid_declarations_fail_to_compile test_cs_m3_parser_accepts_declared_forms test_cs_m3_parser_error_taxonomy test_cs_m3_help_matches_model test_readme_examples test_cs_m4_precedence_and_origins test_cs_m4_merge_rules test_cs_m4_enforced_value_explained test_cs_m4_default_never_overrides_file test_cs_m4_unknown_key_rejected test_suite_lists_agree"
 
 # Compile every test module without running it.
 build:

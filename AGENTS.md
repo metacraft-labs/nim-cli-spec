@@ -50,11 +50,17 @@ first.
   The `test_cs_m3_*` tests drive generated programs: every accepted argv
   form, the error taxonomy (a golden table indexed by `CliErrorKind`, so a
   new kind without a case does not compile) and help against the model.
-  `test_readme_examples.nim` compiles and runs every ```nim block of the
+  `test_readme_examples.nim` compiles and runs every fenced `nim` block of the
   README. The `test_cs_m4_*` tests load `tests/cs_m4_fixture.nim`'s program
   from real TOML files in a temporary directory and an environment table:
   precedence and origins, merge rules, enforcement, defaults after the merge
   and schema validation.
+- `tests/test_suite_lists_agree.nim` keeps the three lists of test modules
+  equal: the Justfile's `tests`, the nimble `test` task and `repro.nim`'s
+  `clispecTests`. It also keeps the TOML dependencies' revisions equal across
+  `flake.nix`, `clispec.nimble` and `repro.nim`. A new test module goes into
+  all three lists, and a revision bump into all three files (`repro.nim`
+  also records the SHA-256 of the GitHub archive of the revision).
 
 ## Rules
 

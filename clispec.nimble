@@ -26,5 +26,5 @@ task test, "Run the test suite":
             "test_cs_m4_precedence_and_origins", "test_cs_m4_merge_rules",
             "test_cs_m4_enforced_value_explained",
             "test_cs_m4_default_never_overrides_file",
-            "test_cs_m4_unknown_key_rejected"]:
+            "test_cs_m4_unknown_key_rejected", "test_suite_lists_agree"]:
     exec "nim c -r --hints:off tests/" & t & ".nim"
