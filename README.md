@@ -16,10 +16,16 @@ and deriving everything else from that description. This release provides:
   pieces it generates code for are `clispec/grammar` (the parser's tables),
   `clispec/parser`, `clispec/help`, `clispec/values` (text to typed values)
   and `clispec/errors` (the usage-error taxonomy).
+- **Layered sources and origins**: the same object filled from
+  configuration files (in layers the program declares, some of which may
+  enforce their values), the environment and the command line, merged per
+  parameter, together with an origin object recording where every value
+  came from and what it overrode (`clispec/sources`, `clispec/origins`).
+  Configuration files are read through a small format interface; TOML is
+  provided by the optional `clispec/toml_source`, the only module that needs
+  a serialization library.
 
-The layers planned next are shell completion and layered loading of
-configuration files and the environment, with a record of where every value
-came from. Clispec is meant to replace
+The layer planned next is shell completion. Clispec is meant to replace
 [confutils](https://github.com/status-im/nim-confutils) for programs that
 describe their own command line. It also describes the command lines of
 external tools that a program runs.
@@ -96,19 +102,19 @@ const app = plainCliModel:
 
 Every parameter accepts:
 
-| Argument                                                         | Meaning                                                                                                                                                                                                                                   |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `help = "<text>"`                                                | the description shown by help and completion                                                                                                                                                                                              |
-| `default = <expr>`                                               | the value when no source supplies one; not together with `required = true`. A positional with a default is optional                                                                                                                       |
-| `env = ["NAME", ...]`                                            | the environment variables that supply the value, first match wins (one name may be written without brackets)                                                                                                                              |
-| `values = [a, b, c]`                                             | the closed set of accepted values (elements, for a list); an enum type is a closed set by itself                                                                                                                                          |
-| `complete = <completer>`                                         | a proc that completes the value dynamically                                                                                                                                                                                               |
-| `key = "section.name"`                                           | the configuration-file key, replacing the derived one                                                                                                                                                                                     |
-| `sources = {cli, env, file}`                                     | which sources may supply the value (default: all three)                                                                                                                                                                                   |
-| `merge = replace \| append \| errorOnConflict \| <combine proc>` | how values from several sources combine: the highest source wins (a list repeated within one source collects); lists are concatenated lowest source first; two different values are an error; or a proc of yours receives every candidate |
-| `separator = ","`                                                | a list may be given as one delimited value                                                                                                                                                                                                |
-| `implies = [<param> = <value>, ...]`                             | setting this parameter sets the others unless they are given explicitly                                                                                                                                                                   |
-| `visibility = shown \| internal \| hidden`                       | `internal`: left out of the primary help and completion, listed by the help of the command that holds it; `hidden`: accepted and listed nowhere                                                                                           |
+| Argument                                                         | Meaning                                                                                                                                                                                                                                                                          |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `help = "<text>"`                                                | the description shown by help and completion                                                                                                                                                                                                                                     |
+| `default = <expr>`                                               | the value when no source supplies one; not together with `required = true`. A positional with a default is optional                                                                                                                                                              |
+| `env = ["NAME", ...]`                                            | the environment variables that supply the value, first match wins (one name may be written without brackets)                                                                                                                                                                     |
+| `values = [a, b, c]`                                             | the closed set of accepted values (elements, for a list); an enum type is a closed set by itself                                                                                                                                                                                 |
+| `complete = <completer>`                                         | a proc that completes the value dynamically                                                                                                                                                                                                                                      |
+| `key = "section.name"`                                           | the configuration-file key, replacing the derived one                                                                                                                                                                                                                            |
+| `sources = {cli, env, file}`                                     | which sources may supply the value (default: all three)                                                                                                                                                                                                                          |
+| `merge = replace \| append \| errorOnConflict \| <combine proc>` | how values from several sources combine: the highest source wins (a list repeated within one source collects); lists are concatenated lowest source first; two different values are an error; or a proc of yours receives every source's value (see [Merge rules](#merge-rules)) |
+| `separator = ","`                                                | a list may be given as one delimited value                                                                                                                                                                                                                                       |
+| `implies = [<param> = <value>, ...]`                             | setting this parameter sets the others unless they are given explicitly                                                                                                                                                                                                          |
+| `visibility = shown \| internal \| hidden`                       | `internal`: left out of the primary help and completion, listed by the help of the command that holds it; `hidden`: accepted and listed nowhere                                                                                                                                  |
 
 A flag also accepts `short = 'x'` (a one-letter spelling, `-x`, beside
 `--<name>`), `optionalValue = <expr>` (the flag may appear bare, taking this
@@ -133,6 +139,16 @@ inherited by nested commands keeps the key of the command that declared it.
 `file` has none. Environment variables are never derived: a parameter reads
 exactly the variables its `env` lists.
 
+Two statements directly under `cli:` describe the program's configuration
+files: `configSchema "<id>"` names the schema identifier every file must
+declare (below), and `keyStyle declared | snakeCase | kebabCase` respells
+every derived key segment: `declared` (the default) keeps the spelling
+above, `snakeCase` makes `writeReport` and `debug-dump` into `write_report`
+and `debug_dump`, `kebabCase` into `write-report` and `debug-dump`. A key
+given with `key` is always used as written. The default keeps keys equal to
+the parameter names, as confutils does (its configuration-file keys are the
+field names, or the `name` pragma's spelling).
+
 **Expressions.** `default`, `optionalValue`, `values`, the values of `implies`,
 `complete` and a combine proc are Nim expressions. The model keeps each as a
 `CliExpr`: its source text and where it was written. Code generated from the
@@ -151,8 +167,13 @@ that is also negatable or has an `optionalValue`, `negatable` or `counted`
 set to anything but `true` or `false`, a flag-only argument on a positional, an
 `implies` naming no parameter of the command, an argument given twice, two
 subcommands of one command answering to the same word, `aliases` on `call:`,
-and a `help` statement inside a `group` section (the section's help goes in
-its head).
+a `help` statement inside a `group` section (the section's help goes in
+its head), and `keyStyle` or `configSchema` anywhere but directly under
+`cli:`, or with an unknown style. The generated checks also reject
+`merge = append` on a parameter that is neither a `seq` nor counted, and a
+combine proc that does not have the signature below. In a `cliProgram` that
+declares a `configSchema`, a configuration key that is `schema` or lies
+under `extensions` is an error too: both belong to the file itself.
 
 The parser rejects what it can tell from spellings. Whether an expression is a
 value of a type needs the compiler, so `cliModelTypeChecks(model)` generates
@@ -260,14 +281,18 @@ Declare `proc parseCliValue(text: string; value: var YourType)` (raising
 `CliValueError`) to support another. `values` entries must be constant
 expressions; those of a `seq[T]` or `Option[T]` parameter are values of `T`.
 
-Generated for `Tool` (exported when written `cliProgram(Tool*, ...)`):
+Generated for `Tool` (exported when written
+`cliProgram(Tool, "tool", exported = true):`):
 
-| Procedure                                               | Does                                                           |
-| ------------------------------------------------------- | -------------------------------------------------------------- |
-| `Tool.load(argv, options = CliOptions())`               | parses `argv` (without the program name)                       |
-| `Tool.load(options = CliOptions())`                     | parses the process's own arguments                             |
-| `Tool.helpText(path = [])` / `Tool.helpJson(path = [])` | the help of the command reached by the subcommand words `path` |
-| `Tool.cliGrammar` / `Tool.cliModel`                     | the parser's tables and the model, both constants              |
+| Procedure                                                       | Does                                                                         |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `Tool.load(argv, options = CliOptions())`                       | parses `argv` (without the program name)                                     |
+| `Tool.load(options = CliOptions())`                             | parses the process's own arguments                                           |
+| `Tool.load(argv, sources, options)` / `Tool.load(sources, ...)` | fills the object from configuration files, the environment and `argv`        |
+| `Tool.loadWithOrigins(argv, sources = CliSources(), options)`   | the same, and the origin object: `tuple[config: Tool, origins: ToolOrigins]` |
+| `Tool.configSchema`                                             | the configuration-file schema: its identifier and every key with its type    |
+| `Tool.helpText(path = [])` / `Tool.helpJson(path = [])`         | the help of the command reached by the subcommand words `path`               |
+| `Tool.cliGrammar` / `Tool.cliModel`                             | the parser's tables and the model, both constants                            |
 
 `CliOptions` sets the program name used in messages, the exit code of usage
 errors (`usageExitCode`, 2 when not set) and `disableHelpFlag`. A consumer
@@ -309,19 +334,23 @@ with `cliProgramCode(model, typeName, program, exported)`.
 `CliUsageError` whose `kind` is one of `CliErrorKind`; each kind has one
 wording, and every wording names the command (`'tool build'`):
 
-| Kind                      | Wording                                                                                                                  |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `cekUnknownFlag`          | `unknown flag '--nope' for 'tool build'`                                                                                 |
-| `cekUnknownSubcommand`    | `unknown subcommand 'frob' for 'tool'; expected one of: build, run`                                                      |
-| `cekMissingSubcommand`    | `'tool' needs a subcommand; expected one of: build, run`                                                                 |
-| `cekMissingValue`         | `flag '--jobs' of 'tool build' needs a value`                                                                            |
-| `cekInvalidValue`         | `invalid value 'many' for '--jobs' of 'tool build'; expected an integer`                                                 |
-| `cekUnexpectedPositional` | `unexpected argument 'extra' for 'tool build'`                                                                           |
-| `cekMissingRequired`      | `missing required parameter '<target>' of 'tool build'`                                                                  |
-| `cekConflictingSources`   | `conflicting values for '--jobs' of 'tool build': ...` (raised once configuration files and the environment are sources) |
+| Kind                      | Wording                                                                                                                                   |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `cekUnknownFlag`          | `unknown flag '--nope' for 'tool build'`                                                                                                  |
+| `cekUnknownSubcommand`    | `unknown subcommand 'frob' for 'tool'; expected one of: build, run`                                                                       |
+| `cekMissingSubcommand`    | `'tool' needs a subcommand; expected one of: build, run`                                                                                  |
+| `cekMissingValue`         | `flag '--jobs' of 'tool build' needs a value`                                                                                             |
+| `cekInvalidValue`         | `invalid value 'many' for '--jobs' of 'tool build'; expected an integer`                                                                  |
+| `cekUnexpectedPositional` | `unexpected argument 'extra' for 'tool build'`                                                                                            |
+| `cekMissingRequired`      | `missing required parameter '<target>' of 'tool build'`                                                                                   |
+| `cekConflictingSources`   | `conflicting values for '--jobs' of 'tool build': '4' from /etc/tool.toml:3 (layer 'system') and '8' from environment variable TOOL_JOBS` |
 
 The error also carries the offending argv index, the spelling, the value,
-what was expected and `exitCode`, the program's declared usage exit code.
+what was expected and `exitCode`, the program's declared usage exit code. An
+invalid value that came from a configuration file or the environment says
+where (`invalid value 'many' for '--jobs' of 'tool' (from environment
+variable TOOL_JOBS); expected an integer`), in `source` as well; its argv
+index is -1.
 
 ### Help
 
@@ -384,10 +413,176 @@ their meaning does not change; anything else gets a new schema name.
 Parsing runs in phases, each a procedure of `clispec/parser`, so later layers
 can reuse them: `cliTokenize` reads argv against the grammar and collects the
 _candidates_ each parameter receives, each with its argv index and the
-spelling used; `cliMerge` picks the winners; `cliDecide` settles each
-parameter (from a source, implied, default, or unset) and reports a missing
-required one; the generated code then converts the decisions into the typed
-object. `cliResolve` runs the first three.
+spelling used; `cliSourceCandidates` (`clispec/sources`) collects those of the
+configuration layers and the environment; `cliMerge` picks the winners and
+records each parameter's origin; `cliDecide` settles each parameter (from a
+source, implied, default, or unset) and reports a missing required one; the
+generated code then converts the decisions into the typed object.
+`cliResolve` runs the first three (four, given `CliSources`).
+
+## Configuration files, the environment and origins
+
+A parameter can be supplied by three kinds of source. From the lowest
+precedence to the highest: configuration files, in the layers the program
+declares (lowest first); the environment variables its `env` lists; and the
+command line. `sources = {...}` restricts a parameter to some of them (one
+that excludes `cli` is not accepted on the command line and not listed in
+help).
+
+```nim
+import std/[os, tables, tempfiles]
+import clispec, clispec/toml_source
+
+proc strictest(candidates: openArray[CliSourcedValue[int]]): int =
+  for c in candidates:
+    result = max(result, c.value)
+
+cliProgram(Tool, "tool"):
+  configSchema "tool.config.v1"
+  keyStyle snakeCase
+  flag jobs is int, default = 4, env = ["TOOL_JOBS"]
+  flag searchPaths is seq[string], merge = append, separator = ":",
+    env = ["TOOL_PATH"]
+  flag level is int, merge = strictest
+  flag token is string, sources = {env, file}, env = ["TOOL_TOKEN"]
+
+let dir = createTempDir("tool_", "")
+writeFile(dir / "system.toml", """
+schema = "tool.config.v1"
+jobs = 2
+""")
+writeFile(dir / "user.toml", """
+schema = "tool.config.v1"
+jobs = 6
+level = 3
+search_paths = ["/usr/share/tool"]
+
+[extensions]
+my_editor_settings = { theme = "dark" }
+""")
+
+let sources = CliSources(format: tomlCliFormat(),
+  layers: @[
+    CliLayer(name: "system", path: dir / "system.toml", binding: true),
+    CliLayer(name: "user", path: dir / "user.toml"),
+    CliLayer(name: "project", path: dir / "absent.toml")], # skipped
+  env: {"TOOL_PATH": "/opt/tool", "TOOL_TOKEN": "t0k"}.toTable)
+
+let (conf, origins) = Tool.loadWithOrigins(@["--jobs", "8"], sources)
+assert conf.jobs == 2                     # the system layer enforces it
+assert origins.jobs.kind == cokEnforced
+assert origins.jobs.winner.layer == "system" and origins.jobs.winner.line == 2
+assert origins.jobs.losers[1].fate == cfIgnoredByEnforcement # --jobs 8
+assert conf.searchPaths == @["/usr/share/tool", "/opt/tool"]
+assert conf.level == 3 and conf.token == "t0k"
+echo cliDescribe(origins.jobs)
+removeDir(dir)
+```
+
+### Layers belong to the program
+
+A `CliSources` lists the program's layers, lowest precedence first, each a
+`CliLayer` with a `name` (what origins and errors call it), a `path`,
+`binding` and `required` (a missing file is an error rather than a skipped
+layer). Every value a **binding** layer sets is _enforced_: no other source,
+the environment and the command line included, can override it, and each
+attempt is recorded in the origin as ignored. When two binding layers set the
+same key, the lower one enforces it. An enforced value ignores the merge
+rule: it is not combined, appended or reported as a conflict.
+
+The environment is a table the program passes in (`cliProcessEnv()` returns
+the process's own); nothing reads the process environment behind its back.
+An environment value is text, converted exactly like a command-line value; a
+list parameter's variable is one element, or a delimited list when the
+parameter declares a `separator`.
+
+### Merge rules
+
+Each source (a layer, the environment, the command line) gives a parameter
+one value: within one source a list collects every occurrence, a counted
+flag adds them up and anything else keeps its last. Across sources:
+
+| `merge`           | Value                                                                                                                         |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `replace`         | the highest source's (a higher source's list, even an empty one, replaces a lower one's)                                      |
+| `append`          | every source's list concatenated, lowest first (a `seq` or counted parameter only)                                            |
+| `errorOnConflict` | as `replace`, but two sources with different values are a `cekConflictingSources` error naming both (values compared as text) |
+| a combine proc    | what the proc returns from every source's value                                                                               |
+
+A combine proc has the signature
+`proc (candidates: openArray[CliSourcedValue[T]]): T`, where `T` is the
+parameter's type: it receives one `CliSourcedValue` per source that supplied
+the parameter, lowest first, each with the converted `value` and its
+`origin` (a `CliSite`). A proc that does not fit is a compile error naming
+the parameter. If it raises, loading fails with `cekConflictingSources`
+carrying its message.
+
+Defaults and `implies` apply only after every source has been merged, so a
+default never stands in for a value a file supplied.
+
+### Configuration files
+
+A file is read by a format adapter, a `CliConfigFormat` whose `parse` proc
+(`CliConfigParser`) turns the file's text into a flat list of entries, each
+with its key's segments, its value (string, integer, float, bool, date-time
+or array) and its line. `tomlCliFormat()` from `clispec/toml_source` reads
+TOML with
+[nim-toml-serialization](https://github.com/status-im/nim-toml-serialization);
+that module is not imported by `clispec`, so a program without configuration
+files does not depend on any serialization library. An adapter for another
+format implements the same proc.
+
+The program's schema is then applied to the entries, for every format alike:
+
+- The file must have a top-level `schema` string equal to the description's
+  `configSchema`. A program without one loads no file.
+- Every other key must be a parameter's configuration key, except keys under
+  a top-level `extensions` table, which is the escape hatch for data the
+  program does not define and is never read.
+- A value must have its parameter's type: a string (also for enums, paths
+  and every type written as text), an integer, a float (an integer is
+  accepted too) or a bool, and an array of those for a list parameter. A
+  counted flag takes an integer.
+
+Values are read verbatim: nothing is interpolated or expanded, and a list's
+elements are never split on its `separator`. `Tool.configSchema` is the
+schema as a value, and `cliConfigSchemaJson` renders it as JSON under the
+schema name `clispec-config-schema/1` (keys are only added within that name).
+
+A file that breaks these rules raises a `CliConfigError`, whose `kind` is a
+`CliConfigErrorKind`, each with one wording naming the file, the line and the
+key where there is one:
+
+| Kind                  | Wording                                                                        |
+| --------------------- | ------------------------------------------------------------------------------ |
+| `cfeUnknownKey`       | `/home/u/.config/tool.toml:4: unknown key 'jbos' (layer 'user')`               |
+| `cfeMissingSchema`    | the file has no top-level `schema` string (the wording shows the expected one) |
+| `cfeWrongSchema`      | `...:1: declares schema "tool.config.v2"; expected "tool.config.v1"`           |
+| `cfeWrongType`        | `...:2: key 'jobs' has the string "four"; expected an integer`                 |
+| `cfeSyntax`           | `...:3: is not valid:` followed by the format's own message                    |
+| `cfeUnreadable`       | a required layer's file is missing, or a file cannot be read                   |
+| `cfeNoSchemaDeclared` | the description declares no `configSchema`                                     |
+| `cfeNoFormat`         | layers were given without a format                                             |
+
+### The origin object
+
+`loadWithOrigins` also returns an object of the same shape as the
+configuration object (`ToolOrigins`, `ToolBuildOrigins`, ..., with the same
+`command` discriminator) holding a `CliOrigin` per field:
+
+- `winner`, a `CliSite`: its `kind` (`cokDefault`, `cokFile` with `path`,
+  `line`, `key` and the `layer` name, `cokEnv` with the `variable`, `cokCli`
+  with the `argvIndex` and `spelling`, `cokImplied` with `impliedBy`,
+  `cokEnforced` like a file, or `cokUnset`), also readable as `origin.kind`;
+- `values`, the value as written;
+- `losers`, every other value that was considered, in the order the merge
+  considered them (layers lowest first, then the environment, then the
+  command line), each with its `value`, its `site` and its `fate`:
+  `cfOverridden`, `cfCombined` (part of an `append` or combined value) or
+  `cfIgnoredByEnforcement`.
+
+`cliDescribe(origin)` puts it in one line, for a debug report or an
+`--explain` option.
 
 ## Extending the model
 

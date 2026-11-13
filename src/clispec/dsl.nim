@@ -50,6 +50,11 @@
 ##   under one help heading; it opens no command and changes no scoping.
 ## * A flag declared directly under ``cli:`` is placed before the subcommand
 ##   word (``placement = before``); everywhere else the default is after it.
+## * Directly under ``cli:`` only, ``configSchema "<id>"`` names the schema
+##   identifier the program's configuration files declare, and
+##   ``keyStyle declared|snakeCase|kebabCase`` how derived configuration keys
+##   are spelt (``clispec/model``, "Names and configuration keys").
+##   ``parseCliModel`` reads both before anything else.
 ##
 ## Anything else — an unknown statement, or a named argument the parameter
 ## kind does not take — is offered to the consumer's extension (below) and
@@ -72,14 +77,20 @@
 ## ``true`` or ``false``; a flag-only argument on a positional; ``implies``
 ## naming no parameter of the command, or the parameter itself; one of the
 ## library's arguments given twice; two subcommands of one command answering
-## to the same word; ``aliases`` on ``call:``; and a ``help`` statement
-## inside a ``group`` section.
+## to the same word; ``aliases`` on ``call:``; a ``help`` statement
+## inside a ``group`` section; and ``keyStyle`` or ``configSchema`` anywhere
+## but directly under ``cli:``. (``cliProgram`` adds rules of its own for a
+## program's own command line, such as reserved configuration keys.)
 ##
 ## Whether a ``default``, ``optionalValue``, ``values`` entry or ``implies``
 ## value is a value of the parameter's type is checked here when the type is
 ## a builtin and the value a literal; otherwise it needs the compiler, and
 ## ``cliModelTypeChecks`` generates the check as code for the consumer's
-## macro to place in its output (``plainCliModel`` does).
+## macro to place in its output (``plainCliModel`` does). The same checks
+## reject ``merge = append`` on a parameter that is neither a ``seq`` nor
+## counted, and a combine proc that cannot be called as
+## ``proc (candidates: openArray[CliSourcedValue[T]]): T`` for the
+## parameter's type ``T``.
 ##
 ## Extensions
 ## ==========
@@ -111,7 +122,7 @@
 
 import std/[macros, options, strutils, tables]
 
-import ./model
+import ./[model, origins]
 
 export model
 
@@ -815,12 +826,14 @@ type
     isRoot: bool
     path: seq[string]
     wholeBody: NimNode
+    keyStyle: CliKeyStyle
 
 proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
                           parent: CliCommand[C, P]; wholeBody: NimNode;
                           header: CliCommandHeader;
                           commands: var seq[CliCommand[C, P]];
-                          groups: var seq[CliGroup]): CliCommand[C, P]
+                          groups: var seq[CliGroup];
+                          keyStyle: CliKeyStyle): CliCommand[C, P]
 
 proc addScopeParam[C, P](cmd: var CliCommand[C, P]; stmt: NimNode;
                          group: string; ctx: ScopeContext) =
@@ -835,7 +848,7 @@ proc addScopeParam[C, P](cmd: var CliCommand[C, P]; stmt: NimNode;
   if csFile notin param.sources:
     param.configKey = ""
   elif not param.keyDeclared:
-    param.configKey = (ctx.path & @[param.name]).join(".")
+    param.configKey = cliDerivedKey(ctx.path, param.name, ctx.keyStyle)
   checkNewParam(cmd.params, param, cliCommandLabel(ctx.path, ctx.isRoot),
     stmt)
   cmd.params.add(param)
@@ -873,7 +886,7 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
                 cliCommandLabel(ctx.path & @[seen.owner]), stmt)
           childWords.add((word, childName))
       discard parseScopeImpl[C, P](stmt[^1], childPath, false, cmd,
-        ctx.wholeBody, childHeader, commands, groups)
+        ctx.wholeBody, childHeader, commands, groups, ctx.keyStyle)
     of "group":
       if group.len > 0:
         error("clispec: group '" & group & "' cannot contain another " &
@@ -892,6 +905,12 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
       noteGroup(groups, title, groupHelp, stmt)
       walkScope[C, P](cmd, stmt[^1], title, ctx, commands, groups, helpGiven,
         childWords)
+    of "keystyle", "configschema":
+      # Read by ``parseCliModel`` before the scope is walked; valid only
+      # directly under ``cli:``.
+      if not ctx.isRoot or group.len > 0:
+        error("clispec: " & cliCalleeName(stmt) & " describes the whole " &
+          "program; write it directly under cli:", stmt)
     of "help":
       if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2:
         error("clispec: help is written help \"<text>\"", stmt)
@@ -917,7 +936,8 @@ proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
                           parent: CliCommand[C, P]; wholeBody: NimNode;
                           header: CliCommandHeader;
                           commands: var seq[CliCommand[C, P]];
-                          groups: var seq[CliGroup]): CliCommand[C, P] =
+                          groups: var seq[CliGroup];
+                          keyStyle: CliKeyStyle): CliCommand[C, P] =
   let info = body.lineInfoObj()
   result.sourceFile = info.filename
   result.sourceLine = info.line
@@ -936,7 +956,8 @@ proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
   # the subcommand that owns it, for the collision check.
   var childWords: seq[tuple[word, owner: string]] = @[]
   walkScope[C, P](result, body, "",
-    ScopeContext(isRoot: isRoot, path: path, wholeBody: wholeBody),
+    ScopeContext(isRoot: isRoot, path: path, wholeBody: wholeBody,
+      keyStyle: keyStyle),
     commands, groups, helpGiven, childWords)
 
   # ``implies`` may name any parameter the implying one's command sees once
@@ -964,15 +985,17 @@ proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
 proc parseCliScope*[C, P](body: NimNode; path: seq[string]; isRoot: bool;
                           parent: CliCommand[C, P]; wholeBody: NimNode;
                           commands: var seq[CliCommand[C, P]];
-                          groups: var seq[CliGroup]): CliCommand[C, P] =
+                          groups: var seq[CliGroup];
+                          keyStyle = cksDeclared): CliCommand[C, P] =
   ## Parses one scope — the root ``cli:`` body, or a ``call:`` /
   ## ``subcmd`` body — in source order and returns its command. The scope
   ## starts from ``parent``'s parameters and extension (what the enclosing
   ## scope had declared when this one opened). Every nested scope is
   ## appended to ``commands`` after the scopes nested inside it; the root is
-  ## not appended. ``group`` sections are recorded in ``groups``.
+  ## not appended. ``group`` sections are recorded in ``groups``. Derived
+  ## configuration keys are spelt in ``keyStyle``.
   parseScopeImpl[C, P](body, path, isRoot, parent, wholeBody,
-    CliCommandHeader(), commands, groups)
+    CliCommandHeader(), commands, groups, keyStyle)
 
 proc parseCliScope*[C, P](body: NimNode; path: seq[string]; isRoot: bool;
                           parent: CliCommand[C, P]; wholeBody: NimNode;
@@ -988,8 +1011,38 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
   ## defaults, which every scope inherits unless a statement changes them.
   var root: CliCommand[C, P]
   root.ext = rootExt
+  # The program-wide statements come first: the key style decides every
+  # derived key, so it must be known before any parameter is read.
+  var styleSeen = false
+  for stmt in body:
+    case cliCalleeName(stmt).normalize
+    of "keystyle":
+      if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2:
+        error("clispec: keyStyle is written keyStyle declared | " &
+          "snakeCase | kebabCase", stmt)
+      if styleSeen:
+        error("clispec: keyStyle is given twice", stmt)
+      styleSeen = true
+      case cliIdentText(stmt[1]).normalize
+      of "declared": result.keyStyle = cksDeclared
+      of "snakecase": result.keyStyle = cksSnakeCase
+      of "kebabcase": result.keyStyle = cksKebabCase
+      else:
+        error("clispec: keyStyle must be declared, snakeCase or " &
+          "kebabCase, not " & stmt[1].repr, stmt[1])
+    of "configschema":
+      if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2:
+        error("clispec: configSchema is written configSchema \"<id>\"",
+          stmt)
+      if result.configSchema.len > 0:
+        error("clispec: configSchema is given twice", stmt)
+      result.configSchema = cliStrLit(stmt[1], "configSchema")
+      if result.configSchema.len == 0:
+        error("clispec: configSchema must not be empty", stmt[1])
+    else:
+      discard
   result.root = parseCliScope[C, P](body, @[], true, root, body,
-    result.commands, result.groups)
+    result.commands, result.groups, result.keyStyle)
 
 # ---------------------------------------------------------------------------
 # Type checks of the expressions a model holds.
@@ -1091,6 +1144,18 @@ proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
         result.add(failWhenNot(infix(typeNode, "is", ident("bool")),
           prefix & "negatable requires bool, not " & param.nimType,
           param.sourceFile, param.sourceLine, 0))
+      if param.merge == cmrAppend and not param.counted:
+        result.add(failWhenNot(infix(typeNode, "is", ident("seq")),
+          prefix & "merge = append concatenates lists; " & param.nimType &
+          " is not a seq", param.sourceFile, param.sourceLine, 0))
+      if param.merge == cmrCombine:
+        let c = param.combine
+        result.add(failWhenNot(newCall(bindSym("cliCombineFits"), typeNode,
+          parseExpr(c.code)), prefix & "merge = `" & c.code & "` is not " &
+          "a combine proc for " & param.nimType & "; it must be callable " &
+          "as proc (candidates: openArray[CliSourcedValue[" &
+          param.nimType & "]]): " & param.nimType, c.sourceFile,
+          c.sourceLine, c.sourceColumn))
 
 macro plainCliModel*(body: untyped): untyped =
   ## The model of a ``cli:`` body with no extension, as a constant, after

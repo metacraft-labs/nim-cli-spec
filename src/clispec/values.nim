@@ -18,6 +18,8 @@
 
 import std/[options, strutils, typetraits]
 
+import ./model
+
 type
   CliValueError* = object of ValueError
     ## A word that is not a value of the expected type.
@@ -78,6 +80,26 @@ func cliTypeDescription*[T](t: typedesc[T]): string =
     "a string"
   else:
     $T
+
+func cliConfigTypeOf*[T](t: typedesc[T]): CliConfigType =
+  ## The type a configuration-file value of a parameter of type ``T`` must
+  ## have (of each element, for a ``seq``): integers are integers, floats
+  ## floats, ``bool`` a bool, and everything else, which is written as text
+  ## on the command line, a string.
+  when T is seq:
+    cliConfigTypeOf(typeof(default(T)[0]))
+  elif T is Option:
+    cliConfigTypeOf(typeof(default(T).get()))
+  elif T is distinct:
+    cliConfigTypeOf(distinctBase(T))
+  elif T is bool:
+    cctBool
+  elif T is SomeFloat:
+    cctFloat
+  elif T is SomeInteger or T is range:
+    cctInteger
+  else:
+    cctString
 
 proc parseCliValue*[T](text: string; value: var T) =
   ## Converts ``text`` to a ``T`` (see the module documentation), raising

@@ -88,8 +88,12 @@ func cliListsCommand*(g: CliGrammar; holder, child: int): bool =
   of cvInternal: holder != 0
 
 func cliListsParam*(g: CliGrammar; holder, id: int): bool =
-  ## Whether the help of ``holder`` lists parameter ``id``.
+  ## Whether the help of ``holder`` lists parameter ``id``. A parameter
+  ## whose ``sources`` exclude the command line is not part of it and is
+  ## never listed.
   let p = g.params[id]
+  if csCli notin p.sources:
+    return false
   case p.visibility
   of cvShown: true
   of cvHidden: false

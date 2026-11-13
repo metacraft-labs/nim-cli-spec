@@ -7,5 +7,7 @@
 ## description, through the run-time tables of ``clispec/grammar``. See the
 ## README for the language, the generated API and how a consumer attaches
 ## its own declarations through the model's extension slots.
-import clispec/[model, dsl, errors, values, grammar, help, parser, program]
-export model, dsl, errors, values, grammar, help, parser, program
+import clispec/[model, dsl, errors, values, grammar, help, parser, program,
+  origins, sources]
+export model, dsl, errors, values, grammar, help, parser, program, origins,
+  sources

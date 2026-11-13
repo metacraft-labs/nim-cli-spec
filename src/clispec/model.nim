@@ -49,6 +49,13 @@
 ## derived key. A parameter whose ``sources`` exclude files has no key.
 ## Environment variables are never derived: a parameter reads exactly the
 ## variables its ``env`` lists, and none when it lists none.
+##
+## A description may declare a key style (``keyStyle snakeCase`` directly
+## under ``cli:``) that respells every DERIVED key segment: ``declared`` (the
+## default) keeps them as written, ``snakeCase`` turns ``writeReport`` and
+## ``debug-dump`` into ``write_report`` and ``debug_dump``, ``kebabCase``
+## into ``write-report`` and ``debug-dump``. A key given with ``key`` is
+## used as written whatever the style.
 
 type
   CliParamKind* = enum
@@ -87,6 +94,28 @@ type
       ## candidate value.
     cmrErrorOnConflict = "errorOnConflict"
       ## Two sources supplying different values is an error naming both.
+
+  CliConfigType* = enum
+    ## The type a configuration-file value must have, as a format sees it
+    ## (a list parameter's elements each have this type).
+    cctString = "string"
+      ## Strings, and every type whose value is written as text: enums,
+      ## ``char``, paths, and types with a ``parseCliValue`` of their own.
+    cctInteger = "integer"
+    cctFloat = "float"
+      ## A float; an integer is accepted too.
+    cctBool = "bool"
+
+  CliKeyStyle* = enum
+    ## How derived configuration keys are spelt (``keyStyle`` under
+    ## ``cli:``). Only derived segments are respelt; ``key = "..."`` is kept
+    ## as written.
+    cksDeclared = "declared"
+      ## Every segment exactly as declared (the default).
+    cksSnakeCase = "snakeCase"
+      ## ``writeReport`` → ``write_report``, ``debug-dump`` → ``debug_dump``.
+    cksKebabCase = "kebabCase"
+      ## ``writeReport`` → ``write-report``, ``debug_dump`` → ``debug-dump``.
 
   CliVisibility* = enum
     ## Where a command or parameter is listed.
@@ -253,6 +282,14 @@ type
       ## scopes nested inside it.
     groups*: seq[CliGroup]
       ## Every ``group`` section, in the order first declared.
+    keyStyle*: CliKeyStyle
+      ## ``keyStyle <style>`` under ``cli:``: how derived configuration keys
+      ## are spelt.
+    configSchema*: string
+      ## ``configSchema "<id>"`` under ``cli:``: the identifier a
+      ## configuration file must carry in its top-level ``schema`` string
+      ## (``"tool.config.v1"``). Empty when the description declares none,
+      ## and then the program loads no configuration file.
 
   PlainCliParam* = CliParam[NoCliExtension]
   PlainCliCommand* = CliCommand[NoCliExtension, NoCliExtension]
@@ -261,3 +298,50 @@ type
 func isSet*(e: CliExpr): bool =
   ## Whether the expression was given.
   e.code.len > 0
+
+func cliWords(segment: string): seq[string] =
+  ## The words of a name: split at ``-``, ``_`` and other non-alphanumeric
+  ## characters and before an upper-case letter that starts a word
+  ## (``writeReport`` → ``write``, ``Report``; ``HTTPPort`` → ``HTTP``,
+  ## ``Port``).
+  var word = ""
+  for i, ch in segment:
+    if ch notin {'a'..'z', 'A'..'Z', '0'..'9'}:
+      if word.len > 0:
+        result.add(word)
+        word = ""
+      continue
+    if ch in {'A'..'Z'} and word.len > 0:
+      let prevLower = segment[i - 1] in {'a'..'z', '0'..'9'}
+      let nextLower = i + 1 < segment.len and segment[i + 1] in {'a'..'z'}
+      if prevLower or (segment[i - 1] in {'A'..'Z'} and nextLower):
+        result.add(word)
+        word = ""
+    word.add(ch)
+  if word.len > 0:
+    result.add(word)
+
+func cliKeySegment*(segment: string; style: CliKeyStyle): string =
+  ## One derived key segment spelt in ``style``.
+  case style
+  of cksDeclared:
+    result = segment
+  of cksSnakeCase, cksKebabCase:
+    let sep = if style == cksSnakeCase: '_' else: '-'
+    for word in cliWords(segment):
+      if result.len > 0:
+        result.add(sep)
+      for ch in word:
+        result.add(if ch in {'A'..'Z'}: char(ord(ch) + 32) else: ch)
+    if result.len == 0:
+      result = segment
+
+func cliDerivedKey*(path: openArray[string]; name: string;
+                    style: CliKeyStyle): string =
+  ## The derived configuration key of a parameter ``name`` declared by the
+  ## command at ``path``: the segments joined with ``.``, each spelt in
+  ## ``style``.
+  for segment in path:
+    result.add(cliKeySegment(segment, style))
+    result.add('.')
+  result.add(cliKeySegment(name, style))

@@ -6,6 +6,34 @@
     nixpkgs.follows = "nixos-modules/nixpkgs-unstable";
     flake-parts.follows = "nixos-modules/flake-parts";
     git-hooks.follows = "nixos-modules/git-hooks-nix";
+
+    # The optional TOML format adapter (`src/clispec/toml_source.nim`) reads
+    # files with status-im's nim-toml-serialization. The library itself
+    # never imports it; only that module and the tests that drive it do, so
+    # these sources are put on the tests' path (`CLISPEC_FORMAT_PATHS`) and
+    # nowhere else. The revisions are a set known to work together:
+    # toml-serialization v0.2.18 and the serialization, faststreams, stew
+    # and results revisions whose sources match it.
+    nim-toml-serialization-src = {
+      url = "github:status-im/nim-toml-serialization/b5b387e6fb2a7cc75d54a269b07cc6218361bd46";
+      flake = false;
+    };
+    nim-serialization-src = {
+      url = "github:status-im/nim-serialization/1790d8a931fce125d6722f7ee8432ee8c054d297";
+      flake = false;
+    };
+    nim-faststreams-src = {
+      url = "github:status-im/nim-faststreams/50889cd16ec8771106cdd0eeea460039e8571e06";
+      flake = false;
+    };
+    nim-stew-src = {
+      url = "github:status-im/nim-stew/30dadcd14b5ec1631935d9037213ece6871cc11a";
+      flake = false;
+    };
+    nim-results-src = {
+      url = "github:arnetheduck/nim-results/55b41b285def7b7b98dd5b9669f352d1fdc35c2b";
+      flake = false;
+    };
   };
 
   outputs =
@@ -40,6 +68,17 @@
           # its `language: system` hooks and `uv`, without which prek cannot
           # build the python hook environments on NixOS.
           devShells.default = pkgs.mkShell {
+            # The `--path:` flags the TOML adapter's tests need (see the
+            # inputs above); the Justfile passes them to every test compile.
+            CLISPEC_FORMAT_PATHS = builtins.concatStringsSep " " (
+              map (src: "--path:${src}") [
+                inputs.nim-toml-serialization-src
+                inputs.nim-serialization-src
+                inputs.nim-faststreams-src
+                inputs.nim-stew-src
+                inputs.nim-results-src
+              ]
+            );
             packages = with pkgs; [
               nim
               just

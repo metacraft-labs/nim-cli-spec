@@ -2636,6 +2636,23 @@
         "type": "github"
       }
     },
+    "nim-faststreams-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1776701075,
+        "narHash": "sha256-fH/BYZParZa3bGhgeqNXAAYTa3GxoUhEevzTwjdcpME=",
+        "owner": "status-im",
+        "repo": "nim-faststreams",
+        "rev": "50889cd16ec8771106cdd0eeea460039e8571e06",
+        "type": "github"
+      },
+      "original": {
+        "owner": "status-im",
+        "repo": "nim-faststreams",
+        "rev": "50889cd16ec8771106cdd0eeea460039e8571e06",
+        "type": "github"
+      }
+    },
     "nim-fork-src": {
       "flake": false,
       "locked": {
@@ -2674,6 +2691,23 @@
     "nim-results-src": {
       "flake": false,
       "locked": {
+        "lastModified": 1770722271,
+        "narHash": "sha256-8mq8u7XXPiRLbHvoGahxnElSRMWxXSTqSlwX9khWEsk=",
+        "owner": "arnetheduck",
+        "repo": "nim-results",
+        "rev": "55b41b285def7b7b98dd5b9669f352d1fdc35c2b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "arnetheduck",
+        "repo": "nim-results",
+        "rev": "55b41b285def7b7b98dd5b9669f352d1fdc35c2b",
+        "type": "github"
+      }
+    },
+    "nim-results-src_2": {
+      "flake": false,
+      "locked": {
         "lastModified": 1733582743,
         "narHash": "sha256-KbNqt0FMuzDF4X+XM6JEaZJBypLDnvVPpnBpE7Sq6sA=",
         "owner": "metacraft-labs",
@@ -2685,6 +2719,23 @@
         "owner": "metacraft-labs",
         "repo": "nim-result",
         "rev": "df8113dda4c2d74d460a8fa98252b0b771bf1f27",
+        "type": "github"
+      }
+    },
+    "nim-serialization-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1770197023,
+        "narHash": "sha256-3GJL5ySBfuAt4o3Ui1iNZ957HS0RowNxHIN8kH/pd6U=",
+        "owner": "status-im",
+        "repo": "nim-serialization",
+        "rev": "1790d8a931fce125d6722f7ee8432ee8c054d297",
+        "type": "github"
+      },
+      "original": {
+        "owner": "status-im",
+        "repo": "nim-serialization",
+        "rev": "1790d8a931fce125d6722f7ee8432ee8c054d297",
         "type": "github"
       }
     },
@@ -2758,6 +2809,23 @@
     "nim-stew-src": {
       "flake": false,
       "locked": {
+        "lastModified": 1775816678,
+        "narHash": "sha256-w4JCNHQlYI4qFAw8xZccUAQtf/ggER5kOEhzVvUmmfs=",
+        "owner": "status-im",
+        "repo": "nim-stew",
+        "rev": "30dadcd14b5ec1631935d9037213ece6871cc11a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "status-im",
+        "repo": "nim-stew",
+        "rev": "30dadcd14b5ec1631935d9037213ece6871cc11a",
+        "type": "github"
+      }
+    },
+    "nim-stew-src_2": {
+      "flake": false,
+      "locked": {
         "lastModified": 1781236465,
         "narHash": "sha256-KcxneFNUxFRcJGgOIRIcMDPy/Z9JelKpvDSfhnkQ6IA=",
         "owner": "status-im",
@@ -2769,6 +2837,23 @@
         "owner": "status-im",
         "repo": "nim-stew",
         "rev": "83eb1157963b7f49351dbdd858355fa990bbe23c",
+        "type": "github"
+      }
+    },
+    "nim-toml-serialization-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1758824050,
+        "narHash": "sha256-vzz6QyxoTDxm1p6cAKxb2JxOvvKTug0DPOXnAGTjupw=",
+        "owner": "status-im",
+        "repo": "nim-toml-serialization",
+        "rev": "b5b387e6fb2a7cc75d54a269b07cc6218361bd46",
+        "type": "github"
+      },
+      "original": {
+        "owner": "status-im",
+        "repo": "nim-toml-serialization",
+        "rev": "b5b387e6fb2a7cc75d54a269b07cc6218361bd46",
         "type": "github"
       }
     },
@@ -4706,11 +4791,11 @@
         "nim-csources-src": "nim-csources-src",
         "nim-fork-src": "nim-fork-src",
         "nim-nimony-src": "nim-nimony-src",
-        "nim-results-src": "nim-results-src",
+        "nim-results-src": "nim-results-src_2",
         "nim-shm-gset-src": "nim-shm-gset-src",
         "nim-shm-queue-src": "nim-shm-queue-src",
         "nim-stackable-hooks-src": "nim-stackable-hooks-src",
-        "nim-stew-src": "nim-stew-src",
+        "nim-stew-src": "nim-stew-src_2",
         "nimcrypto-src": "nimcrypto-src",
         "nixos-modules": "nixos-modules_2",
         "nixpkgs": [
@@ -4813,6 +4898,11 @@
           "nixos-modules",
           "git-hooks-nix"
         ],
+        "nim-faststreams-src": "nim-faststreams-src",
+        "nim-results-src": "nim-results-src",
+        "nim-serialization-src": "nim-serialization-src",
+        "nim-stew-src": "nim-stew-src",
+        "nim-toml-serialization-src": "nim-toml-serialization-src",
         "nixos-modules": "nixos-modules",
         "nixpkgs": [
           "nixos-modules",

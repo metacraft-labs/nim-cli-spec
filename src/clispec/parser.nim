@@ -8,12 +8,15 @@
 ##    subcommands, recognises every flag spelling and collects, for each
 ##    parameter, the *candidates* the command line supplies, each with the
 ##    argv index and the spelling it came from.
-## 2. ``cliMerge`` decides, for each parameter, which candidates win. Only
-##    the command line is a source so far, so a list keeps every occurrence
-##    and anything else keeps its last.
+## 2. ``cliMerge`` decides, for each parameter, which candidates make up its
+##    value, merging the command line's with those the configuration layers
+##    and the environment supply (``clispec/sources``) as the parameter's
+##    merge rule says, and records its origin (``clispec/origins``).
 ## 3. ``cliDecide`` settles what each parameter of the selected commands
 ##    gets: its merged candidates, a value implied by another parameter, its
 ##    default, or nothing, and reports a required parameter that got nothing.
+##    It runs after every source is merged, so a default never stands in for
+##    a value a source supplied.
 ## 4. The code ``clispec/program`` generates converts the decisions into the
 ##    typed configuration object (``cliConvert``, which also checks a
 ##    ``values`` set).
@@ -52,9 +55,9 @@
 
 import std/[options, strutils]
 
-import ./[model, grammar, errors, values, help]
+import ./[model, grammar, errors, values, help, origins, sources]
 
-export errors, values
+export errors, values, origins, sources
 
 type
   CliOptions* = object
@@ -67,28 +70,6 @@ type
       ## when zero).
     disableHelpFlag*: bool
       ## Do not treat ``--help`` / ``-h`` as a request for help.
-
-  CliCandidateForm* = enum
-    ## How a candidate was written.
-    ccfValue    ## with a value: ``--jobs 4``, ``--jobs=4``, ``-j4``, a word
-    ccfBare     ## a switch or an optional-value flag written bare
-    ccfNegated  ## ``--no-<name>``
-    ccfCount    ## one occurrence of a counted flag
-
-  CliCandidate* = object
-    ## One value a source supplies for a parameter.
-    source*: CliSource
-    form*: CliCandidateForm
-    text*: string
-      ## The value as written (``ccfValue`` only).
-    argvIndex*: int
-      ## The index in argv of the flag (or of the positional word).
-    valueArgvIndex*: int
-      ## The index of the word holding the value when it is not the flag's
-      ## own word (``--jobs 4``), else -1.
-    spelling*: string
-      ## The spelling used: ``--jobs``, ``-j``, ``--no-verbose``. Empty for
-      ## a positional.
 
   CliTokens* = object
     ## What ``cliTokenize`` read from argv.
@@ -115,12 +96,16 @@ type
     ## Everything decided before the typed object is built.
     selected*: seq[int]
     merged*: seq[seq[CliCandidate]]
-      ## Per parameter id: the winning candidates (``cliMerge``).
+      ## Per parameter id: the candidates the value is made of
+      ## (``cliMerge``), in the order they were considered.
     overridden*: seq[seq[CliCandidate]]
-      ## Per parameter id: the candidates that lost.
+      ## Per parameter id: the candidates that are not part of the value.
     decisions*: seq[CliDecision]
       ## Per parameter id; ``cdkUnset`` for parameters of commands that were
       ## not selected.
+    origins*: seq[CliOrigin]
+      ## Per parameter id: how the value was decided (``cliMerge`` records
+      ## the sources, ``cliDecide`` an implication or a default).
     exitCode*: int
     program*: string
 
@@ -148,7 +133,7 @@ func findFlag(g: CliGrammar; scope: seq[int];
   ## The last flag of ``scope`` (the most nested declaration) matching.
   for i in countdown(scope.high, 0):
     let p = g.params[scope[i]]
-    if p.kind == cpkFlag and pred(p):
+    if p.kind == cpkFlag and csCli in p.sources and pred(p):
       return scope[i]
   -1
 
@@ -176,8 +161,9 @@ func matchLong(g: CliGrammar; scope: seq[int]; word: string): FlagMatch =
   var best = -1
   for i in countdown(scope.high, 0):
     let p = g.params[scope[i]]
-    if p.kind == cpkFlag and p.format == cafConcat and p.alias.len > 0 and
-        word.startsWith(p.alias) and word.len > p.alias.len:
+    if p.kind == cpkFlag and csCli in p.sources and p.format == cafConcat and
+        p.alias.len > 0 and word.startsWith(p.alias) and
+        word.len > p.alias.len:
       if best < 0 or p.alias.len > g.params[best].alias.len:
         best = scope[i]
   if best >= 0:
@@ -205,8 +191,9 @@ func matchSingleDash(g: CliGrammar; scope: seq[int];
   var best = -1
   for i in countdown(scope.high, 0):
     let p = g.params[scope[i]]
-    if p.kind == cpkFlag and p.format == cafConcat and p.alias.len > 1 and
-        word.startsWith(p.alias) and word.len > p.alias.len:
+    if p.kind == cpkFlag and csCli in p.sources and p.format == cafConcat and
+        p.alias.len > 1 and word.startsWith(p.alias) and
+        word.len > p.alias.len:
       if best < 0 or p.alias.len > g.params[best].alias.len:
         best = scope[i]
   if best >= 0:
@@ -442,39 +429,182 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
   result.selected = selected
   result.candidates = candidates
 
-proc cliMerge*(g: CliGrammar; tokens: CliTokens; options = CliOptions()):
-    CliResolution =
-  ## Phase 2: the winning candidates of each parameter. With the command
-  ## line as the only source, a list (or counted) parameter keeps every
-  ## occurrence and any other keeps its last; the earlier ones are recorded
-  ## as overridden.
+func visibleParams(g: CliGrammar; selected: openArray[int]): seq[int] =
+  ## The parameters of the selected commands (each declared once).
+  for command in selected:
+    for id in g.commands[command].ownParams:
+      result.add(id)
+
+func sameGroup(a, b: CliCandidate): bool =
+  ## Whether two candidates come from the same source: the same layer, the
+  ## environment, or the command line.
+  a.source == b.source and (a.source != csFile or a.layer == b.layer)
+
+func cliCandidateGroups*(cands: openArray[CliCandidate]): seq[seq[CliCandidate]] =
+  ## ``cands`` split into runs from one source each (a layer, the
+  ## environment, the command line), in order.
+  for c in cands:
+    if result.len == 0 or not sameGroup(result[^1][^1], c):
+      result.add(@[c])
+    else:
+      result[^1].add(c)
+
+func normalBool(text: string): string =
+  case text.toLowerAscii()
+  of "true", "yes", "on", "1": "true"
+  of "false", "no", "off", "0": "false"
+  else: text
+
+func groupValue(p: CliGrammarParam; cands: openArray[CliCandidate]):
+    seq[string] =
+  ## What one source's candidates say, as text, for comparing two sources
+  ## (``errorOnConflict``): a counted flag's count, a list's elements, else
+  ## the last candidate's value, a switch's spelled ``true`` / ``false``.
+  if p.counted:
+    var n = 0
+    var exact = true
+    for c in cands:
+      case c.form
+      of ccfCount: inc n
+      of ccfValue:
+        try: n += parseInt(c.text)
+        except ValueError: exact = false
+      else: discard
+    return (if exact: @[$n] else: @[cands[^1].text])
+  if p.isList:
+    for c in cands:
+      case c.form
+      of ccfValue:
+        if p.separator.len > 0 and not c.verbatim:
+          for piece in c.text.split(p.separator):
+            result.add(piece)
+        else:
+          result.add(c.text)
+      of ccfBare: result.add("<bare>")
+      else: discard
+    return
+  let c = cands[^1]
+  case c.form
+  of ccfValue: @[if p.isSwitch: normalBool(c.text) else: c.text]
+  of ccfBare: @[if p.isSwitch and not p.hasOptionalValue: "true" else: "<bare>"]
+  of ccfNegated: @["false"]
+  of ccfCount: @["1"]
+  of ccfEmpty: @[]
+
+func shown(values: seq[string]): string =
+  "'" & values.join(", ") & "'"
+
+proc cliMerge*(g: CliGrammar; tokens: CliTokens;
+               sourced: seq[seq[CliCandidate]]; options = CliOptions()):
+    CliResolution {.raises: [CliUsageError].} =
+  ## Phase 2: for each parameter of the selected commands, the candidates
+  ## its value is made of, and its origin. ``sourced`` holds, per parameter
+  ## id, what the configuration layers and the environment supply
+  ## (``cliSourceCandidates``), lowest first; the command line's
+  ## candidates (``tokens``) come after them. Empty means no other source.
+  ##
+  ## Each source (one layer, the environment, the command line) is one
+  ## group. Within a group a list or a counted flag keeps every occurrence
+  ## and anything else its last. Across groups:
+  ##
+  ## * a group from a binding layer wins outright (the lowest one, when
+  ##   several bind the parameter): its value is enforced, the groups below
+  ##   it are overridden and the ones above it ignored;
+  ## * ``replace``: the highest group wins, the others are overridden;
+  ## * ``errorOnConflict``: as ``replace``, but two groups with different
+  ##   values raise ``cekConflictingSources`` naming both;
+  ## * ``append`` and a combine proc: every group is part of the value,
+  ##   lowest first, and the others are recorded as combined.
+  ##
+  ## The origin's ``losers`` list every candidate outside the winning group
+  ## (and the earlier occurrences of a scalar within it), in the order they
+  ## were considered.
   result.selected = tokens.selected
   result.program = effectiveProgram(g, options)
   result.exitCode = effectiveExitCode(options)
   result.merged = newSeq[seq[CliCandidate]](g.params.len)
   result.overridden = newSeq[seq[CliCandidate]](g.params.len)
   result.decisions = newSeq[CliDecision](g.params.len)
-  for id, cands in tokens.candidates:
-    if cands.len == 0:
+  result.origins = newSeq[CliOrigin](g.params.len)
+  for id in visibleParams(g, tokens.selected):
+    var all: seq[CliCandidate] = @[]
+    if id < sourced.len:
+      all.add(sourced[id])
+    all.add(tokens.candidates[id])
+    if all.len == 0:
       continue
     let p = g.params[id]
-    if p.isList or p.counted:
-      result.merged[id] = cands
-    else:
-      result.merged[id] = @[cands[^1]]
-      result.overridden[id] = cands[0 ..< ^1]
+    let groups = cliCandidateGroups(all)
+    # Which candidates of a group are part of its value.
+    proc effective(grp: seq[CliCandidate]): seq[bool] =
+      result = newSeq[bool](grp.len)
+      if p.isList or p.counted:
+        for k in 0 ..< grp.len:
+          result[k] = true
+      else:
+        result[^1] = true
+    var binding = -1
+    for k, grp in groups:
+      if grp[0].source == csFile and grp[0].binding:
+        binding = k
+        break
+    let collects = binding < 0 and p.merge in {cmrAppend, cmrCombine}
+    let winner = if binding >= 0: binding else: groups.high
+    if binding < 0 and p.merge == cmrErrorOnConflict:
+      let first = groupValue(p, groups[0])
+      for k in 1 .. groups.high:
+        let other = groupValue(p, groups[k])
+        if other != first:
+          let a = groups[0][^1]
+          let b = groups[k][^1]
+          let at = if b.source == csCli: b.argvIndex
+                   elif a.source == csCli: a.argvIndex
+                   else: -1
+          raise newCliUsageError(cekConflictingSources, result.program,
+            g.commands[p.declaredBy].path, at, cliDisplayName(p),
+            detail = shown(first) & " from " & $cliSiteOf(a) & " and " &
+              shown(other) & " from " & $cliSiteOf(b),
+            exitCode = result.exitCode)
+    var origin = CliOrigin()
+    for k, grp in groups:
+      let eff = effective(grp)
+      for j, c in grp:
+        let inValue = eff[j] and (k == winner or collects)
+        if inValue:
+          result.merged[id].add(c)
+          origin.values.add(cliCandidateValueText(c))
+        else:
+          result.overridden[id].add(c)
+        if k == winner and eff[j]:
+          continue
+        let fate = if binding >= 0 and k > binding: cfIgnoredByEnforcement
+                   elif inValue: cfCombined
+                   else: cfOverridden
+        var site = cliSiteOf(c)
+        if site.kind == cokEnforced:
+          # Only the winning binding layer enforces; a higher one that
+          # also binds the parameter lost like any other file.
+          site.kind = cokFile
+        origin.losers.add(CliLoser(value: cliCandidateValueText(c),
+          site: site, fate: fate))
+    origin.winner = cliSiteOf(groups[winner][^1])
+    result.origins[id] = origin
+
+proc cliMerge*(g: CliGrammar; tokens: CliTokens; options = CliOptions()):
+    CliResolution {.raises: [CliUsageError].} =
+  ## Phase 2 with the command line as the only source.
+  cliMerge(g, tokens, @[], options)
 
 proc cliDecide*(g: CliGrammar; r: var CliResolution) {.
     raises: [CliUsageError].} =
-  ## Phase 3: what each parameter of the selected commands gets — its merged
-  ## candidates, else a value implied by a parameter that has candidates
-  ## (the first such in declaration order; implications do not chain), else
-  ## its default. A required parameter that gets nothing is a usage error
-  ## naming the command that declares it.
-  var visible: seq[int] = @[]
-  for command in r.selected:
-    for id in g.commands[command].ownParams:
-      visible.add(id)
+  ## Phase 3, after every source is merged: what each parameter of the
+  ## selected commands gets — its merged candidates, else a value implied
+  ## by a parameter that some source supplied (the first such in
+  ## declaration order; implications do not chain), else its default. A
+  ## default therefore never stands in for a value a source supplied. A
+  ## required parameter that gets nothing is a usage error naming the
+  ## command that declares it.
+  let visible = visibleParams(g, r.selected)
   for id in visible:
     if r.merged[id].len > 0:
       r.decisions[id] = CliDecision(kind: cdkSource)
@@ -489,9 +619,14 @@ proc cliDecide*(g: CliGrammar; r: var CliResolution) {.
           if target == id:
             r.decisions[id] = CliDecision(kind: cdkImplied, impliedBy: src,
               implication: k)
+            r.origins[id] = CliOrigin(winner: CliSite(kind: cokImplied,
+              argvIndex: -1, impliedBy: g.params[src].name),
+              values: @[g.params[src].impliesText[k]])
             break implied
     if r.decisions[id].kind == cdkUnset and g.params[id].hasDefault:
       r.decisions[id] = CliDecision(kind: cdkDefault)
+      r.origins[id] = CliOrigin(winner: CliSite(kind: cokDefault,
+        argvIndex: -1), values: @[g.params[id].defaultText])
   # The innermost missing parameter is reported first.
   for i in countdown(visible.high, 0):
     let id = visible[i]
@@ -504,9 +639,22 @@ proc cliDecide*(g: CliGrammar; r: var CliResolution) {.
 proc cliResolve*(g: CliGrammar; argv: openArray[string];
                  options = CliOptions()): CliResolution {.
     raises: [CliUsageError, CliHelpRequest].} =
-  ## Phases 1 to 3.
+  ## Phases 1 to 3, with the command line as the only source.
   let tokens = cliTokenize(g, argv, options)
   result = cliMerge(g, tokens, options)
+  cliDecide(g, result)
+
+proc cliResolve*(g: CliGrammar; argv: openArray[string];
+                 sources: CliSources; options = CliOptions()):
+    CliResolution {.raises: [CliUsageError, CliHelpRequest,
+                             CliConfigError].} =
+  ## Phases 1 to 3 over every source: the configuration layers and the
+  ## environment of ``sources``, then the command line. The command line is
+  ## read first, so a request for help or a usage error is reported even
+  ## when a configuration file is broken.
+  let tokens = cliTokenize(g, argv, options)
+  let sourced = cliSourceCandidates(g, sources)
+  result = cliMerge(g, tokens, sourced, options)
   cliDecide(g, result)
 
 func cliSelected*(r: CliResolution; command: int): bool =
@@ -521,10 +669,12 @@ proc invalid(g: CliGrammar; r: CliResolution; id: int; c: CliCandidate;
              text, expected: string) {.noreturn, raises: [CliUsageError].} =
   let p = g.params[id]
   let spelling = if c.spelling.len > 0: c.spelling else: cliDisplayName(p)
-  let index = if c.valueArgvIndex >= 0: c.valueArgvIndex else: c.argvIndex
+  let index = if c.source != csCli: -1
+              elif c.valueArgvIndex >= 0: c.valueArgvIndex
+              else: c.argvIndex
   raise newCliUsageError(cekInvalidValue, r.program,
     g.commands[p.declaredBy].path, index, spelling, text, expected,
-    exitCode = r.exitCode)
+    exitCode = r.exitCode, source = cliSourceDescription(c))
 
 proc convertText[T](g: CliGrammar; r: CliResolution; id: int;
                     c: CliCandidate; text: string; value: var T) {.
@@ -555,17 +705,24 @@ template cliElementType*(T: typedesc): typedesc =
   elif T is Option: typeof(default(T).get())
   else: T
 
-proc cliConvert*[T, E](g: CliGrammar; r: CliResolution; id: int;
-                       value: var T; bare: proc (): T {.raises: [].};
-                       allowed: openArray[E]) {.raises: [CliUsageError].} =
-  ## Converts the merged candidates of parameter ``id`` into ``value``.
+proc cliConvertCandidates*[T, E](g: CliGrammar; r: CliResolution; id: int;
+                                 cands: openArray[CliCandidate];
+                                 value: var T;
+                                 bare: proc (): T {.raises: [].};
+                                 allowed: openArray[E]) {.
+    raises: [CliUsageError].} =
+  ## Converts the candidates ``cands`` of parameter ``id`` into ``value``.
   ## ``bare`` gives the value of a bare optional-value flag (its
   ## ``optionalValue``); it is not called otherwise. When ``allowed`` is not
   ## empty (the parameter's ``values``), every converted value must be one
-  ## of its entries.
+  ## of its entries. A list collects every candidate (each split on the
+  ## ``separator`` unless it is ``verbatim``); a counted flag adds up its
+  ## occurrences and the counts other sources give; anything else takes the
+  ## last candidate.
   mixin parseCliValue
   let p = g.params[id]
-  let cands = r.merged[id]
+  if cands.len == 0:
+    return
 
   template restrict(c: CliCandidate; text: string; v: E) =
     restrictTo(g, r, id, c, text, v, allowed)
@@ -575,7 +732,8 @@ proc cliConvert*[T, E](g: CliGrammar; r: CliResolution; id: int;
     for c in cands:
       case c.form
       of ccfValue:
-        let pieces = if p.separator.len > 0: c.text.split(p.separator)
+        let pieces = if p.separator.len > 0 and not c.verbatim:
+                       c.text.split(p.separator)
                      else: @[c.text]
         for piece in pieces:
           var item: E
@@ -585,12 +743,23 @@ proc cliConvert*[T, E](g: CliGrammar; r: CliResolution; id: int;
       of ccfBare:
         for item in bare():
           value.add(item)
-      of ccfNegated, ccfCount:
+      of ccfNegated, ccfCount, ccfEmpty:
         discard
   else:
     if p.counted:
       when T is SomeInteger:
-        value = T(cands.len)
+        var total: T = 0
+        for c in cands:
+          case c.form
+          of ccfCount:
+            total += 1
+          of ccfValue:
+            var n: T
+            convertText(g, r, id, c, c.text, n)
+            total += n
+          else:
+            discard
+        value = total
       return
     let c = cands[^1]
     case c.form
@@ -613,5 +782,38 @@ proc cliConvert*[T, E](g: CliGrammar; r: CliResolution; id: int;
         value = false
       elif T is Option[bool]:
         value = some(false)
-    of ccfCount:
+    of ccfCount, ccfEmpty:
       discard
+
+proc cliConvert*[T, E](g: CliGrammar; r: CliResolution; id: int;
+                       value: var T; bare: proc (): T {.raises: [].};
+                       allowed: openArray[E]) {.raises: [CliUsageError].} =
+  ## Converts the merged candidates of parameter ``id`` into ``value``
+  ## (``cliConvertCandidates``).
+  cliConvertCandidates(g, r, id, r.merged[id], value, bare, allowed)
+
+func cliCombines*(g: CliGrammar; r: CliResolution; id: int): bool =
+  ## Whether parameter ``id``'s value goes through its combine proc: its
+  ## merge rule is a combine proc and no binding layer enforces it.
+  g.params[id].merge == cmrCombine and r.origins[id].kind != cokEnforced
+
+proc cliCombineInputs*[T, E](g: CliGrammar; r: CliResolution; id: int;
+                             bare: proc (): T {.raises: [].};
+                             allowed: openArray[E]):
+    seq[CliSourcedValue[T]] {.raises: [CliUsageError].} =
+  ## What a combine proc receives for parameter ``id``: one value per source
+  ## that supplied it, lowest first, each converted from that source's
+  ## candidates, with the source's site.
+  for grp in cliCandidateGroups(r.merged[id]):
+    var v: T
+    cliConvertCandidates(g, r, id, grp, v, bare, allowed)
+    result.add(CliSourcedValue[T](value: v, origin: cliSiteOf(grp[^1])))
+
+proc cliCombineFailed*(g: CliGrammar; r: CliResolution; id: int;
+                       message: string) {.noreturn,
+                       raises: [CliUsageError].} =
+  ## A combine proc raised: the values its sources gave cannot be combined.
+  let p = g.params[id]
+  raise newCliUsageError(cekConflictingSources, r.program,
+    g.commands[p.declaredBy].path, -1, cliDisplayName(p), detail = message,
+    exitCode = r.exitCode)

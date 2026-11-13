@@ -26,8 +26,9 @@ proc completeRepos(prefix: string): seq[string] =
   ## A completer, only referenced by the description.
   @[prefix]
 
-proc strictest(values: seq[int]): int =
-  ## A combine proc, only referenced by the description.
+proc strictest(candidates: openArray[CliSourcedValue[int]]): int =
+  ## A combine proc (the signature ``cliModelTypeChecks`` requires), only
+  ## referenced by the description.
   0
 
 const defaultJobs = 4

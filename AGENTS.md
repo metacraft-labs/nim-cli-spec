@@ -29,6 +29,15 @@ first.
 - `src/clispec/errors.nim`: the usage-error taxonomy (`CliErrorKind`, one
   wording per kind in `cliErrorMessage`) and `CliHelpRequest`.
 - `src/clispec/help.nim`: human-readable help and the `clispec-help/1` JSON.
+- `src/clispec/origins.nim`: candidates (one value a source supplied) and
+  origins (`CliOrigin`: the winner and every loser with its fate).
+- `src/clispec/sources.nim`: configuration layers, the environment, the
+  format-adapter interface (`CliConfigFormat`), schema validation and
+  `CliConfigError`. No serialization dependency.
+- `src/clispec/toml_source.nim`: the TOML adapter (nim-toml-serialization).
+  NOT imported by the umbrella: only a consumer that reads TOML pays for
+  it. The dev shell exports its dependencies' `--path:` flags as
+  `CLISPEC_FORMAT_PATHS`, which the Justfile passes to every test.
 - `src/clispec/program.nim`: `cliProgram` / `cliProgramCode`, the generator.
 - `tests/`: `test_dsl_model.nim` (every construct of the language parses into
   the model), `test_extension.nim` (a consumer extension, driven through
@@ -42,7 +51,10 @@ first.
   form, the error taxonomy (a golden table indexed by `CliErrorKind`, so a
   new kind without a case does not compile) and help against the model.
   `test_readme_examples.nim` compiles and runs every ```nim block of the
-  README.
+  README. The `test_cs_m4_*` tests load `tests/cs_m4_fixture.nim`'s program
+  from real TOML files in a temporary directory and an environment table:
+  precedence and origins, merge rules, enforcement, defaults after the merge
+  and schema validation.
 
 ## Rules
 
@@ -69,6 +81,11 @@ first.
   generated code raise or return; nothing ends the process.
 - **The help JSON is a contract.** Within `clispec-help/1` keys are only
   added, never renamed or removed; anything else is a new schema name.
+- **Configuration-file errors have one wording per kind too**
+  (`CliConfigErrorKind`, `cliConfigErrorMessage`), naming the file, the line
+  and the key.
+- **The umbrella never imports a serialization library.** A format adapter
+  is a module of its own that consumers import explicitly.
 - **Every diagnostic names what it is about.** Errors about a parameter go
   through `cliParamError` (`clispec: parameter '<name>': ...`); errors about a
   command name it with `cliCommandLabel`.

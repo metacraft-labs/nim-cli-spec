@@ -73,6 +73,8 @@ type
     implies*: seq[int]
       ## The parameter ids of this parameter's ``implies`` targets, in
       ## declaration order.
+    impliesText*: seq[string]
+      ## The values of those implications, as written.
     isSwitch*: bool
       ## The type is ``bool``: the flag takes no value of its own (filled in
       ## by the generated code).
@@ -84,6 +86,9 @@ type
       ## The closed value set as the parser accepts it: the ``values``
       ## entries, or every value of an enum type (generated code). Empty when
       ## the set is open.
+    configType*: CliConfigType
+      ## The type its configuration-file value (each element, for a list)
+      ## must have (generated code; ``cctInteger`` for a counted flag).
 
   CliGrammarCommand* = object
     ## One command: the root, a ``subcmd`` or a ``call:``.
@@ -115,6 +120,10 @@ type
     commands*: seq[CliGrammarCommand]
       ## Index 0 is the root.
     groups*: seq[CliGroup]
+    configSchema*: string
+      ## The identifier configuration files must declare in their
+      ## ``schema`` string (``CliModel.configSchema``).
+    keyStyle*: CliKeyStyle
 
   CliGrammarProblem* = object
     ## A description that is a valid model but not a parseable program.
@@ -167,6 +176,8 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
   ## ``id``, for a generator that needs its expressions.
   result.program = program
   result.groups = model.groups
+  result.configSchema = model.configSchema
+  result.keyStyle = model.keyStyle
   # The model lists the scopes in post-order: each one after the scopes
   # nested inside it. Rebuild the tree with a stack: when a scope arrives,
   # the scopes directly inside it are the run of entries on top of the stack
@@ -259,6 +270,7 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
           if nimIdentNormalize(other.name) ==
               nimIdentNormalize(implication.param):
             result.params[id].implies.add(result.commands[k].params[jj])
+            result.params[id].impliesText.add(implication.value.code)
             break
   # Rules for parsing a program's own command line.
   for k, cmd in result.commands:
@@ -320,10 +332,11 @@ func cliCommandAt*(g: CliGrammar; words: openArray[string]): int =
 
 func cliPositionals*(g: CliGrammar; command: int): seq[int] =
   ## The positional parameters of a command, in the order they are filled:
-  ## by ``position``, then by declaration.
+  ## by ``position``, then by declaration. A positional whose ``sources``
+  ## exclude the command line takes no word and is left out.
   var items: seq[tuple[position, order, id: int]] = @[]
   for order, id in g.commands[command].params:
-    if g.params[id].kind == cpkPositional:
+    if g.params[id].kind == cpkPositional and csCli in g.params[id].sources:
       items.add((g.params[id].position, order, id))
   items.sort(proc (a, b: tuple[position, order, id: int]): int =
     result = cmp(a.position, b.position)
