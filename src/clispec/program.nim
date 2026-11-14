@@ -47,12 +47,10 @@
 ## What a field holds
 ## ==================
 ##
-## The value its sources supply (the command line, and, when the program
-## passes ``CliSources``, its configuration layers and the environment,
-## merged as ``clispec/parser`` and ``clispec/sources`` describe), else the
-## value an ``implies`` of a parameter some source supplied sets, else its
-## ``default``, else the type's zero value (``none`` for an ``Option``). A ``required`` parameter that gets no value is a usage
-## error. A ``counted`` parameter holds the number of occurrences; a list
+## The value the command line supplies, else the value an ``implies`` of a
+## parameter the command line supplied sets, else its ``default``, else the
+## type's zero value (``none`` for an ``Option``). A ``required`` parameter
+## that gets no value is a usage error. A ``counted`` parameter holds the number of occurrences; a list
 ## collects every occurrence. ``values`` entries must be constant
 ## expressions: they are evaluated at compile time for help and completion.
 ##
@@ -70,29 +68,36 @@
 ## * ``Tool.helpText(path)`` and ``Tool.helpJson(path)`` render the help of
 ##   the command reached by the subcommand words ``path`` (see
 ##   ``clispec/help``); an unknown word is a ``CliUsageError``.
-## * ``Tool.load(argv, sources, options)`` (and ``Tool.load(sources,
-##   options)`` for the process's arguments) also reads the configuration
-##   layers and the environment of a ``CliSources``; it raises
-##   ``CliConfigError`` for a file that does not fit the program's schema.
-## * ``Tool.loadWithOrigins(argv, sources, options)`` returns
-##   ``tuple[config: Tool, origins: ToolOrigins]``: the origin object has the
-##   configuration object's shape (``ToolOrigins``, ``ToolBuildOrigins``,
-##   the same ``command`` discriminator) with a ``CliOrigin`` per field.
-## * ``Tool.configSchema`` is the configuration-file schema, and
-##   ``Tool.configSchema(source)`` the same with its keys spelt as the named
-##   file source ``source`` spells them.
+## * ``Tool.complete``, ``Tool.completionReply`` and
+##   ``Tool.completionScript`` are the shell completion of
+##   ``clispec/completion`` and ``clispec/completion_scripts``.
 ## * ``Tool.cliGrammar`` is the grammar and ``Tool.cliModel`` the model, both
 ##   constants.
 ##
 ## A consumer whose model carries an extension generates the same code from
 ## its own macro with ``cliProgramCode``.
+##
+## Configuration files and the environment
+## =======================================
+##
+## The description also declares what other sources need per parameter
+## (``env``, ``key``, ``sources``, ``merge``, ``configSchema``, the naming
+## conventions), but reading them is not this library's job:
+## `confutils <https://github.com/metacraft-labs/nim-confutils>`_ is
+## instantiated over a clispec description and adds configuration-file
+## layers, the environment, the merge rules and an origin object for every
+## value, delegating the command line to the code generated here. For a
+## library that generates such code beside ``cliProgramCode``'s, the names
+## and shapes it generates are exported: ``cliGeneratedNames``,
+## ``cliObjectHolds``, ``cliHasObject``, ``cliBranches``,
+## ``cliBuilderName``, ``cliCompletersName``, ``cliFieldBare`` and
+## ``cliFieldAllowed``.
 
 import std/[macros, os, strutils]
 
-import ./[model, dsl, grammar, parser, help, sources, origins, completion,
-  completion_scripts]
+import ./[model, dsl, grammar, parser, help, completion, completion_scripts]
 
-export parser, help, grammar, sources, origins, completion, completion_scripts
+export parser, help, grammar, completion, completion_scripts
 
 proc cliCommandLineParams*(): seq[string] =
   ## The process's own arguments, without the program name.
@@ -145,10 +150,22 @@ proc exportedName(name: string; exported: bool): NimNode =
   if exported: postfix(quoted(name), "*") else: quoted(name)
 
 type
+  CliGeneratedNames* = object
+    ## The names ``cliProgramCode`` gives what it generates for one
+    ## description, for a library that generates code beside it.
+    typeName*: string
+      ## The root's type, as given to ``cliProgram``.
+    typeNames*: seq[string]
+      ## Per command index: the name of its configuration object type
+      ## (``Tool``, ``ToolBuild``, ``ToolCall``). A ``call:`` without an
+      ## object of its own (``cliHasObject``) has a name nothing uses.
+    fieldOfChild*: seq[string]
+      ## Per command index: its discriminator value and branch field in its
+      ## parent's object (``build``, ``call``); empty for the root.
+
   GenContext = object
     g: CliGrammar
-    typeNames: seq[string]
-    fieldOfChild: seq[string]
+    names: CliGeneratedNames
     exported: bool
     grammarConst: NimNode
 
@@ -157,39 +174,187 @@ proc problemAt(message, file: string; line: int) =
   n.setLineInfo(file, line, 0)
   error(message, n)
 
-proc objectHolds(g: CliGrammar; command: int): seq[int] =
-  ## The parameter ids whose fields the object of ``command`` holds.
+proc cliObjectHolds*(g: CliGrammar; command: int): seq[int] =
+  ## The parameter ids whose fields the configuration object of ``command``
+  ## holds: its own parameters, and those of its ``call:`` when it has no
+  ## subcommands.
   result = g.commands[command].ownParams
   let call = g.commands[command].callChild
   if call >= 0 and g.commands[command].children.len == 0:
     for id in g.commands[call].ownParams:
       result.add(id)
 
-proc hasObject(g: CliGrammar; command: int): bool =
-  ## A call: has an object of its own only as a branch of a command with
-  ## subcommands.
+proc cliHasObject*(g: CliGrammar; command: int): bool =
+  ## Whether ``command`` has a configuration object type of its own: every
+  ## command but a ``call:`` of a command without subcommands, whose
+  ## parameters its parent's object holds.
   not g.commands[command].isCall or
     g.commands[g.commands[command].parent].children.len > 0
 
-proc branches(g: CliGrammar; command: int): seq[int] =
+proc cliBranches*(g: CliGrammar; command: int): seq[int] =
+  ## The commands that are branches of ``command``'s object: its
+  ## subcommands, then its ``call:`` when it has subcommands.
   result = g.commands[command].children
   if g.commands[command].children.len > 0 and
       g.commands[command].callChild >= 0:
     result.add(g.commands[command].callChild)
 
-func originsName(ctx: GenContext; command: int): string =
-  ctx.typeNames[command] & "Origins"
+proc cliGeneratedNames*(g: CliGrammar; typeName: string): CliGeneratedNames =
+  ## The type and branch names ``cliProgramCode`` uses for ``g`` when the
+  ## root's type is ``typeName``.
+  result.typeName = typeName
+  result.typeNames = newSeq[string](g.commands.len)
+  result.fieldOfChild = newSeq[string](g.commands.len)
+  for k, cmd in g.commands:
+    if k == 0:
+      result.typeNames[k] = typeName
+    elif cmd.isCall:
+      result.typeNames[k] = result.typeNames[cmd.parent] & "Call"
+      result.fieldOfChild[k] = "call"
+    else:
+      result.typeNames[k] = result.typeNames[cmd.parent] &
+        camelWord(cmd.name, true)
+      result.fieldOfChild[k] = camelWord(cmd.name, false)
 
-proc typeDecls(ctx: GenContext; command: int; origins = false): seq[NimNode] =
+proc cliBuilderName*(names: CliGeneratedNames; command: int): NimNode =
+  ## The generated ``proc (g: CliGrammar; r: CliResolution): <Type>`` that
+  ## builds ``command``'s configuration object from a resolution (not
+  ## exported: it is visible in the description's module).
+  ident("cliBuild" & names.typeNames[command])
+
+proc cliCompletersName*(names: CliGeneratedNames): NimNode =
+  ## The generated ``proc (): seq[CliCompleter]`` that builds the
+  ## completers, by parameter id (not exported).
+  ident("cliCompletersOf" & names.typeName)
+
+proc cliCommandEnumName*(names: CliGeneratedNames; command: int): string =
+  ## The discriminator enum of ``command``'s object (``<Type>Command``).
+  names.typeNames[command] & "Command"
+
+proc cliShapedTypeDecls*(g: CliGrammar; names: CliGeneratedNames;
+                         command: int; suffix: string; fieldType: NimNode;
+                         exported: bool): seq[NimNode] =
+  ## A type of the same shape as ``command``'s configuration object, named
+  ## its type name followed by ``suffix``: one field of type ``fieldType``
+  ## per parameter field, the same ``command`` discriminator (the enum the
+  ## configuration object declares) and each branch holding the
+  ## subcommand's type of that shape. For a library that records something
+  ## per configuration value (where it came from, say).
+  var fields = newNimNode(nnkRecList)
+  for id in cliObjectHolds(g, command):
+    fields.add(newIdentDefs(exportedName(g.params[id].name, exported),
+      fieldType.copyNimTree))
+  let kids = cliBranches(g, command)
+  if kids.len > 0:
+    let enumName = cliCommandEnumName(names, command)
+    var caseNode = nnkRecCase.newTree(newIdentDefs(
+      exportedName("command", exported), ident(enumName)))
+    for kid in kids:
+      let field = names.fieldOfChild[kid]
+      caseNode.add(nnkOfBranch.newTree(
+        newDotExpr(ident(enumName), quoted(field)),
+        nnkRecList.newTree(newIdentDefs(exportedName(field, exported),
+          ident(names.typeNames[kid] & suffix)))))
+    fields.add(caseNode)
+  result.add(nnkTypeDef.newTree(
+    exportedName(names.typeNames[command] & suffix, exported),
+    newEmptyNode(), nnkObjectTy.newTree(newEmptyNode(), newEmptyNode(),
+      fields)))
+
+proc cliShapedBuilderProc*(g: CliGrammar; names: CliGeneratedNames;
+                           command: int; suffix, procPrefix: string;
+                           extraParams: seq[NimNode];
+                           fieldValues: seq[NimNode]): NimNode =
+  ## ``proc <procPrefix><Type>(g: CliGrammar; r: CliResolution;
+  ## <extraParams>): <Type><suffix>``, which builds the value of
+  ## ``cliShapedTypeDecls``' type for the commands ``r`` selected:
+  ## ``fieldValues[id]`` is the expression (in ``g``, ``r`` and the extra
+  ## parameters) each parameter's field gets. The builders of the branches
+  ## must be declared first (innermost first).
+  let typeName = ident(names.typeNames[command] & suffix)
+  var forwarded = @[ident("g"), ident("r")]
+  for p in extraParams:
+    for k in 0 ..< p.len - 2:
+      forwarded.add(ident($p[k]))
+  var body = newStmtList()
+  let kids = cliBranches(g, command)
+  if kids.len > 0:
+    let enumName = ident(cliCommandEnumName(names, command))
+    var caseStmt = nnkCaseStmt.newTree(newCall(ident("cliSelectedChild"),
+      ident("g"), ident("r"), newLit(command)))
+    for kid in kids:
+      let field = names.fieldOfChild[kid]
+      caseStmt.add(nnkOfBranch.newTree(newLit(kid), newStmtList(
+        newAssignment(ident("result"), nnkObjConstr.newTree(typeName,
+          nnkExprColonExpr.newTree(ident("command"),
+            newDotExpr(enumName, quoted(field))),
+          nnkExprColonExpr.newTree(quoted(field),
+            newCall(ident(procPrefix & names.typeNames[kid]), forwarded)))))))
+    caseStmt.add(nnkElse.newTree(newStmtList(newCall(ident("raiseAssert"),
+      newLit("clispec: no subcommand was selected")))))
+    body.add(caseStmt)
+  for id in cliObjectHolds(g, command):
+    body.add(newAssignment(
+      newDotExpr(ident("result"), quoted(g.params[id].name)),
+      fieldValues[id]))
+  var params = @[typeName,
+    newIdentDefs(ident("g"), ident("CliGrammar")),
+    newIdentDefs(ident("r"), ident("CliResolution"))]
+  params.add(extraParams)
+  result = newProc(ident(procPrefix & names.typeNames[command]),
+    params = params, body = body)
+
+proc cliShapedVisitorProc*(g: CliGrammar; names: CliGeneratedNames;
+                           command: int; procPrefix: string;
+                           extraParams: seq[NimNode];
+                           fieldStmts: seq[NimNode];
+                           raises: seq[NimNode]): NimNode =
+  ## ``proc <procPrefix><Type>(g: CliGrammar; r: CliResolution;
+  ## <extraParams>; target: var <Type>)``, which runs ``fieldStmts[id]``
+  ## (statements in ``g``, ``r``, the extra parameters and ``target``,
+  ## ``command``'s configuration object; an empty node for none) for every
+  ## parameter field of the commands ``r`` selected, descending into the
+  ## selected branch first. It raises what ``raises`` lists. The visitors
+  ## of the branches must be declared first (innermost first).
+  var forwarded = @[ident("g"), ident("r")]
+  for p in extraParams:
+    for k in 0 ..< p.len - 2:
+      forwarded.add(ident($p[k]))
+  var body = newStmtList()
+  let kids = cliBranches(g, command)
+  if kids.len > 0:
+    var caseStmt = nnkCaseStmt.newTree(newDotExpr(ident("target"),
+      ident("command")))
+    for kid in kids:
+      let field = names.fieldOfChild[kid]
+      var args = forwarded
+      args.add(newDotExpr(ident("target"), quoted(field)))
+      caseStmt.add(nnkOfBranch.newTree(
+        newDotExpr(ident(cliCommandEnumName(names, command)), quoted(field)),
+        newStmtList(newCall(ident(procPrefix & names.typeNames[kid]), args))))
+    body.add(caseStmt)
+  for id in cliObjectHolds(g, command):
+    if id < fieldStmts.len and fieldStmts[id].kind != nnkEmpty:
+      body.add(fieldStmts[id])
+  if body.len == 0:
+    body.add(nnkDiscardStmt.newTree(newEmptyNode()))
+  var params = @[newEmptyNode(),
+    newIdentDefs(ident("g"), ident("CliGrammar")),
+    newIdentDefs(ident("r"), ident("CliResolution"))]
+  params.add(extraParams)
+  params.add(newIdentDefs(ident("target"), nnkVarTy.newTree(
+    ident(names.typeNames[command]))))
+  result = newProc(ident(procPrefix & names.typeNames[command]),
+    params = params, body = body)
+  result.addPragma(nnkExprColonExpr.newTree(ident("raises"),
+    nnkBracket.newTree(raises)))
+
+proc typeDecls(ctx: GenContext; command: int): seq[NimNode] =
   ## The object type of ``command`` and, when it has subcommands, its
-  ## discriminator enum. With ``origins``, the origin object type of the
-  ## same shape instead: a ``CliOrigin`` per parameter, the same
-  ## discriminator (the enum is declared once, with the configuration
-  ## object) and each branch holding the subcommand's origin object.
+  ## discriminator enum.
   let g = ctx.g
   let cmd = g.commands[command]
-  let name = if origins: originsName(ctx, command)
-             else: ctx.typeNames[command]
+  let name = ctx.names.typeNames[command]
   var fields = newNimNode(nnkRecList)
   var seen: seq[tuple[norm, what: string]] = @[]
   proc claim(field, what: string) =
@@ -201,87 +366,75 @@ proc typeDecls(ctx: GenContext; command: int; origins = false): seq[NimNode] =
           ": the configuration object field '" & field & "' would hold " &
           "both " & s.what & " and " & what, cmd.sourceFile, cmd.sourceLine)
     seen.add((norm, what))
-  for id in objectHolds(g, command):
+  for id in cliObjectHolds(g, command):
     let p = g.params[id]
-    if not origins:
-      claim(p.name, "parameter '" & p.name & "'")
+    claim(p.name, "parameter '" & p.name & "'")
     fields.add(newIdentDefs(exportedName(p.name, ctx.exported),
-      (if origins: ident("CliOrigin") else: parseExpr(p.nimType))))
-  let kids = branches(g, command)
+      parseExpr(p.nimType)))
+  let kids = cliBranches(g, command)
   if kids.len > 0:
-    let enumName = ctx.typeNames[command] & "Command"
-    if not origins:
-      var enumTy = nnkEnumTy.newTree(newEmptyNode())
-      for kid in kids:
-        enumTy.add(quoted(ctx.fieldOfChild[kid]))
-      result.add(nnkTypeDef.newTree(
-        nnkPragmaExpr.newTree(exportedName(enumName, ctx.exported),
-          nnkPragma.newTree(ident("pure"))),
-        newEmptyNode(), enumTy))
-      claim("command", "the subcommand discriminator")
+    let enumName = cliCommandEnumName(ctx.names, command)
+    var enumTy = nnkEnumTy.newTree(newEmptyNode())
+    for kid in kids:
+      enumTy.add(quoted(ctx.names.fieldOfChild[kid]))
+    result.add(nnkTypeDef.newTree(
+      nnkPragmaExpr.newTree(exportedName(enumName, ctx.exported),
+        nnkPragma.newTree(ident("pure"))),
+      newEmptyNode(), enumTy))
+    claim("command", "the subcommand discriminator")
     var caseNode = nnkRecCase.newTree(newIdentDefs(
       exportedName("command", ctx.exported), ident(enumName)))
     for kid in kids:
-      let field = ctx.fieldOfChild[kid]
-      if not origins:
-        claim(field, "subcommand '" & field & "'")
+      let field = ctx.names.fieldOfChild[kid]
+      claim(field, "subcommand '" & field & "'")
       caseNode.add(nnkOfBranch.newTree(
         newDotExpr(ident(enumName), quoted(field)),
         nnkRecList.newTree(newIdentDefs(exportedName(field, ctx.exported),
-          ident(if origins: originsName(ctx, kid)
-                else: ctx.typeNames[kid])))))
+          ident(ctx.names.typeNames[kid])))))
     fields.add(caseNode)
   result.add(nnkTypeDef.newTree(exportedName(name, ctx.exported),
     newEmptyNode(), nnkObjectTy.newTree(newEmptyNode(), newEmptyNode(),
       fields)))
+
+proc cliFieldBare*[P](decl: CliParam[P]; fieldType: NimNode): NimNode =
+  ## A ``proc (): <fieldType> {.raises: [].}`` lambda giving the value of
+  ## the parameter written bare: its ``optionalValue``, else the type's
+  ## default. Generated code passes it to ``cliConvert``.
+  let bareValue = if decl.optionalValue.isSet:
+                    parseExpr(decl.optionalValue.code)
+                  else: newCall(ident("default"), fieldType)
+  result = newProc(params = [fieldType], body = newStmtList(bareValue),
+    procType = nnkLambda)
+  result.addPragma(nnkExprColonExpr.newTree(ident("raises"),
+    nnkBracket.newTree()))
+
+proc cliFieldAllowed*[P](decl: CliParam[P]; fieldType: NimNode):
+    tuple[decl, sym: NimNode] =
+  ## ``let <sym>: seq[cliElementType(<fieldType>)] = @[<values>]``: the
+  ## parameter's closed value set (empty when it has none), which generated
+  ## code passes to ``cliConvert``.
+  let elemType = newCall(ident("cliElementType"), fieldType)
+  var allowedLit = nnkBracket.newTree()
+  for v in decl.values:
+    allowedLit.add(parseExpr(v.code))
+  result.sym = genSym(nskLet, "allowed")
+  result.decl = newLetStmt(result.sym, newCall(ident("@"), allowedLit))
+  result.decl[0][1] = nnkBracketExpr.newTree(ident("seq"), elemType)
 
 proc fieldCode[P](ctx: GenContext; id: int; decls: seq[CliParam[P]];
                   target: NimNode): NimNode =
   ## Fills ``target`` (``result.<field>``) for parameter ``id`` from the
   ## decision phase 3 took.
   let g = ctx.g
-  let p = g.params[id]
   let decl = decls[id]
-  let fieldType = parseExpr(p.nimType)
+  let fieldType = parseExpr(g.params[id].nimType)
   let r = ident("r")
   let gram = ident("g")
   let d = genSym(nskLet, "decision")
-  # The bare value of an optional-value flag.
-  let bareValue = if decl.optionalValue.isSet: parseExpr(decl.optionalValue.code)
-                  else: newCall(ident("default"), fieldType)
-  let bare = newProc(params = [fieldType], body = newStmtList(bareValue),
-    procType = nnkLambda)
-  bare.addPragma(nnkExprColonExpr.newTree(ident("raises"), nnkBracket.newTree()))
-  let elemType = newCall(ident("cliElementType"), fieldType)
-  var allowedLit = nnkBracket.newTree()
-  for v in decl.values:
-    allowedLit.add(parseExpr(v.code))
-  let allowed = genSym(nskLet, "allowed")
-  let allowedDecl = newLetStmt(allowed, newCall(ident("@"), allowedLit))
-  allowedDecl[0][1] = nnkBracketExpr.newTree(ident("seq"), elemType)
-  let convert = newCall(ident("cliConvert"), gram, r, newLit(id), target,
-    bare, allowed)
-  var sourceBranch = newStmtList(allowedDecl)
-  if decl.merge == cmrCombine:
-    # The combine proc receives one value per source, unless a binding
-    # layer enforces the value.
-    let inputs = genSym(nskLet, "inputs")
-    let err = genSym(nskLet, "e")
-    let combineCall = newCall(parseExpr(decl.combine.code), inputs)
-    sourceBranch.add(newIfStmt((
-      newCall(ident("cliCombines"), gram, r, newLit(id)),
-      newStmtList(
-        newLetStmt(inputs, newCall(ident("cliCombineInputs"), gram, r,
-          newLit(id), bare, allowed)),
-        nnkTryStmt.newTree(
-          newStmtList(newAssignment(target, combineCall)),
-          nnkExceptBranch.newTree(
-            infix(ident("CatchableError"), "as", err),
-            newStmtList(newCall(ident("cliCombineFailed"), gram, r,
-              newLit(id), newDotExpr(err, ident("msg"))))))))).add(
-      nnkElse.newTree(newStmtList(convert))))
-  else:
-    sourceBranch.add(convert)
+  let bare = cliFieldBare(decl, fieldType)
+  let (allowedDecl, allowed) = cliFieldAllowed(decl, fieldType)
+  let sourceBranch = newStmtList(allowedDecl, newCall(ident("cliConvert"),
+    gram, r, newLit(id), target, bare, allowed))
   var impliedBranch = newStmtList()
   for src, other in decls:
     for k, implication in other.implies:
@@ -310,74 +463,33 @@ proc fieldCode[P](ctx: GenContext; id: int; decls: seq[CliParam[P]];
         newStmtList(nnkDiscardStmt.newTree(newEmptyNode())))))
   result = nnkBlockStmt.newTree(newEmptyNode(), result)
 
-proc builderName(ctx: GenContext; command: int): NimNode =
-  ident("cliBuild" & ctx.typeNames[command])
-
-proc originsBuilderName(ctx: GenContext; command: int): NimNode =
-  ident("cliOriginsOf" & ctx.typeNames[command])
-
-proc originsBuilderProc(ctx: GenContext; command: int): NimNode =
-  ## ``proc cliOriginsOf<Type>(g: CliGrammar; r: CliResolution):
-  ## <Type>Origins``: the origin object, copied from ``r.origins``.
-  let g = ctx.g
-  let typeName = ident(originsName(ctx, command))
-  var body = newStmtList()
-  let kids = branches(g, command)
-  if kids.len > 0:
-    let enumName = ident(ctx.typeNames[command] & "Command")
-    var caseStmt = nnkCaseStmt.newTree(newCall(ident("cliSelectedChild"),
-      ident("g"), ident("r"), newLit(command)))
-    for kid in kids:
-      let field = ctx.fieldOfChild[kid]
-      caseStmt.add(nnkOfBranch.newTree(newLit(kid), newStmtList(
-        newAssignment(ident("result"), nnkObjConstr.newTree(typeName,
-          nnkExprColonExpr.newTree(ident("command"),
-            newDotExpr(enumName, quoted(field))),
-          nnkExprColonExpr.newTree(quoted(field),
-            newCall(originsBuilderName(ctx, kid), ident("g"),
-              ident("r"))))))))
-    caseStmt.add(nnkElse.newTree(newStmtList(newCall(ident("raiseAssert"),
-      newLit("clispec: no subcommand was selected")))))
-    body.add(caseStmt)
-  for id in objectHolds(g, command):
-    body.add(newAssignment(
-      newDotExpr(ident("result"), quoted(g.params[id].name)),
-      nnkBracketExpr.newTree(newDotExpr(ident("r"), ident("origins")),
-        newLit(id))))
-  result = newProc(originsBuilderName(ctx, command),
-    params = [typeName,
-      newIdentDefs(ident("g"), ident("CliGrammar")),
-      newIdentDefs(ident("r"), ident("CliResolution"))],
-    body = body)
-  result.addPragma(nnkExprColonExpr.newTree(ident("raises"),
-    nnkBracket.newTree()))
-
 proc builderProc[P](ctx: GenContext; command: int;
                     decls: seq[CliParam[P]]): NimNode =
   ## ``proc cliBuild<Type>(g: CliGrammar; r: CliResolution): <Type>``.
   let g = ctx.g
-  let typeName = ident(ctx.typeNames[command])
+  let typeName = ident(ctx.names.typeNames[command])
   var body = newStmtList()
-  let kids = branches(g, command)
+  let kids = cliBranches(g, command)
   if kids.len > 0:
-    let enumName = ident(ctx.typeNames[command] & "Command")
+    let enumName = ident(cliCommandEnumName(ctx.names, command))
     var caseStmt = nnkCaseStmt.newTree(newCall(ident("cliSelectedChild"),
       ident("g"), ident("r"), newLit(command)))
     for kid in kids:
-      let field = ctx.fieldOfChild[kid]
+      let field = ctx.names.fieldOfChild[kid]
       caseStmt.add(nnkOfBranch.newTree(newLit(kid), newStmtList(
         newAssignment(ident("result"), nnkObjConstr.newTree(typeName,
           nnkExprColonExpr.newTree(ident("command"),
             newDotExpr(enumName, quoted(field))),
           nnkExprColonExpr.newTree(quoted(field),
-            newCall(builderName(ctx, kid), ident("g"), ident("r"))))))))
+            newCall(cliBuilderName(ctx.names, kid), ident("g"),
+              ident("r"))))))))
     caseStmt.add(nnkElse.newTree(newStmtList(newCall(ident("raiseAssert"),
       newLit("clispec: no subcommand was selected")))))
     body.add(caseStmt)
-  for id in objectHolds(g, command):
+  for id in cliObjectHolds(g, command):
     let target = newDotExpr(ident("result"), quoted(g.params[id].name))
     body.add(fieldCode(ctx, id, decls, target))
-  result = newProc(builderName(ctx, command),
+  result = newProc(cliBuilderName(ctx.names, command),
     params = [typeName,
       newIdentDefs(ident("g"), ident("CliGrammar")),
       newIdentDefs(ident("r"), ident("CliResolution"))],
@@ -454,60 +566,34 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
             p.sourceLine)
           break
   var ctx = GenContext(g: g, exported: exported,
-    grammarConst: genSym(nskConst, typeName & "Grammar"))
-  ctx.typeNames = newSeq[string](g.commands.len)
-  ctx.fieldOfChild = newSeq[string](g.commands.len)
-  for k, cmd in g.commands:
-    if k == 0:
-      ctx.typeNames[k] = typeName
-    elif cmd.isCall:
-      ctx.typeNames[k] = ctx.typeNames[cmd.parent] & "Call"
-      ctx.fieldOfChild[k] = "call"
-    else:
-      ctx.typeNames[k] = ctx.typeNames[cmd.parent] & camelWord(cmd.name, true)
-      ctx.fieldOfChild[k] = camelWord(cmd.name, false)
+    grammarConst: genSym(nskConst, typeName & "Grammar"),
+    names: cliGeneratedNames(g, typeName))
   for k in 0 ..< g.commands.len:
     for kk in 0 ..< k:
-      if hasObject(g, k) and hasObject(g, kk) and
-          ctx.typeNames[k] == ctx.typeNames[kk]:
+      if cliHasObject(g, k) and cliHasObject(g, kk) and
+          ctx.names.typeNames[k] == ctx.names.typeNames[kk]:
         problemAt("clispec: commands '" & g.commands[kk].path.join(" ") &
           "' and '" & g.commands[k].path.join(" ") & "' would both be " &
-          "the type " & ctx.typeNames[k], g.commands[k].sourceFile,
+          "the type " & ctx.names.typeNames[k], g.commands[k].sourceFile,
           g.commands[k].sourceLine)
-  # A command's origin object type must not be another command's type
-  # (``subcmd "origins"`` of ``Tool`` would be ``ToolOrigins``).
-  for k in 0 ..< g.commands.len:
-    for kk in 0 ..< g.commands.len:
-      if hasObject(g, k) and hasObject(g, kk) and
-          originsName(ctx, k) == ctx.typeNames[kk]:
-        problemAt("clispec: the origin object of " &
-          (if k == 0: "the root command"
-           else: "command '" & g.commands[k].path.join(" ") & "'") &
-          " would be the type " & originsName(ctx, k) & ", which is " &
-          "already the configuration object of command '" &
-          g.commands[kk].path.join(" ") & "'", g.commands[kk].sourceFile,
-          g.commands[kk].sourceLine)
   result = newStmtList()
   for check in cliModelTypeChecks(model):
     result.add(check)
   var typeSection = nnkTypeSection.newTree()
   for k in 0 ..< g.commands.len:
-    if hasObject(g, k):
+    if cliHasObject(g, k):
       for decl in typeDecls(ctx, k):
-        typeSection.add(decl)
-      for decl in typeDecls(ctx, k, origins = true):
         typeSection.add(decl)
   result.add(typeSection)
   result.add(grammarConstCode(ctx, decls))
   # Builders, innermost first so each one's callees are declared.
   for k in countdown(g.commands.high, 0):
-    if hasObject(g, k):
+    if cliHasObject(g, k):
       result.add(builderProc(ctx, k, decls))
-      result.add(originsBuilderProc(ctx, k))
   # The completers, by parameter id: built on demand (a completer may be a
   # call that returns one), so a program pays for them only when it is
   # asked to complete.
-  let completersName = ident("cliCompletersOf" & typeName)
+  let completersName = cliCompletersName(ctx.names)
   var completersBody = newStmtList(newAssignment(ident("result"),
     newCall(nnkBracketExpr.newTree(ident("newSeq"), ident("CliCompleter")),
       newLit(g.params.len))))
@@ -523,12 +609,8 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
     params = [nnkBracketExpr.newTree(ident("seq"), ident("CliCompleter"))],
     body = completersBody))
   let T = ident(typeName)
-  let O = ident(originsName(ctx, 0))
   let gc = ctx.grammarConst
-  let rootBuilder = builderName(ctx, 0)
-  let rootOrigins = originsBuilderName(ctx, 0)
-  let loadWithOriginsName = exportedName("loadWithOrigins", exported)
-  let configSchemaName = exportedName("configSchema", exported)
+  let rootBuilder = cliBuilderName(ctx.names, 0)
   let loadName = exportedName("load", exported)
   let helpTextName = exportedName("helpText", exported)
   let helpJsonName = exportedName("helpJson", exported)
@@ -567,48 +649,6 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
       ## Parses the process's own arguments.
       `loadName`(t, cliCommandLineParams(), options)
 
-    proc `loadName`(t: typedesc[`T`]; argv: openArray[string];
-                    sources: CliSources; options = CliOptions()): `T` {.
-        raises: [CliUsageError, CliHelpRequest, CliConfigError].} =
-      ## Fills a configuration object from the configuration layers and the
-      ## environment of ``sources`` and from ``argv``, merged as each
-      ## parameter declares. Raises ``CliConfigError`` for a configuration
-      ## file that does not fit the program's schema.
-      if cliIsCompletionRequest(argv, options):
-        cliCompletionCheck(`gc`, `completersName`(), argv, options)
-      var r = cliResolve(`gc`, argv, sources, options)
-      `rootBuilder`(`gc`, r)
-
-    proc `loadName`(t: typedesc[`T`]; sources: CliSources;
-                    options = CliOptions()): `T` {.
-        raises: [CliUsageError, CliHelpRequest, CliConfigError].} =
-      ## ``load`` over ``sources`` and the process's own arguments.
-      `loadName`(t, cliCommandLineParams(), sources, options)
-
-    proc `loadWithOriginsName`(t: typedesc[`T`]; argv: openArray[string];
-                               sources = CliSources();
-                               options = CliOptions()):
-        tuple[config: `T`, origins: `O`] {.
-        raises: [CliUsageError, CliHelpRequest, CliConfigError].} =
-      ## ``load``, and the origin object: for every field, where its value
-      ## came from and every other value that was considered.
-      if cliIsCompletionRequest(argv, options):
-        cliCompletionCheck(`gc`, `completersName`(), argv, options)
-      var r = cliResolve(`gc`, argv, sources, options)
-      (`rootBuilder`(`gc`, r), `rootOrigins`(`gc`, r))
-
-    proc `configSchemaName`(t: typedesc[`T`]): CliConfigSchema =
-      ## The schema of the program's configuration files: the identifier
-      ## they declare and every valid key with its type, spelt as the
-      ## ``file`` source spells it.
-      cliConfigSchemaOf(`gc`)
-
-    proc `configSchemaName`(t: typedesc[`T`]; source: string):
-        CliConfigSchema =
-      ## The schema with its keys spelt as the file source ``source`` (a
-      ## named source the description declares) spells them.
-      cliConfigSchemaOf(`gc`, source)
-
     proc `helpTextName`(t: typedesc[`T`]; path: openArray[string] = [];
                         program = `prog`): string {.
         raises: [CliUsageError].} =
@@ -646,6 +686,53 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
       ## reached by the subcommand words ``path``.
       cliHelpJson(`gc`, cliHelpCommand(`gc`, path, program), program)
 
+type
+  CliProgramArgs* = object
+    ## The arguments of a ``cliProgram``-style macro call:
+    ## ``(<Type>[, "<program name>"][, exported = true]): <description>``.
+    typeName*: string
+    program*: string
+      ## The program's name in help and errors (the type's name when not
+      ## given).
+    exported*: bool
+    body*: NimNode
+      ## The ``cli:`` description.
+
+proc cliProgramArgs*(args: NimNode; macroName = "cliProgram"):
+    CliProgramArgs =
+  ## Reads the arguments of a macro written like ``cliProgram`` (``args``
+  ## is its ``varargs[untyped]``), for a library whose own macro takes the
+  ## same form. Errors name ``macroName``.
+  if args.len < 2 or args[^1].kind != nnkStmtList:
+    error("clispec: " & macroName & " is written " & macroName &
+      "(<Type>[, \"<name>\"][, exported = true]): <description>", args)
+  var head = args[0]
+  var positional: seq[NimNode] = @[]
+  for i in 1 ..< args.len - 1:
+    let arg = args[i]
+    if arg.kind == nnkExprEqExpr and arg[0].eqIdent("exported"):
+      if arg[1].eqIdent("true"): result.exported = true
+      elif arg[1].eqIdent("false"): result.exported = false
+      else:
+        error("clispec: exported must be true or false, got: " &
+          arg[1].repr, arg[1])
+    else:
+      positional.add(arg)
+  if head.kind == nnkPostfix and head[0].eqIdent("*"):
+    result.exported = true
+    head = head[1]
+  if head.kind notin {nnkIdent, nnkSym}:
+    error("clispec: " & macroName & " needs a type name, got: " & head.repr,
+      head)
+  result.typeName = $head
+  result.program = result.typeName
+  if positional.len == 1:
+    result.program = cliStrLit(positional[0], "program name")
+  elif positional.len > 1:
+    error("clispec: " & macroName & " takes a type name, an optional " &
+      "program name, `exported = true` and a body", args)
+  result.body = args[^1]
+
 macro cliProgram*(args: varargs[untyped]): untyped =
   ## Generates a program's configuration object, parser and help from a
   ## ``cli:`` body (see the module documentation):
@@ -659,34 +746,7 @@ macro cliProgram*(args: varargs[untyped]): untyped =
   ## body) exports the generated types and procedures, so the description
   ## can live in a module of its own:
   ## ``cliProgram(Tool, "tool", exported = true):``.
-  if args.len < 2 or args[^1].kind != nnkStmtList:
-    error("clispec: cliProgram is written cliProgram(<Type>[, \"<name>\"]" &
-      "[, exported = true]): <description>", args)
-  var head = args[0]
-  var exported = false
-  var positional: seq[NimNode] = @[]
-  for i in 1 ..< args.len - 1:
-    let arg = args[i]
-    if arg.kind == nnkExprEqExpr and arg[0].eqIdent("exported"):
-      if arg[1].eqIdent("true"): exported = true
-      elif arg[1].eqIdent("false"): exported = false
-      else:
-        error("clispec: exported must be true or false, got: " &
-          arg[1].repr, arg[1])
-    else:
-      positional.add(arg)
-  if head.kind == nnkPostfix and head[0].eqIdent("*"):
-    exported = true
-    head = head[1]
-  if head.kind notin {nnkIdent, nnkSym}:
-    error("clispec: cliProgram needs a type name, got: " & head.repr, head)
-  let typeName = $head
-  var program = typeName
-  if positional.len == 1:
-    program = cliStrLit(positional[0], "program name")
-  elif positional.len > 1:
-    error("clispec: cliProgram takes a type name, an optional program " &
-      "name, `exported = true` and a body", args)
-  let model = parseCliModel[NoCliExtension, NoCliExtension](args[^1],
+  let a = cliProgramArgs(args)
+  let model = parseCliModel[NoCliExtension, NoCliExtension](a.body,
     NoCliExtension())
-  cliProgramCode(model, typeName, program, exported)
+  cliProgramCode(model, a.typeName, a.program, a.exported)

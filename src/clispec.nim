@@ -9,7 +9,11 @@
 ## description, through the run-time tables of ``clispec/grammar``. See the
 ## README for the language, the generated API and how a consumer attaches
 ## its own declarations through the model's extension slots.
+##
+## Configuration files and the environment are not read here: confutils,
+## instantiated over a clispec description, adds them as sources and
+## delegates the command line to this library.
 import clispec/[model, dsl, errors, values, grammar, help, parser, program,
-  origins, sources, completers, completion, completion_scripts]
-export model, dsl, errors, values, grammar, help, parser, program, origins,
-  sources, completers, completion, completion_scripts
+  candidates, completers, completion, completion_scripts]
+export model, dsl, errors, values, grammar, help, parser, program, candidates,
+  completers, completion, completion_scripts

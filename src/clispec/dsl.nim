@@ -102,11 +102,12 @@
 ## ``cliModelTypeChecks`` generates the check as code for the consumer's
 ## macro to place in its output (``plainCliModel`` does). The same checks
 ## reject ``merge = append`` on a parameter that is neither a ``seq`` nor
-## counted, and a combine proc that cannot be called as
-## ``proc (candidates: openArray[CliSourcedValue[T]]): T`` for the
-## parameter's type ``T``, and a ``complete`` expression that is not a
-## ``CliCompleter`` (``proc (ctx: CliCompletionContext):
-## seq[CliCompletion]``, ``clispec/completers``).
+## counted, and a ``complete`` expression that is not a ``CliCompleter``
+## (``proc (ctx: CliCompletionContext): seq[CliCompletion]``,
+## ``clispec/completers``). A combine proc (``merge = <proc>``) is recorded
+## and not checked here: it is called by the library that merges several
+## sources (confutils, over a clispec description), which checks its
+## signature where it calls it.
 ##
 ## Extensions
 ## ==========
@@ -138,7 +139,7 @@
 
 import std/[macros, options, strutils, tables]
 
-import ./[model, origins, completers]
+import ./[model, completers]
 
 export model, completers
 
@@ -1288,9 +1289,11 @@ template cliElementAccepts*(T: typedesc; value: untyped): bool =
   else:
     cliAccepts(T, value)
 
-proc failWhenNot(cond: NimNode; message: string; file: string; line,
-                 column: int): NimNode =
-  ## ``when not cond: {.error: message.}``, reported at ``file:line``.
+proc cliFailWhenNot*(cond: NimNode; message: string; file: string; line,
+                     column: int): NimNode =
+  ## ``when not cond: {.error: message.}``, reported at ``file:line``: a
+  ## check a macro places in its output, for what only the compiler can
+  ## decide (as ``cliModelTypeChecks`` does).
   let pragma = nnkPragma.newTree(nnkExprColonExpr.newTree(ident("error"),
     newLit(message)))
   pragma.setLineInfo(file, line, column)
@@ -1304,9 +1307,9 @@ proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
   ## spellings alone: that ``default``, ``optionalValue``, ``values`` entries
   ## and ``implies`` values are values of their parameter's type, that a
   ## ``counted`` parameter is an integer, that a ``negatable`` one is a
-  ## ``bool``, that a combine proc and a ``complete`` completer have the
-  ## signatures they need. Each failing check is a compile error naming the parameter,
-  ## reported where the offending argument was written. A macro that builds
+  ## ``bool``, that a ``complete`` completer has the signature it needs.
+  ## Each failing check is a compile error naming the parameter, reported
+  ## where the offending argument was written. A macro that builds
   ## a model places these checks in its output, in the scope where the
   ## description's types are visible (``plainCliModel`` does). The checks
   ## call ``cliAccepts`` and ``cliElementAccepts``, so that scope must see
@@ -1326,18 +1329,18 @@ proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
       let typeNode = parseExpr(param.nimType)
       if param.default.isSet:
         let d = param.default
-        result.add(failWhenNot(newCall(bindSym("cliAccepts"), typeNode,
+        result.add(cliFailWhenNot(newCall(bindSym("cliAccepts"), typeNode,
           parseExpr(d.code)), prefix & "default `" & d.code &
           "` is not a valid " & param.nimType, d.sourceFile, d.sourceLine,
           d.sourceColumn))
       if param.optionalValue.isSet:
         let o = param.optionalValue
-        result.add(failWhenNot(newCall(bindSym("cliAccepts"), typeNode,
+        result.add(cliFailWhenNot(newCall(bindSym("cliAccepts"), typeNode,
           parseExpr(o.code)), prefix & "optionalValue `" & o.code &
           "` is not a valid " & param.nimType, o.sourceFile, o.sourceLine,
           o.sourceColumn))
       for v in param.values:
-        result.add(failWhenNot(newCall(bindSym("cliElementAccepts"),
+        result.add(cliFailWhenNot(newCall(bindSym("cliElementAccepts"),
           typeNode, parseExpr(v.code)), prefix & "values entry `" & v.code &
           "` is not a valid value of " & param.nimType, v.sourceFile,
           v.sourceLine, v.sourceColumn))
@@ -1350,37 +1353,29 @@ proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
         if targetType.len == 0:
           continue
         let v = implication.value
-        result.add(failWhenNot(newCall(bindSym("cliAccepts"),
+        result.add(cliFailWhenNot(newCall(bindSym("cliAccepts"),
           parseExpr(targetType), parseExpr(v.code)), prefix & "implies " &
           implication.param & " = `" & v.code & "`, which is not a valid " &
           targetType & " (the type of '" & implication.param & "')",
           v.sourceFile, v.sourceLine, v.sourceColumn))
       if param.counted:
-        result.add(failWhenNot(infix(typeNode, "is", ident("SomeInteger")),
+        result.add(cliFailWhenNot(infix(typeNode, "is", ident("SomeInteger")),
           prefix & "counted requires an integer type, not " & param.nimType,
           param.sourceFile, param.sourceLine, 0))
       if param.negatable:
-        result.add(failWhenNot(infix(typeNode, "is", ident("bool")),
+        result.add(cliFailWhenNot(infix(typeNode, "is", ident("bool")),
           prefix & "negatable requires bool, not " & param.nimType,
           param.sourceFile, param.sourceLine, 0))
       if param.merge == cmrAppend and not param.counted:
-        result.add(failWhenNot(infix(typeNode, "is", ident("seq")),
+        result.add(cliFailWhenNot(infix(typeNode, "is", ident("seq")),
           prefix & "merge = append concatenates lists; " & param.nimType &
           " is not a seq", param.sourceFile, param.sourceLine, 0))
       if param.complete.isSet:
         let c = param.complete
-        result.add(failWhenNot(newCall(bindSym("cliCompleterFits"),
+        result.add(cliFailWhenNot(newCall(bindSym("cliCompleterFits"),
           parseExpr(c.code)), prefix & "complete = `" & c.code & "` is " &
           "not a completer; it must be a CliCompleter: proc (ctx: " &
           "CliCompletionContext): seq[CliCompletion]", c.sourceFile,
-          c.sourceLine, c.sourceColumn))
-      if param.merge == cmrCombine:
-        let c = param.combine
-        result.add(failWhenNot(newCall(bindSym("cliCombineFits"), typeNode,
-          parseExpr(c.code)), prefix & "merge = `" & c.code & "` is not " &
-          "a combine proc for " & param.nimType & "; it must be callable " &
-          "as proc (candidates: openArray[CliSourcedValue[" &
-          param.nimType & "]]): " & param.nimType, c.sourceFile,
           c.sourceLine, c.sourceColumn))
 
 macro plainCliModel*(body: untyped): untyped =

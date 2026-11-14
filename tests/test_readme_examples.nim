@@ -3,10 +3,9 @@
 ## The README is the library's public documentation, so its examples must be
 ## real programs: each block is written to a temporary file and built and run
 ## with the compiler that built this test (``nim c -r``, isolated from user
-## and parent configuration, with ``src/`` on the path, and the TOML
-## adapter's dependencies the dev shell names in ``CLISPEC_FORMAT_PATHS``,
-## as the Justfile passes them to the tests). The examples carry
-## their own ``assert``s, which run here. Invoking the compiler is the only
+## and parent configuration, with ``src/`` on the path and nothing else:
+## clispec depends on no other package). The examples carry their own
+## ``assert``s, which run here. Invoking the compiler is the only
 ## way to check that documentation code compiles, so nothing is mocked.
 
 import std/[os, osproc, strutils, tempfiles, unittest]
@@ -48,8 +47,6 @@ suite "test_readme_examples":
       writeFile(file, code)
       var args = @[compilerExe(), "c", "-r", "--hints:off",
         "--skipParentCfg", "--skipUserCfg", "--path:" & srcDir]
-      for flag in getEnv("CLISPEC_FORMAT_PATHS").splitWhitespace():
-        args.add(flag)
       args.add(["--nimcache:" & (dir / ("cache_" & $(i + 1))),
         "-o:" & (dir / ("readme_example_" & $(i + 1))), file])
       let (output, exitCode) = execCmdEx(quoteShellCommand(args))

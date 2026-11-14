@@ -8,15 +8,15 @@
 ## kebab-case, every other file and the file source ``legacy`` in snake_case,
 ## and parameters that each give a different mix of overrides. The test
 ## checks the spellings in the model, the library functions that decide
-## them, and that loading actually finds each value under the decided
-## spelling (and not under the losing one) for flags and for files.
+## them, and that the command line accepts each flag under the decided
+## spelling and not under the losing ones. Confutils' test of the same name
+## loads configuration files under the decided keys.
 ##
-## Real TOML files in a temporary directory, read through the TOML adapter;
-## nothing is mocked.
+## Nothing is mocked.
 
 import std/[json, unittest]
 
-import ./cs_m4_fixture
+import clispec
 
 cliProgram(Ov, "ov"):
   configSchema "ov.config.v1"
@@ -46,8 +46,6 @@ cliProgram(Ov, "ov"):
     # A per-convention override replaces the last segment of a derived key.
     flag pushUrl is string, perConvention = [snakeCase = "push_uri"]
 
-const ovHeader = "schema = \"ov.config.v1\"\n"
-
 func keyIn(p: PlainCliParam; source: string): string =
   if source == "file":
     return p.configKey
@@ -65,7 +63,6 @@ func param(name: string): PlainCliParam =
         return p
 
 suite "test_cs_m4b_override_precedence":
-  let s = newScratch()
 
   test "the library functions: per source, then per convention, then the conversion":
     let perSource = @[CliSourceSpelling(source: "cli", spelling: "port")]
@@ -141,37 +138,7 @@ suite "test_cs_m4b_override_precedence":
       except CliUsageError as e:
         check e.kind == cekUnknownFlag
 
-  test "files answer to the winning spelling only":
-    let project = s.file("project.toml", ovHeader &
-      "base-url = \"pu\"\npaths.cache = \"/c\"\n[web]\nport = 81\n")
-    let legacy = s.file("legacy.toml", ovHeader &
-      "base_url = \"lu\"\ncache = \"/l\"\nhttp_port_number = 82\n" &
-      "logging.level = \"w\"\n[remote]\npush_uri = \"r\"\n")
-    let (conf, origins) = Ov.loadWithOrigins(@["remote"],
-      sources([layer("legacy", legacy), layer("project", project)]))
-    check conf.httpPort == 81
-    check origins.httpPort.winner.key == "web.port"
-    check origins.httpPort.losers[0].site.key == "http_port_number"
-    check conf.cacheDir == "/c"
-    check origins.cacheDir.losers[0].site.key == "cache"
-    check conf.urlBase == "pu"
-    check conf.logLevel == "w"
-    check conf.remote.pushUrl == "r"
-    check origins.remote.pushUrl.winner.key == "remote.push_uri"
-    # The losing spellings are unknown keys.
-    for (layerName, line) in [("project", "http-port-number = 1\n"),
-                              ("legacy", "web.port = 1\n"),
-                              ("legacy", "paths.cache = \"x\"\n"),
-                              ("user", "lvl = \"x\"\n"),
-                              ("user", "[remote]\npush_url = \"x\"\n")]:
-      let f = s.file("wrong.toml", ovHeader & line)
-      try:
-        discard Ov.load(@[], sources([layer(layerName, f)]))
-        check false
-      except CliConfigError as e:
-        check e.kind == cfeUnknownKey
-
-  test "help and the schema show the overridden spellings":
+  test "help shows the overridden spellings":
     let doc = parseJson(Ov.helpJson())
     var found = false
     for p in doc["command"]["parameters"]:
@@ -181,7 +148,3 @@ suite "test_cs_m4b_override_precedence":
         check p["configKeys"] == %*{"file": "http_port_number",
           "project": "web.port", "legacy": "http_port_number"}
     check found
-    check Ov.configSchema("legacy").keys[2].key == "cache"
-    check Ov.configSchema("project").keys[1].key == "web.port"
-
-  s.remove()

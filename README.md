@@ -16,24 +16,42 @@ and deriving everything else from that description. This release provides:
   pieces it generates code for are `clispec/grammar` (the parser's tables),
   `clispec/parser`, `clispec/help`, `clispec/values` (text to typed values)
   and `clispec/errors` (the usage-error taxonomy).
-- **Layered sources and origins**: the same object filled from
-  configuration files (in layers the program declares, some of which may
-  enforce their values), the environment and the command line, merged per
-  parameter, together with an origin object recording where every value
-  came from and what it overrode (`clispec/sources`, `clispec/origins`).
-  Configuration files are read through a small format interface; TOML is
-  provided by the optional `clispec/toml_source`, the only module that needs
-  a serialization library.
 - **Shell completion** for Bash, Zsh, Fish and PowerShell: one completion
   engine generated from the description (`clispec/completion`), which the
   program runs itself, and a thin script per shell that asks it
   (`clispec/completion_scripts`). Completers (`clispec/completers`) supply
   values that are known only at run time.
 
-Clispec is meant to replace
-[confutils](https://github.com/status-im/nim-confutils) for programs that
-describe their own command line. It also describes the command lines of
-external tools that a program runs.
+Clispec depends on nothing but the Nim standard library. It also describes
+the command lines of external tools that a program runs.
+
+### Clispec and confutils
+
+Clispec owns the command line: the description language, the model, and
+from them the configuration object type, the argv parser, help and shell
+completion. Everything beyond the command line is
+[confutils](https://github.com/metacraft-labs/nim-confutils)' job (a fork of
+[status-im/nim-confutils](https://github.com/status-im/nim-confutils)), which
+can be instantiated over a clispec description:
+
+```text
+cli: description ──▶ clispec model ──▶ configuration type, argv parser,
+                          │             help, completion           (clispec)
+                          └──▶ configuration-file layers, the environment,
+                               merge rules, binding layers, the origin
+                               object, file formats (TOML)        (confutils)
+```
+
+A clispec description declares what those other sources need per parameter
+(`env`, `key`, `sources`, `merge`, `configSchema`, the naming conventions),
+because the description is the single source of truth; confutils reads the
+declarations from the model and delegates parsing, help and completion to the
+code clispec generates, so a program's command line behaves the same whether
+or not it reads configuration files. A program that only parses its command
+line uses clispec alone (`Tool.load(argv)`); one that also reads
+configuration files and the environment uses confutils' `cliConfiguration`,
+which takes the same description. See
+[Configuration files, the environment and origins](#configuration-files-the-environment-and-origins).
 
 ## The `cli:` language
 
@@ -117,7 +135,7 @@ Every parameter accepts:
 | `complete = <completer>`                                         | a `CliCompleter` that completes the value dynamically (see [Shell completion](#shell-completion))                                                                                                                                                                                |
 | `key = "section.name"`                                           | the configuration-file key, replacing the derived one                                                                                                                                                                                                                            |
 | `sources = {cli, env, file}`                                     | which sources may supply the value (default: all three)                                                                                                                                                                                                                          |
-| `merge = replace \| append \| errorOnConflict \| <combine proc>` | how values from several sources combine: the highest source wins (a list repeated within one source collects); lists are concatenated lowest source first; two different values are an error; or a proc of yours receives every source's value (see [Merge rules](#merge-rules)) |
+| `merge = replace \| append \| errorOnConflict \| <combine proc>` | how values from several sources combine: the highest source wins (a list repeated within one source collects); lists are concatenated lowest source first; two different values are an error; or a proc of yours receives every source's value (applied by confutils, which merges the sources)                     |
 | `separator = ","`                                                | a list may be given as one delimited value                                                                                                                                                                                                                                       |
 | `implies = [<param> = <value>, ...]`                             | setting this parameter sets the others unless they are given explicitly                                                                                                                                                                                                          |
 | `visibility = shown \| internal \| hidden`                       | `internal`: a parameter is accepted but shown in no help screen and never offered by completion; a command is left out of the primary help and completion and listed by the command that holds it. `hidden`: accepted and listed nowhere                                         |
@@ -147,8 +165,9 @@ inherited by nested commands keeps the key of the command that declared it.
 exactly the variables its `env` lists.
 
 `configSchema "<id>"` directly under `cli:` names the schema identifier
-every configuration file must declare (see
-[Configuration files](#configuration-files)).
+every configuration file must declare (configuration files are read by
+confutils; see
+[Configuration files, the environment and origins](#configuration-files-the-environment-and-origins)).
 
 **Naming conventions.** Each source spells names in one convention:
 `declared` (exactly as written, the default for every source), `camelCase`,
@@ -195,9 +214,10 @@ Overrides are opt-in and refine the conversion for one parameter:
 
 The most specific one wins: the source's own override (a named source's
 `perSource` entry, then `key`), then the override for the source's
-convention, then the conversion. Help, the machine-readable help, the
-configuration schema and the origin object all show the spelling each source
-uses.
+convention, then the conversion. The model records every source's spelling
+(`longName`, `configKey`, and `sourceKeys` per named file source), so help,
+the machine-readable help and, in confutils, the configuration schema and
+the origin object all show the spelling each source uses.
 
 ```nim
 import clispec
@@ -214,9 +234,11 @@ cliProgram(Srv, "srv"):
 let conf = Srv.load(@["--write-report", "r.txt", "--port", "80",
   "--base-url", "/"])
 assert conf.writeReport == "r.txt" and conf.httpPort == 80
-assert Srv.configSchema.keys[0].key == "write_report"
-assert Srv.configSchema("project").keys[1].key == "web.port"
-assert Srv.configSchema("project").keys[2].key == "base-url"
+const model = Srv.cliModel
+assert model.root.params[0].configKey == "write_report"
+assert model.root.params[1].longName == "port"
+assert model.root.params[1].sourceKeys[0].spelling == "web.port"
+assert model.root.params[2].sourceKeys[0].spelling == "base-url"
 ```
 
 **Expressions.** `default`, `optionalValue`, `values`, the values of `implies`,
@@ -365,9 +387,6 @@ Generated for `Tool` (exported when written
 | --------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `Tool.load(argv, options = CliOptions())`                       | parses `argv` (without the program name)                                     |
 | `Tool.load(options = CliOptions())`                             | parses the process's own arguments                                           |
-| `Tool.load(argv, sources, options)` / `Tool.load(sources, ...)` | fills the object from configuration files, the environment and `argv`        |
-| `Tool.loadWithOrigins(argv, sources = CliSources(), options)`   | the same, and the origin object: `tuple[config: Tool, origins: ToolOrigins]` |
-| `Tool.configSchema`                                             | the configuration-file schema: its identifier and every key with its type    |
 | `Tool.helpText(path = [])` / `Tool.helpJson(path = [])`         | the help of the command reached by the subcommand words `path`               |
 | `Tool.complete(words, cursor = -1)`                             | the completion candidates for `words[cursor]` (the last word by default)     |
 | `Tool.completionScript(shell)` / `Tool.completionReply(args)`   | a shell's completion script; the answer to a script's request                |
@@ -427,11 +446,13 @@ wording, and every wording names the command (`'tool build'`):
 | `cekConflictingSources`   | `conflicting values for '--jobs' of 'tool build': '4' from /etc/tool.toml:3 (layer 'system') and '8' from environment variable TOOL_JOBS` |
 
 The error also carries the offending argv index, the spelling, the value,
-what was expected and `exitCode`, the program's declared usage exit code. An
-invalid value that came from a configuration file or the environment says
-where (`invalid value 'many' for '--jobs' of 'tool' (from environment
-variable TOOL_JOBS); expected an integer`), in `source` as well; its argv
-index is -1.
+what was expected and `exitCode`, the program's declared usage exit code.
+`cekConflictingSources` and the `source` of an invalid value are what a
+library that adds other sources (confutils) reports through the same
+taxonomy: an invalid value that came from a configuration file or the
+environment says where (`invalid value 'many' for '--jobs' of 'tool' (from
+environment variable TOOL_JOBS); expected an integer`), in `source` as well;
+its argv index is -1.
 
 ### Help
 
@@ -612,188 +633,56 @@ computes the answer without `load`.
 
 ### How parsing is layered
 
-Parsing runs in phases, each a procedure of `clispec/parser`, so later layers
-can reuse them: `cliTokenize` reads argv against the grammar and collects the
-_candidates_ each parameter receives, each with its argv index and the
-spelling used; `cliSourceCandidates` (`clispec/sources`) collects those of the
-configuration layers and the environment; `cliMerge` picks the winners and
-records each parameter's origin; `cliDecide` settles each parameter (from a
-source, implied, default, or unset) and reports a missing required one; the
-generated code then converts the decisions into the typed object.
-`cliResolve` runs the first three (four, given `CliSources`).
+Parsing runs in phases, each a procedure of `clispec/parser`, so other
+layers can reuse them: `cliTokenize` reads argv against the grammar and
+collects the _candidates_ each parameter receives (`clispec/candidates`),
+each with its argv index and the spelling used; `cliMerge` picks, per
+parameter, the candidates its value is made of (every occurrence of a list or
+a counted flag, the last of anything else); `cliDecide` settles each
+parameter (from the command line, implied, default, or unset) and reports a
+missing required one; the generated code then converts the decisions into the
+typed object. `cliResolve` runs the first three.
+
+A library that adds other sources replaces the merge: it supplies candidates
+of the same type for its sources (`source`, `group` and `site` say which
+source each came from) and fills the same `CliResolution`, and clispec
+decides and builds the object as for the command line alone. For code it
+generates beside the configuration object, `clispec/program` exports the
+names and shapes it uses: `cliGeneratedNames`, `cliObjectHolds`,
+`cliBranches`, `cliShapedTypeDecls` (a type of the configuration object's
+shape with one field type throughout), `cliShapedBuilderProc`,
+`cliShapedVisitorProc`, `cliFieldBare`, `cliFieldAllowed`, and
+`cliProgramArgs` for a macro written like `cliProgram`.
 
 ## Configuration files, the environment and origins
 
 A parameter can be supplied by three kinds of source. From the lowest
-precedence to the highest: configuration files, in the layers the program
+precedence to the highest: configuration files, in the layers a program
 declares (lowest first); the environment variables its `env` lists; and the
-command line. `sources = {...}` restricts a parameter to some of them (one
-that excludes `cli` is not accepted on the command line and not listed in
-help).
+command line. Clispec reads only the command line. The rest is
+[confutils](https://github.com/metacraft-labs/nim-confutils)': its
+`cliConfiguration` macro takes the same description as `cliProgram`,
+generates everything `cliProgram` does, and adds
 
-```nim
-import std/[os, tables, tempfiles]
-import clispec, clispec/toml_source
+- `Tool.load(argv, sources)` and `Tool.loadWithOrigins(argv, sources)`,
+  which read the configuration layers and the environment of a
+  `CliSources` and merge them with the command line, per parameter, as its
+  `merge` declares (`replace`, `append`, `errorOnConflict` or a combine
+  proc); a binding layer's values are enforced over every other source;
+- an origin object of the configuration object's shape, recording for every
+  value where it came from (a file's path, line and key, a variable, or the
+  argv index and spelling clispec's parser recorded) and every value it
+  overrode;
+- configuration files read through a small format interface, TOML first,
+  validated against a schema generated from the description: the
+  `configSchema` identifier, the keys as each source's naming convention
+  spells them, and the parameters' types.
 
-proc strictest(candidates: openArray[CliSourcedValue[int]]): int =
-  for c in candidates:
-    result = max(result, c.value)
-
-cliProgram(Tool, "tool"):
-  configSchema "tool.config.v1"
-  convention file = snakeCase
-  flag jobs is int, default = 4, env = ["TOOL_JOBS"]
-  flag searchPaths is seq[string], merge = append, separator = ":",
-    env = ["TOOL_PATH"]
-  flag level is int, merge = strictest
-  flag token is string, sources = {env, file}, env = ["TOOL_TOKEN"]
-
-let dir = createTempDir("tool_", "")
-writeFile(dir / "system.toml", """
-schema = "tool.config.v1"
-jobs = 2
-""")
-writeFile(dir / "user.toml", """
-schema = "tool.config.v1"
-jobs = 6
-level = 3
-search_paths = ["/usr/share/tool"]
-
-[extensions]
-my_editor_settings = { theme = "dark" }
-""")
-
-let sources = CliSources(format: tomlCliFormat(),
-  layers: @[
-    CliLayer(name: "system", path: dir / "system.toml", binding: true),
-    CliLayer(name: "user", path: dir / "user.toml"),
-    CliLayer(name: "project", path: dir / "absent.toml")], # skipped
-  env: {"TOOL_PATH": "/opt/tool", "TOOL_TOKEN": "t0k"}.toTable)
-
-let (conf, origins) = Tool.loadWithOrigins(@["--jobs", "8"], sources)
-assert conf.jobs == 2                     # the system layer enforces it
-assert origins.jobs.kind == cokEnforced
-assert origins.jobs.winner.layer == "system" and origins.jobs.winner.line == 2
-assert origins.jobs.losers[1].fate == cfIgnoredByEnforcement # --jobs 8
-assert conf.searchPaths == @["/usr/share/tool", "/opt/tool"]
-assert conf.level == 3 and conf.token == "t0k"
-echo cliDescribe(origins.jobs)
-removeDir(dir)
-```
-
-### Layers belong to the program
-
-A `CliSources` lists the program's layers, lowest precedence first, each a
-`CliLayer` with a `name` (what origins and errors call it), a `path`,
-`binding` and `required` (a missing file is an error rather than a skipped
-layer). Every value a **binding** layer sets is _enforced_: no other source,
-the environment and the command line included, can override it, and each
-attempt is recorded in the origin as ignored. When two binding layers set the
-same key, the lower one enforces it. An enforced value ignores the merge
-rule: it is not combined, appended or reported as a conflict.
-
-The environment is a table the program passes in (`cliProcessEnv()` returns
-the process's own); nothing reads the process environment behind its back.
-An environment value is text, converted exactly like a command-line value; a
-list parameter's variable is one element, or a delimited list when the
-parameter declares a `separator`.
-
-### Merge rules
-
-Each source (a layer, the environment, the command line) gives a parameter
-one value: within one source a list collects every occurrence, a counted
-flag adds them up and anything else keeps its last. Across sources:
-
-| `merge`           | Value                                                                                                                         |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `replace`         | the highest source's (a higher source's list, even an empty one, replaces a lower one's)                                      |
-| `append`          | every source's list concatenated, lowest first (a `seq` or counted parameter only)                                            |
-| `errorOnConflict` | as `replace`, but two sources with different values are a `cekConflictingSources` error naming both (values compared as text) |
-| a combine proc    | what the proc returns from every source's value                                                                               |
-
-A combine proc has the signature
-`proc (candidates: openArray[CliSourcedValue[T]]): T`, where `T` is the
-parameter's type: it receives one `CliSourcedValue` per source that supplied
-the parameter, lowest first, each with the converted `value` and its
-`origin` (a `CliSite`). A proc that does not fit is a compile error naming
-the parameter. If it raises, loading fails with `cekConflictingSources`
-carrying its message.
-
-Defaults and `implies` apply only after every source has been merged, so a
-default never stands in for a value a file supplied.
-
-### Configuration files
-
-A file is read by a format adapter, a `CliConfigFormat` whose `parse` proc
-(`CliConfigParser`) turns the file's text into a flat list of entries, each
-with its key's segments, its value (string, integer, float, bool, date-time
-or array) and its line. `tomlCliFormat()` from `clispec/toml_source` reads
-TOML with
-[nim-toml-serialization](https://github.com/status-im/nim-toml-serialization);
-that module is not imported by `clispec`, so a program without configuration
-files does not depend on any serialization library. An adapter for another
-format implements the same proc.
-
-The program's schema is then applied to the entries, for every format alike:
-
-- The file must have a top-level `schema` string equal to the description's
-  `configSchema`. A program without one loads no file.
-- Every other key must be a parameter's configuration key, as the layer's
-  source spells it, except keys under a top-level `extensions` table, which
-  is the escape hatch for data the program does not define and is never
-  read. A layer whose name is a file source the description declares
-  (`convention "project" = ...`) uses that source's spelling; failing that,
-  a layer whose format's name is one (`convention "toml" = ...`) uses that;
-  any other layer uses the `file` source's. A key spelt in another source's
-  convention is an unknown key.
-- A value must have its parameter's type: a string (also for enums, paths
-  and every type written as text), an integer, a float (an integer is
-  accepted too) or a bool, and an array of those for a list parameter. A
-  counted flag takes an integer.
-
-Values are read verbatim: nothing is interpolated or expanded, and a list's
-elements are never split on its `separator`. `Tool.configSchema` is the
-schema as a value, with its keys spelt as the `file` source spells them, and
-`Tool.configSchema("project")` the same for a named source; each key also
-lists its spelling in every file source (`sourceKeys`). `cliConfigSchemaJson`
-renders it as JSON under the schema name `clispec-config-schema/1` (keys are
-only added within that name).
-
-A file that breaks these rules raises a `CliConfigError`, whose `kind` is a
-`CliConfigErrorKind`, each with one wording naming the file, the line and the
-key where there is one:
-
-| Kind                  | Wording                                                                        |
-| --------------------- | ------------------------------------------------------------------------------ |
-| `cfeUnknownKey`       | `/home/u/.config/tool.toml:4: unknown key 'jbos' (layer 'user')`               |
-| `cfeMissingSchema`    | the file has no top-level `schema` string (the wording shows the expected one) |
-| `cfeWrongSchema`      | `...:1: declares schema "tool.config.v2"; expected "tool.config.v1"`           |
-| `cfeWrongType`        | `...:2: key 'jobs' has the string "four"; expected an integer`                 |
-| `cfeSyntax`           | `...:3: is not valid:` followed by the format's own message                    |
-| `cfeUnreadable`       | a required layer's file is missing, or a file cannot be read                   |
-| `cfeNoSchemaDeclared` | the description declares no `configSchema`                                     |
-| `cfeNoFormat`         | layers were given without a format                                             |
-
-### The origin object
-
-`loadWithOrigins` also returns an object of the same shape as the
-configuration object (`ToolOrigins`, `ToolBuildOrigins`, ..., with the same
-`command` discriminator) holding a `CliOrigin` per field:
-
-- `winner`, a `CliSite`: its `kind` (`cokDefault`, `cokFile` with `path`,
-  `line`, `key` (as the file spelt it), the `layer` name and the
-  `fileSource` whose convention that spelling is, `cokEnv` with the
-  `variable`, `cokCli` with the `argvIndex` and `spelling`, `cokImplied` with `impliedBy`,
-  `cokEnforced` like a file, or `cokUnset`), also readable as `origin.kind`;
-- `values`, the value as written;
-- `losers`, every other value that was considered, in the order the merge
-  considered them (layers lowest first, then the environment, then the
-  command line), each with its `value`, its `site` and its `fate`:
-  `cfOverridden`, `cfCombined` (part of an `append` or combined value) or
-  `cfIgnoredByEnforcement`.
-
-`cliDescribe(origin)` puts it in one line, for a debug report or an
-`--explain` option.
+What the description declares for those sources is still checked here, at
+compile time: `key` and `env` against `sources`, the naming conventions and
+their overrides, reserved keys (`schema`, `extensions`) in a program that
+declares a `configSchema`, and `merge = append` on a parameter that is not a
+list. A combine proc's signature is checked by confutils, which calls it.
 
 ## Extending the model
 

@@ -27,9 +27,11 @@ proc completeRepos(ctx: CliCompletionContext): seq[CliCompletion] =
   ## referenced by the description.
   @[CliCompletion(value: ctx.prefix)]
 
-proc strictest(candidates: openArray[CliSourcedValue[int]]): int =
-  ## A combine proc (the signature ``cliModelTypeChecks`` requires), only
-  ## referenced by the description.
+proc strictest(values: openArray[int]): int {.used.} =
+  ## Stands for a combine proc. The model records ``merge = <proc>`` as an
+  ## expression; the library that merges several sources (confutils, over a
+  ## clispec description) calls it and checks its signature, so clispec
+  ## does not.
   0
 
 const defaultJobs = 4

@@ -1,6 +1,5 @@
 ## test_suite_lists_agree: the three places that name the test suite name the
-## same files, and the three places that pin the TOML adapter's dependencies
-## pin the same revisions.
+## same files.
 ##
 ## The suite is run three ways: ``just test`` (the ``tests`` variable of the
 ## ``Justfile``), ``nimble test`` (the ``test`` task of ``clispec.nimble``)
@@ -18,22 +17,10 @@
 ## ``tests/e2e_*.nim`` modules on disk, and no other entry may be marked
 ## ``realShells``.
 ##
-## It also checks the two facts ``repro.nim`` records per test that the other
-## runners do not need:
-##
-## * ``needsToml`` must be set exactly for the modules that use the TOML
-##   adapter (they import ``clispec/toml_source``, read
-##   ``CLISPEC_FORMAT_PATHS`` to compile code that may, or import a helper
-##   module under ``tests/`` that does one of those). Without it the
-##   module does not compile in the graph; with it where it is not needed,
-##   the module waits for downloads it never reads.
-## * ``runsCompiler`` must be set exactly for the modules that run the Nim
-##   compiler while they execute (they call ``getCurrentCompilerExe()``).
-##
-## And it requires ``flake.nix`` (the dev shell), ``clispec.nimble``
-## (``nimble test``) and ``repro.nim`` (the graph's pinned archives) to name
-## the same repository at the same revision for each of the TOML adapter's
-## dependencies.
+## It also checks the fact ``repro.nim`` records per test that the other
+## runners do not need: ``runsCompiler`` must be set exactly for the modules
+## that run the Nim compiler while they execute (they call
+## ``getCurrentCompilerExe()``).
 ##
 ## The files are read as text rather than evaluated because evaluating them
 ## needs three different tools; the text forms read here are the ones each
@@ -118,13 +105,12 @@ proc nimbleTests(): seq[string] =
 
 type ReproTest = object
   stem: string
-  needsToml: bool
   runsCompiler: bool
   realShells: bool
 
 proc reproTests(): seq[ReproTest] =
   ## The ``clispecTests`` list of repro.nim: one ``ClispecTest(...)`` per
-  ## module, with its ``needsToml`` / ``runsCompiler`` flags.
+  ## module, with its ``runsCompiler`` / ``realShells`` flags.
   let body = between(readFile(repoDir / "repro.nim"),
     "const clispecTests = [", "\n]")
   for entry in body.split("ClispecTest(")[1 .. ^1]:
@@ -133,7 +119,6 @@ proc reproTests(): seq[ReproTest] =
       continue
     result.add(ReproTest(
       stem: literals[0].extractFilename.changeFileExt(""),
-      needsToml: "needsToml: true" in entry,
       runsCompiler: "runsCompiler: true" in entry,
       realShells: "realShells: true" in entry))
 
@@ -144,93 +129,14 @@ proc codeLines(text: string): seq[string] =
     if code.len > 0 and not code.startsWith("#"):
       result.add(code)
 
-proc importsModule(text, module: string): bool =
-  ## Whether an ``import`` statement of ``text`` names ``module``.
-  for code in codeLines(text):
-    if code.startsWith("import ") and module in code:
-      return true
-
 const
-  # Spelled in two pieces so this file's own text does not match them.
-  formatPathsRead = "getEnv(\"" & "CLISPEC_FORMAT_PATHS\")"
+  # Spelled in two pieces so this file's own text does not match it.
   compilerCall = "getCurrentCompilerExe" & "()"
-
-proc usesTomlAdapter(text: string): bool =
-  ## Imports the adapter, or hands the format sources to code it compiles.
-  importsModule(text, "toml_source") or formatPathsRead in text
 
 proc runsCompiler(text: string): bool =
   for code in codeLines(text):
     if compilerCall in code:
       return true
-
-proc tomlHelpers(): seq[string] =
-  ## Helper modules under ``tests/`` (not themselves tests) that use the TOML
-  ## adapter; a test that imports one needs it too.
-  for path in walkFiles(testsDir / "*.nim"):
-    let stem = path.extractFilename.changeFileExt("")
-    if not stem.startsWith("test_") and not stem.startsWith("e2e_") and
-        usesTomlAdapter(readFile(path)):
-      result.add(stem)
-
-proc joinConcatenations(text: string): string =
-  ## ``"abc" &\n    "def"`` becomes ``"abcdef"``, so a URL split over two
-  ## string literals reads as one.
-  var i = 0
-  while i < text.len:
-    if text[i] == '"':
-      var p = i + 1
-      while p < text.len and text[p] in Whitespace:
-        inc p
-      if p < text.len and text[p] == '&':
-        inc p
-        while p < text.len and text[p] in Whitespace:
-          inc p
-        if p < text.len and text[p] == '"':
-          i = p + 1
-          continue
-    result.add(text[i])
-    inc i
-
-proc githubPins(text: string): seq[string] =
-  ## Every ``<owner>/<repository>@<40-hex revision>`` named in ``text`` by a
-  ## GitHub reference in any of the three spellings the files use:
-  ## ``github:owner/repo/<rev>`` (flake), ``github.com/owner/repo#<rev>``
-  ## (nimble) and ``github.com/owner/repo/archive/<rev>`` (archive URL).
-  var i = 0
-  while true:
-    let at = text.find("github", i)
-    if at < 0:
-      break
-    i = at + "github".len
-    var p = i
-    if text.continuesWith(":", p):
-      inc p
-    elif text.continuesWith(".com/", p):
-      p += ".com/".len
-    else:
-      continue
-    var owner, repo = ""
-    while p < text.len and text[p] notin {'/', '"', ' ', '\n'}:
-      owner.add(text[p])
-      inc p
-    if not text.continuesWith("/", p):
-      continue
-    inc p
-    while p < text.len and text[p] notin {'/', '#', '"', ' ', '\n'}:
-      repo.add(text[p])
-      inc p
-    if text.continuesWith("/archive/", p):
-      p += "/archive/".len
-    elif p < text.len and text[p] in {'/', '#'}:
-      inc p
-    else:
-      continue
-    if p + 40 <= text.len and
-        text[p ..< p + 40].allCharsInSet({'0' .. '9', 'a' .. 'f'}) and
-        (p + 40 == text.len or text[p + 40] notin {'0' .. '9', 'a' .. 'f'}):
-      result.add(owner & "/" & repo & "@" & text[p ..< p + 40])
-  result.sort()
 
 suite "test_suite_lists_agree":
 
@@ -277,35 +183,9 @@ suite "test_suite_lists_agree":
     check duplicates(repro).len == 0
     check sortedList(repro) == e2e
 
-  test "repro.nim gives the TOML sources to exactly the tests that use them":
-    let helpers = tomlHelpers()
-    check helpers.len > 0   # tests/cs_m4_fixture.nim
-    for t in reproTests():
-      let text = readFile(testsDir / (t.stem & ".nim"))
-      var uses = usesTomlAdapter(text)
-      for helper in helpers:
-        if importsModule(text, helper):
-          uses = true
-      checkpoint(t.stem & ": uses the TOML adapter = " & $uses &
-        ", needsToml = " & $t.needsToml)
-      check uses == t.needsToml
-
   test "repro.nim declares the compiler for exactly the tests that run it":
     for t in reproTests():
       let runs = runsCompiler(readFile(testsDir / (t.stem & ".nim")))
       checkpoint(t.stem & ": runs the compiler = " & $runs &
         ", runsCompiler = " & $t.runsCompiler)
       check runs == t.runsCompiler
-
-  test "flake.nix, clispec.nimble and repro.nim pin the same revisions":
-    let flake = githubPins(between(readFile(repoDir / "flake.nix"),
-      "nim-toml-serialization-src", "outputs"))
-    let nimble = githubPins(readFile(repoDir / "clispec.nimble"))
-    let repro = githubPins(joinConcatenations(between(
-      readFile(repoDir / "repro.nim"), "FormatSources = [", "\n  ]")))
-    checkpoint("flake.nix: " & $flake)
-    checkpoint("clispec.nimble: " & $nimble)
-    checkpoint("repro.nim: " & $repro)
-    check flake.len == 5
-    check nimble == flake
-    check repro == flake

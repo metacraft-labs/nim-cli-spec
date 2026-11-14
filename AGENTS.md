@@ -5,7 +5,11 @@ Clispec: a typed model of a command line (`src/clispec/model.nim`), the
 (`src/clispec/dsl.nim`), and `cliProgram` (`src/clispec/program.nim`), which
 generates a program's typed configuration object, argv parser, help and
 shell completion from it. `README.md` describes all of it and the extension mechanism; read it
-first.
+first. Configuration files, the environment, merge rules and the origin
+object are not here: confutils (`metacraft-labs/nim-confutils`) is
+instantiated over a clispec description and provides them, delegating the
+command line to this library. Clispec depends on nothing but the standard
+library.
 
 ## Commands
 
@@ -37,6 +41,10 @@ first.
   from a model: one entry per parameter, an explicit command tree.
 - `src/clispec/parser.nim`: the argv parser, in phases (`cliTokenize`,
   `cliMerge`, `cliDecide`) plus the conversion helpers generated code calls.
+  A library that adds sources replaces `cliMerge` with its own and fills the
+  same `CliResolution`.
+- `src/clispec/candidates.nim`: candidates, the values a source supplies for
+  a parameter (the command line's with their argv index and spelling).
 - `src/clispec/values.nim`: text to typed values (`parseCliValue`).
 - `src/clispec/errors.nim`: the usage-error taxonomy (`CliErrorKind`, one
   wording per kind in `cliErrorMessage`) and `CliHelpRequest`.
@@ -52,16 +60,11 @@ first.
 - `src/clispec/completion_scripts.nim`: the Bash, Zsh, Fish and PowerShell
   scripts (`cliCompletionScript`). They stay thin: no knowledge of any
   command line, and nothing the program prints is evaluated.
-- `src/clispec/origins.nim`: candidates (one value a source supplied) and
-  origins (`CliOrigin`: the winner and every loser with its fate).
-- `src/clispec/sources.nim`: configuration layers, the environment, the
-  format-adapter interface (`CliConfigFormat`), schema validation and
-  `CliConfigError`. No serialization dependency.
-- `src/clispec/toml_source.nim`: the TOML adapter (nim-toml-serialization).
-  NOT imported by the umbrella: only a consumer that reads TOML pays for
-  it. The dev shell exports its dependencies' `--path:` flags as
-  `CLISPEC_FORMAT_PATHS`, which the Justfile passes to every test.
-- `src/clispec/program.nim`: `cliProgram` / `cliProgramCode`, the generator.
+- `src/clispec/program.nim`: `cliProgram` / `cliProgramCode`, the generator,
+  and the names and shapes it generates (`cliGeneratedNames`,
+  `cliShapedTypeDecls`, `cliShapedBuilderProc`, `cliShapedVisitorProc`,
+  `cliFieldBare`, `cliFieldAllowed`, `cliProgramArgs`) for a library that
+  generates code beside it (confutils does).
 - `tests/`: `test_dsl_model.nim` (every construct of the language parses into
   the model), `test_extension.nim` (a consumer extension, driven through
   the real parser), `test_cs_m2_model_round_trip.nim` (every named argument a
@@ -74,12 +77,11 @@ first.
   form, the error taxonomy (a golden table indexed by `CliErrorKind`, so a
   new kind without a case does not compile) and help against the model.
   `test_readme_examples.nim` compiles and runs every fenced `nim` block of the
-  README. The `test_cs_m4_*` tests load `tests/cs_m4_fixture.nim`'s program
-  from real TOML files in a temporary directory and an environment table:
-  precedence and origins, merge rules, enforcement, defaults after the merge
-  and schema validation. The `test_cs_m4b_*` tests cover naming conventions:
-  the conversion table, each source in its own convention (TOML layers and
-  the command line), and the precedence of the overrides. The `test_cs_m5_*`
+  README. The `test_cs_m4b_*` tests cover naming conventions: the
+  conversion table, the command line in its own convention and every
+  source's spelling in the model and help, and the precedence of the
+  overrides. (Loading configuration files and the environment, merging and
+  origins are tested in confutils.) The `test_cs_m5_*`
   tests cover completion: the engine's exact candidates at every word
   position and the protocol answer per shell, and `internal` parameters
   (accepted, in no help screen, never completed, marked in the JSON).
@@ -89,10 +91,11 @@ first.
 - `tests/test_suite_lists_agree.nim` keeps the three lists of test modules
   equal: the Justfile's `tests`, the nimble `test` task and `repro.nim`'s
   `clispecTests` (and for `tests/e2e_*.nim`: the Justfile's `e2e-tests`,
-  the nimble `e2e` task and the `realShells: true` entries). It also keeps the TOML dependencies' revisions equal across
-  `flake.nix`, `clispec.nimble` and `repro.nim`. A new test module goes into
-  all three lists, and a revision bump into all three files (`repro.nim`
-  also records the SHA-256 of the GitHub archive of the revision).
+  the nimble `e2e` task and the `realShells: true` entries). A new test
+  module goes into all three lists.
+- `tests/test_cs_m9_clispec_has_no_serialization_dependency.nim` fails when
+  `clispec.nimble`, `flake.nix` or `repro.nim` declares a serialization
+  library or a module under `src/` imports one.
 
 ## Rules
 
@@ -131,11 +134,11 @@ first.
   the answer only change compatibly.
 - **The help JSON is a contract.** Within `clispec-help/1` keys are only
   added, never renamed or removed; anything else is a new schema name.
-- **Configuration-file errors have one wording per kind too**
-  (`CliConfigErrorKind`, `cliConfigErrorMessage`), naming the file, the line
-  and the key.
-- **The umbrella never imports a serialization library.** A format adapter
-  is a module of its own that consumers import explicitly.
+- **No serialization library, anywhere.** Configuration files and their
+  formats belong to confutils. What they need is declared in the
+  description (`env`, `key`, `sources`, `merge`, `configSchema`,
+  conventions) and kept in the model; reading them is not this library's
+  job.
 - **Every diagnostic names what it is about.** Errors about a parameter go
   through `cliParamError` (`clispec: parameter '<name>': ...`); errors about a
   command name it with `cliCommandLabel`.

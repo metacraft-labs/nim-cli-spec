@@ -12,10 +12,8 @@
 ##   * `lint` is `nim check` over the umbrella module and every test module.
 ##   * `format` runs `nimpretty` when it is available.
 ##
-## The TOML adapter (`src/clispec/toml_source.nim`) and the tests that use it
-## need nim-toml-serialization and its dependencies on the path. The dev shell
-## exports them as `CLISPEC_FORMAT_PATHS` (`--path:` flags); the recipes pass
-## that to every test compile. Without it those tests do not compile.
+## The tests need nothing but the compiler and the standard library: clispec
+## depends on no other package.
 ##
 ## Hermetic flags (`--skipParentCfg --skipUserCfg`) are baked into `nim-flags`
 ## so every invocation gets the same isolation. That switches off
@@ -31,7 +29,7 @@ alias fmt := format
 src-paths := "--path:src"
 nim-flags := "--skipParentCfg --skipUserCfg --hints:off"
 nimcache := ".nimcache"
-tests := "test_dsl_model test_extension test_cs_m2_model_round_trip test_cs_m2_invalid_declarations_fail_to_compile test_cs_m3_parser_accepts_declared_forms test_cs_m3_parser_error_taxonomy test_cs_m3_help_matches_model test_readme_examples test_cs_m4_precedence_and_origins test_cs_m4_merge_rules test_cs_m4_enforced_value_explained test_cs_m4_default_never_overrides_file test_cs_m4_unknown_key_rejected test_cs_m4b_convention_conversion test_cs_m4b_per_source_convention test_cs_m4b_override_precedence test_cs_m5_engine_completes_every_level test_cs_m5_internal_parameters_work_unlisted test_suite_lists_agree"
+tests := "test_dsl_model test_extension test_cs_m2_model_round_trip test_cs_m2_invalid_declarations_fail_to_compile test_cs_m3_parser_accepts_declared_forms test_cs_m3_parser_error_taxonomy test_cs_m3_help_matches_model test_readme_examples test_cs_m4b_convention_conversion test_cs_m4b_per_source_convention test_cs_m4b_override_precedence test_cs_m5_engine_completes_every_level test_cs_m5_internal_parameters_work_unlisted test_cs_m9_clispec_has_no_serialization_dependency test_suite_lists_agree"
 e2e-tests := "e2e_cs_m5_real_shell_completion"
 
 # Compile every test module without running it.
@@ -42,7 +40,7 @@ build:
     : > test-logs/build.log
     for t in {{tests}} {{e2e-tests}}; do
       nim c {{nim-flags}} --nimcache:{{nimcache}}/tests/${t}_d {{src-paths}} \
-        ${CLISPEC_FORMAT_PATHS:-} -o:test-logs/${t} tests/${t}.nim 2>&1 | tee -a test-logs/build.log
+        -o:test-logs/${t} tests/${t}.nim 2>&1 | tee -a test-logs/build.log
     done
 
 # Run the test suite.
@@ -53,7 +51,7 @@ test:
     : > test-logs/test.log
     for t in {{tests}}; do
       nim c -r {{nim-flags}} --nimcache:{{nimcache}}/tests/${t}_d {{src-paths}} \
-        ${CLISPEC_FORMAT_PATHS:-} -o:test-logs/${t} tests/${t}.nim 2>&1 | tee -a test-logs/test.log
+        -o:test-logs/${t} tests/${t}.nim 2>&1 | tee -a test-logs/test.log
     done
 
 # Run the end-to-end tests (real shells in a pseudo-terminal).
@@ -64,7 +62,7 @@ e2e:
     : > test-logs/e2e.log
     for t in {{e2e-tests}}; do
       nim c -r {{nim-flags}} --nimcache:{{nimcache}}/tests/${t}_d {{src-paths}} \
-        ${CLISPEC_FORMAT_PATHS:-} -o:test-logs/${t} tests/${t}.nim 2>&1 | tee -a test-logs/e2e.log
+        -o:test-logs/${t} tests/${t}.nim 2>&1 | tee -a test-logs/e2e.log
     done
 
 # `nim check` over the umbrella and every test module.
@@ -74,11 +72,9 @@ lint:
     mkdir -p test-logs
     nim check {{nim-flags}} --nimcache:{{nimcache}}/src/clispec_check {{src-paths}} \
       src/clispec.nim 2>&1 | tee test-logs/lint.log
-    nim check {{nim-flags}} --nimcache:{{nimcache}}/src/clispec/toml_source_check {{src-paths}} \
-      ${CLISPEC_FORMAT_PATHS:-} src/clispec/toml_source.nim 2>&1 | tee -a test-logs/lint.log
     for t in {{tests}} {{e2e-tests}}; do
       nim check {{nim-flags}} --nimcache:{{nimcache}}/tests/${t}_check {{src-paths}} \
-        ${CLISPEC_FORMAT_PATHS:-} tests/${t}.nim 2>&1 | tee -a test-logs/lint.log
+        tests/${t}.nim 2>&1 | tee -a test-logs/lint.log
     done
 
 # Format the Nim sources in place with nimpretty, when it is installed.
