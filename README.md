@@ -132,22 +132,86 @@ more parameters to the same heading.
 
 **Names.** A parameter's name is its canonical long flag (`output` is
 `--output`); `alias` adds a spelling. Its configuration-file key is the path of
-the command that declares it followed by its name, joined with `.` and spelt as
-declared: `jobs` above is `build.jobs`, `color` is `color`. A parameter
+the command that declares it followed by its name, joined with `.`: `jobs`
+above is `build.jobs`, `color` is `color`. Both are spelt in their source's
+naming convention, below, which by default is the name as declared. A parameter
 inherited by nested commands keeps the key of the command that declared it.
 `key` replaces the derived key, and a parameter whose `sources` exclude
 `file` has none. Environment variables are never derived: a parameter reads
 exactly the variables its `env` lists.
 
-Two statements directly under `cli:` describe the program's configuration
-files: `configSchema "<id>"` names the schema identifier every file must
-declare (below), and `keyStyle declared | snakeCase | kebabCase` respells
-every derived key segment: `declared` (the default) keeps the spelling
-above, `snakeCase` makes `writeReport` and `debug-dump` into `write_report`
-and `debug_dump`, `kebabCase` into `write-report` and `debug-dump`. A key
-given with `key` is always used as written. The default keeps keys equal to
-the parameter names, as confutils does (its configuration-file keys are the
-field names, or the `name` pragma's spelling).
+`configSchema "<id>"` directly under `cli:` names the schema identifier
+every configuration file must declare (see
+[Configuration files](#configuration-files)).
+
+**Naming conventions.** Each source spells names in one convention:
+`declared` (exactly as written, the default for every source), `camelCase`,
+`snakeCase` or `kebabCase`. A description sets it once per source, directly
+under `cli:`:
+
+```text
+convention cli = kebabCase         # the command line's long flags
+convention file = snakeCase        # every configuration file
+convention "project" = kebabCase   # the layer (or format) named "project"
+```
+
+`keyStyle <convention>` is the older spelling of `convention file = ...`.
+Under these, `flag writeReport` is `--write-report` on the command line,
+`write_report` in a configuration file and `write-report` in the layer named
+`project`; a subcommand path segment of a key is converted the same way.
+Subcommand words, `alias` and `short` are used as written, and environment
+variables are never derived, so no convention applies to them. The default
+keeps keys equal to the parameter names, as confutils does (its
+configuration-file keys are the field names, or the `name` pragma's
+spelling).
+
+`cliConvert(name, convention)` is the one function every spelling goes
+through. It splits a name into words (`cliWords`): letters, digits and
+non-ASCII bytes are word characters and anything else (`-`, `_`, `.`) ends a
+word; an upper-case letter after a lower-case letter or a digit starts a new
+word (`writeReport`, `sha256Sum`), and so does the last capital of an acronym
+when a lower-case letter follows it (`HTTPPort` is `HTTP` + `Port`); digits
+stay with the word before them (`ipv6Address` is `ipv6` + `Address`).
+`snakeCase` and `kebabCase` lower-case the words and join them with `_` and
+`-`; `camelCase` lower-cases the first word and capitalises the first letter
+of the others (`HTTPPort` is `httpPort`, `user_id` is `userId`). A conversion
+can lose what the words do not record, which is what overrides are for.
+
+Overrides are opt-in and refine the conversion for one parameter:
+
+- `perConvention = [kebabCase = "base-url", ...]` gives the parameter's name
+  in one convention, for every source that uses it (an acronym, or a word
+  the splitter divides wrongly). In a key it replaces the last segment.
+- `perSource = [cli = "port", "project" = "web.port"]` gives the long flag
+  (without `--`) on the command line, or the whole key, used as written, in
+  one named file source. `key = "<dotted.key>"` is this override for every
+  file source.
+
+The most specific one wins: the source's own override (a named source's
+`perSource` entry, then `key`), then the override for the source's
+convention, then the conversion. Help, the machine-readable help, the
+configuration schema and the origin object all show the spelling each source
+uses.
+
+```nim
+import clispec
+
+cliProgram(Srv, "srv"):
+  configSchema "srv.config.v1"
+  convention cli = kebabCase
+  convention file = snakeCase
+  convention "project" = kebabCase
+  flag writeReport is string
+  flag httpPort is int, perSource = [cli = "port", "project" = "web.port"]
+  flag urlBase is string, perConvention = [kebabCase = "base-url"]
+
+let conf = Srv.load(@["--write-report", "r.txt", "--port", "80",
+  "--base-url", "/"])
+assert conf.writeReport == "r.txt" and conf.httpPort == 80
+assert Srv.configSchema.keys[0].key == "write_report"
+assert Srv.configSchema("project").keys[1].key == "web.port"
+assert Srv.configSchema("project").keys[2].key == "base-url"
+```
 
 **Expressions.** `default`, `optionalValue`, `values`, the values of `implies`,
 `complete` and a combine proc are Nim expressions. The model keeps each as a
@@ -168,8 +232,14 @@ set to anything but `true` or `false`, a flag-only argument on a positional, an
 `implies` naming no parameter of the command, an argument given twice, two
 subcommands of one command answering to the same word, `aliases` on `call:`,
 a `help` statement inside a `group` section (the section's help goes in
-its head), and `keyStyle` or `configSchema` anywhere but directly under
-`cli:`, or with an unknown style. The generated checks also reject
+its head), `keyStyle`, `convention` or `configSchema` anywhere but directly
+under `cli:`, an unknown convention or one source's convention given twice,
+a `perConvention` entry for `declared` or for one convention twice, a
+`perSource` entry for a file source the description does not declare, for
+`file` (that is `key`), for one source twice, for `cli` on a positional or
+when `sources` exclude `cli`, or for a file source when they exclude `file`,
+and two parameters of one command whose long flags or keys in one source
+come out the same once converted and overridden. The generated checks also reject
 `merge = append` on a parameter that is neither a `seq` nor counted, and a
 combine proc that does not have the signature below. In a `cliProgram` that
 declares a `configSchema`, a configuration key that is `schema` or lies
@@ -387,7 +457,8 @@ The machine-readable form, `helpJson`, is a JSON document with the schema
 name `clispec-help/1`, meant for completion and editor hints:
 
 ```text
-{"schema": "clispec-help/1", "program": "tool", "command": COMMAND}
+{"schema": "clispec-help/1", "program": "tool", "command": COMMAND,
+ "conventions": {"cli": CONVENTION, "file": CONVENTION, SOURCE: CONVENTION, ...}}
 COMMAND   = {"name", "path", "aliases", "help", "visibility", "usage",
              "parameters": [PARAMETER, ...], "commands": [COMMAND, ...]}
 PARAMETER = {"name", "kind": "flag" | "positional", "spellings",
@@ -396,12 +467,16 @@ PARAMETER = {"name", "kind": "flag" | "positional", "spellings",
              "valueName", "choices", "list", "separator": string | null,
              "counted", "required", "default": string | null, "env", "help",
              "group": string | null, "visibility", "position" (positionals),
-             "declaredIn", "dynamicCompletion", "completer": string | null}
+             "declaredIn", "dynamicCompletion", "completer": string | null,
+             "configKeys": {"file": KEY, SOURCE: KEY, ...}}
 ```
 
 `value` says whether a flag takes a value and `format` how (see
 [Accepted forms](#accepted-forms)); `choices` is the closed value set, empty
 when the set is open; `completer` is the `complete` expression as written.
+`spellings` and `negation` are spelt in the command line's convention;
+`configKeys` gives the parameter's key in every file source (`{}` when no file
+may supply it), and `conventions` the convention of every source.
 
 `commands` nests the listed subcommands recursively, and the listing rules
 above decide what appears. Keys are always emitted in this order. Within
@@ -439,7 +514,7 @@ proc strictest(candidates: openArray[CliSourcedValue[int]]): int =
 
 cliProgram(Tool, "tool"):
   configSchema "tool.config.v1"
-  keyStyle snakeCase
+  convention file = snakeCase
   flag jobs is int, default = 4, env = ["TOOL_JOBS"]
   flag searchPaths is seq[string], merge = append, separator = ":",
     env = ["TOOL_PATH"]
@@ -536,9 +611,14 @@ The program's schema is then applied to the entries, for every format alike:
 
 - The file must have a top-level `schema` string equal to the description's
   `configSchema`. A program without one loads no file.
-- Every other key must be a parameter's configuration key, except keys under
-  a top-level `extensions` table, which is the escape hatch for data the
-  program does not define and is never read.
+- Every other key must be a parameter's configuration key, as the layer's
+  source spells it, except keys under a top-level `extensions` table, which
+  is the escape hatch for data the program does not define and is never
+  read. A layer whose name is a file source the description declares
+  (`convention "project" = ...`) uses that source's spelling; failing that,
+  a layer whose format's name is one (`convention "toml" = ...`) uses that;
+  any other layer uses the `file` source's. A key spelt in another source's
+  convention is an unknown key.
 - A value must have its parameter's type: a string (also for enums, paths
   and every type written as text), an integer, a float (an integer is
   accepted too) or a bool, and an array of those for a list parameter. A
@@ -546,8 +626,11 @@ The program's schema is then applied to the entries, for every format alike:
 
 Values are read verbatim: nothing is interpolated or expanded, and a list's
 elements are never split on its `separator`. `Tool.configSchema` is the
-schema as a value, and `cliConfigSchemaJson` renders it as JSON under the
-schema name `clispec-config-schema/1` (keys are only added within that name).
+schema as a value, with its keys spelt as the `file` source spells them, and
+`Tool.configSchema("project")` the same for a named source; each key also
+lists its spelling in every file source (`sourceKeys`). `cliConfigSchemaJson`
+renders it as JSON under the schema name `clispec-config-schema/1` (keys are
+only added within that name).
 
 A file that breaks these rules raises a `CliConfigError`, whose `kind` is a
 `CliConfigErrorKind`, each with one wording naming the file, the line and the
@@ -571,8 +654,9 @@ configuration object (`ToolOrigins`, `ToolBuildOrigins`, ..., with the same
 `command` discriminator) holding a `CliOrigin` per field:
 
 - `winner`, a `CliSite`: its `kind` (`cokDefault`, `cokFile` with `path`,
-  `line`, `key` and the `layer` name, `cokEnv` with the `variable`, `cokCli`
-  with the `argvIndex` and `spelling`, `cokImplied` with `impliedBy`,
+  `line`, `key` (as the file spelt it), the `layer` name and the
+  `fileSource` whose convention that spelling is, `cokEnv` with the
+  `variable`, `cokCli` with the `argvIndex` and `spelling`, `cokImplied` with `impliedBy`,
   `cokEnforced` like a file, or `cokUnset`), also readable as `origin.kind`;
 - `values`, the value as written;
 - `losers`, every other value that was considered, in the order the merge

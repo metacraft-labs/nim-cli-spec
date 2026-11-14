@@ -37,8 +37,12 @@
 ## * the file must carry a top-level ``schema`` string equal to the
 ##   identifier the description declares (``configSchema "tool.config.v1"``
 ##   under ``cli:``);
-## * every other key must be the configuration key of a parameter (see
-##   ``clispec/model``, "Names and configuration keys"), except keys under a
+## * every other key must be the configuration key of a parameter, as the
+##   layer's source spells it (see ``clispec/model``, "Names and
+##   configuration keys" and "Naming conventions": a layer whose name, or
+##   else whose format's name, is a file source the description declares
+##   uses that source's spelling, any other layer the ``file`` source's),
+##   except keys under a
 ##   top-level ``extensions`` table, which are the escape hatch for data the
 ##   program does not define and are never read;
 ## * each value must have its parameter's type (``CliConfigType``): a
@@ -141,6 +145,10 @@ type
   CliConfigKey* = object
     ## One key of a program's configuration-file schema.
     key*: string
+      ## The key in the file source the schema was made for.
+    sourceKeys*: seq[CliSourceSpelling]
+      ## The key in every file source: ``file`` first, then each named
+      ## source the description declares.
     configType*: CliConfigType
     list*: bool
       ## The value is an array of ``configType``.
@@ -155,6 +163,14 @@ type
     ## description.
     id*: string
       ## The identifier files declare in their ``schema`` string.
+    source*: string
+      ## The file source whose spelling ``keys[i].key`` uses: ``file``, or
+      ## a named source.
+    convention*: CliConvention
+      ## That source's naming convention.
+    conventions*: seq[CliSourceConvention]
+      ## The convention of every source: ``cli``, ``file``, then the named
+      ## file sources.
     keys*: seq[CliConfigKey]
       ## Every valid key, in declaration order.
 
@@ -180,28 +196,60 @@ func keyIndex(segments: openArray[string]): string =
   ## A key's segments as one table key (segments may contain ``.``).
   segments.join("\0")
 
-func cliConfigSchemaOf*(g: CliGrammar): CliConfigSchema =
+func cliConfigSchemaOf*(g: CliGrammar;
+                        source = CliSourceFile): CliConfigSchema =
   ## The configuration-file schema of a grammar: every parameter that a file
-  ## may supply, with its key and type.
+  ## may supply, with its key and type. ``key`` is spelt as the file source
+  ## ``source`` spells it (``file``, the default, or a named source the
+  ## description declares; an undeclared name is read as ``file``, as a
+  ## layer of that name would be); ``sourceKeys`` lists every source's
+  ## spelling.
   result.id = g.configSchema
+  result.source = if cliHasFileSource(g, source): source else: CliSourceFile
+  result.convention = cliFileSourceConvention(g, result.source)
+  result.conventions.add(CliSourceConvention(source: CliSourceCli,
+    convention: g.flagConvention))
+  result.conventions.add(CliSourceConvention(source: CliSourceFile,
+    convention: g.keyStyle))
+  for s in g.fileSources:
+    result.conventions.add(s)
   for p in g.params:
     if p.configKey.len == 0 or csFile notin p.sources:
       continue
-    result.keys.add(CliConfigKey(key: p.configKey, configType: p.configType,
+    var all = @[CliSourceSpelling(source: CliSourceFile,
+      spelling: p.configKey)]
+    for k in p.sourceKeys:
+      all.add(k)
+    result.keys.add(CliConfigKey(key: cliSourceKeyOf(p, result.source),
+      sourceKeys: all, configType: p.configType,
       list: p.isList and not p.counted, param: p.name,
       declaredIn: p.declaredIn, help: p.help))
 
 proc cliConfigSchemaJson*(s: CliConfigSchema): string =
   ## The schema as JSON, under the schema name ``clispec-config-schema/1``:
   ## ``{"schema", "id", "reserved": ["schema", "extensions"], "keys":
-  ## [{"key", "type", "list", "parameter", "declaredIn", "help"}, ...]}``.
-  ## Within that name keys are only ever added.
+  ## [{"key", "type", "list", "parameter", "declaredIn", "help",
+  ## "sourceKeys": {"file": ..., "<named source>": ...}}, ...], "source",
+  ## "conventions": {"cli": ..., "file": ..., "<named source>": ...}}``.
+  ## ``key`` is spelt as the file source ``source`` spells it;
+  ## ``sourceKeys`` gives every file source's spelling and ``conventions``
+  ## every source's naming convention. Within that name keys are only ever
+  ## added.
   var keys = newJArray()
   for k in s.keys:
+    var perSource = newJObject()
+    for sk in k.sourceKeys:
+      perSource[sk.source] = %sk.spelling
     keys.add(%*{"key": k.key, "type": $k.configType, "list": k.list,
-      "parameter": k.param, "declaredIn": k.declaredIn, "help": k.help})
+      "parameter": k.param, "declaredIn": k.declaredIn, "help": k.help,
+      "sourceKeys": perSource})
+  var conventions = newJObject()
+  for c in s.conventions:
+    conventions[c.source] = %($c.convention)
   $(%*{"schema": "clispec-config-schema/1", "id": s.id,
-    "reserved": [CliSchemaKey, CliExtensionsKey], "keys": keys})
+    "reserved": [CliSchemaKey, CliExtensionsKey], "keys": keys,
+    "source": (if s.source.len > 0: s.source else: CliSourceFile),
+    "conventions": conventions})
 
 func fits(v: CliConfigValue; t: CliConfigType): bool =
   case t
@@ -228,6 +276,15 @@ func foundText(v: CliConfigValue): string =
   of ccvString: "the string " & escape(v.text)
   of ccvInteger, ccvFloat, ccvBool, ccvDateTime: $v.kind & " " & v.text
   else: $v.kind
+
+func cliLayerSource*(g: CliGrammar; layer: CliLayer;
+                     format: CliConfigFormat): string =
+  ## The file source whose spelling a layer's keys use: the named source
+  ## that is the layer's name, else the one that is the format's name, else
+  ## ``file``.
+  if cliHasFileSource(g, layer.name): layer.name
+  elif cliHasFileSource(g, format.name): format.name
+  else: CliSourceFile
 
 proc cliLoadLayer*(g: CliGrammar; layer: CliLayer; index: int;
                    format: CliConfigFormat;
@@ -261,10 +318,13 @@ proc cliLoadLayer*(g: CliGrammar; layer: CliLayer; index: int;
     raise newCliConfigError(e.kind, (if e.path.len > 0: e.path
       else: layer.path), e.line, e.key, layer.name, e.expected, e.detail)
 
+  # The keys as this layer's source spells them: a key spelt in another
+  # source's convention is unknown here.
+  let source = cliLayerSource(g, layer, format)
   var byKey = initTable[string, int]()
   for id, p in g.params:
     if p.configKey.len > 0 and csFile in p.sources:
-      byKey[keyIndex(p.configKey.split('.'))] = id
+      byKey[keyIndex(cliSourceKeyOf(p, source).split('.'))] = id
 
   var schemaSeen = false
   for e in doc.entries:
@@ -305,7 +365,8 @@ proc cliLoadLayer*(g: CliGrammar; layer: CliLayer; index: int;
         layer.name, expectedText(t, list), foundText(e.value))
     var c = CliCandidate(source: csFile, form: ccfValue, argvIndex: -1,
       valueArgvIndex: -1, layer: index, layerName: layer.name,
-      binding: layer.binding, path: layer.path, line: e.line, key: key)
+      binding: layer.binding, path: layer.path, line: e.line, key: key,
+      fileSource: source)
     if list:
       if e.value.items.len == 0:
         c.form = ccfEmpty

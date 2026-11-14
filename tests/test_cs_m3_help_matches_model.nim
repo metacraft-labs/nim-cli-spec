@@ -263,7 +263,10 @@ Output:
         "visibility": "shown",
         "declaredIn": [],
         "dynamicCompletion": false,
-        "completer": null
+        "completer": null,
+        "configKeys": {
+          "file": "verbose"
+        }
       },
       {
         "name": "report",
@@ -289,7 +292,10 @@ Output:
         "visibility": "shown",
         "declaredIn": [],
         "dynamicCompletion": false,
-        "completer": null
+        "completer": null,
+        "configKeys": {
+          "file": "report"
+        }
       },
       {
         "name": "url",
@@ -315,7 +321,10 @@ Output:
           "remote"
         ],
         "dynamicCompletion": true,
-        "completer": "completeRemoteUrls"
+        "completer": "completeRemoteUrls",
+        "configKeys": {
+          "file": "remote.url"
+        }
       },
       {
         "name": "depth",
@@ -341,7 +350,10 @@ Output:
           "remote"
         ],
         "dynamicCompletion": false,
-        "completer": null
+        "completer": null,
+        "configKeys": {
+          "file": "remote.depth"
+        }
       },
       {
         "name": "long",
@@ -368,7 +380,10 @@ Output:
           "remote"
         ],
         "dynamicCompletion": false,
-        "completer": null
+        "completer": null,
+        "configKeys": {
+          "file": "remote.long"
+        }
       }
     ],
     "commands": [
@@ -406,7 +421,10 @@ Output:
             "visibility": "shown",
             "declaredIn": [],
             "dynamicCompletion": false,
-            "completer": null
+            "completer": null,
+            "configKeys": {
+              "file": "verbose"
+            }
           },
           {
             "name": "report",
@@ -432,7 +450,10 @@ Output:
             "visibility": "shown",
             "declaredIn": [],
             "dynamicCompletion": false,
-            "completer": null
+            "completer": null,
+            "configKeys": {
+              "file": "report"
+            }
           },
           {
             "name": "url",
@@ -458,7 +479,10 @@ Output:
               "remote"
             ],
             "dynamicCompletion": true,
-            "completer": "completeRemoteUrls"
+            "completer": "completeRemoteUrls",
+            "configKeys": {
+              "file": "remote.url"
+            }
           },
           {
             "name": "name",
@@ -484,7 +508,10 @@ Output:
               "add"
             ],
             "dynamicCompletion": false,
-            "completer": null
+            "completer": null,
+            "configKeys": {
+              "file": "remote.add.name"
+            }
           }
         ],
         "commands": []
@@ -523,7 +550,10 @@ Output:
             "visibility": "shown",
             "declaredIn": [],
             "dynamicCompletion": false,
-            "completer": null
+            "completer": null,
+            "configKeys": {
+              "file": "verbose"
+            }
           },
           {
             "name": "report",
@@ -549,7 +579,10 @@ Output:
             "visibility": "shown",
             "declaredIn": [],
             "dynamicCompletion": false,
-            "completer": null
+            "completer": null,
+            "configKeys": {
+              "file": "report"
+            }
           },
           {
             "name": "url",
@@ -575,7 +608,10 @@ Output:
               "remote"
             ],
             "dynamicCompletion": true,
-            "completer": "completeRemoteUrls"
+            "completer": "completeRemoteUrls",
+            "configKeys": {
+              "file": "remote.url"
+            }
           },
           {
             "name": "all",
@@ -602,12 +638,19 @@ Output:
               "prune"
             ],
             "dynamicCompletion": false,
-            "completer": null
+            "completer": null,
+            "configKeys": {
+              "file": "remote.prune.all"
+            }
           }
         ],
         "commands": []
       }
     ]
+  },
+  "conventions": {
+    "cli": "declared",
+    "file": "declared"
   }
 }
 """

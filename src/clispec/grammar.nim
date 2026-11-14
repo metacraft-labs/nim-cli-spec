@@ -31,7 +31,7 @@
 ## * a ``subcmd`` inside a ``call:``, and two ``call:`` scopes in one command;
 ## * more than one list-valued (``repeated``) positional in one command.
 
-import std/[algorithm, strutils]
+import std/[algorithm, json, strutils]
 
 import ./model
 
@@ -39,6 +39,10 @@ type
   CliGrammarParam* = object
     ## One parameter, as the parser sees it.
     name*: string
+    longName*: string
+      ## The long flag without ``--``, in the command line's convention with
+      ## the parameter's overrides applied (``CliParam.longName``); empty
+      ## for a positional.
     nimType*: string
     kind*: CliParamKind
     format*: CliArgFormat
@@ -57,6 +61,9 @@ type
     visibility*: CliVisibility
     env*: seq[string]
     configKey*: string
+      ## The key in the ``file`` source.
+    sourceKeys*: seq[CliSourceSpelling]
+      ## The key in each named file source (``CliParam.sourceKeys``).
     sources*: set[CliSource]
     merge*: CliMergeRule
     hasDefault*: bool
@@ -123,7 +130,12 @@ type
     configSchema*: string
       ## The identifier configuration files must declare in their
       ## ``schema`` string (``CliModel.configSchema``).
-    keyStyle*: CliKeyStyle
+    keyStyle*: CliConvention
+      ## The ``file`` source's convention (``CliModel.keyStyle``).
+    flagConvention*: CliConvention
+      ## The long flags' convention (``CliModel.flagConvention``).
+    fileSources*: seq[CliSourceConvention]
+      ## The named file sources and their conventions.
 
   CliGrammarProblem* = object
     ## A description that is a valid model but not a parseable program.
@@ -153,13 +165,18 @@ func sameParam[P](a, b: CliParam[P]): bool =
     a.sourceLine == b.sourceLine and a.declaredIn == b.declaredIn
 
 func toGrammarParam[P](p: CliParam[P]; declaredBy: int): CliGrammarParam =
-  result = CliGrammarParam(name: p.name, nimType: p.nimType, kind: p.kind,
+  let longName = if p.kind != cpkFlag: ""
+                 elif p.longName.len > 0: p.longName
+                 else: p.name
+  result = CliGrammarParam(name: p.name, longName: longName,
+    nimType: p.nimType, kind: p.kind,
     format: p.format, alias: stripAlias(p.alias), short: p.short,
     required: p.required, repeated: p.repeated, position: p.position,
     negatable: p.negatable, counted: p.counted,
     hasOptionalValue: p.optionalValue.isSet, separator: p.separator,
     help: p.help, group: p.group, visibility: p.visibility, env: p.env,
-    configKey: p.configKey, sources: p.sources, merge: p.merge,
+    configKey: p.configKey, sourceKeys: p.sourceKeys, sources: p.sources,
+    merge: p.merge,
     hasDefault: p.default.isSet, defaultText: displayDefault(p.default),
     hasCompleter: p.complete.isSet,
     completer: (if p.complete.isSet: p.complete.code else: ""),
@@ -178,6 +195,8 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
   result.groups = model.groups
   result.configSchema = model.configSchema
   result.keyStyle = model.keyStyle
+  result.flagConvention = model.flagConvention
+  result.fileSources = model.fileSources
   # The model lists the scopes in post-order: each one after the scopes
   # nested inside it. Rebuild the tree with a stack: when a scope arrives,
   # the scopes directly inside it are the run of entries on top of the stack
@@ -345,18 +364,69 @@ func cliPositionals*(g: CliGrammar; command: int): seq[int] =
   for item in items:
     result.add(item.id)
 
+func cliLongName*(p: CliGrammarParam): string =
+  ## The long flag without ``--``: ``longName``, or ``name`` for a grammar
+  ## built by hand without one.
+  if p.longName.len > 0: p.longName else: p.name
+
 func cliFlagSpellings*(p: CliGrammarParam): seq[string] =
   ## The spellings a flag answers to, the canonical one first:
-  ## ``--<name>``, then its ``alias`` and ``-<short>`` when they differ.
+  ## ``--<longName>``, then its ``alias`` and ``-<short>`` when they differ.
   if p.kind != cpkFlag:
     return
-  result.add("--" & p.name)
+  result.add("--" & cliLongName(p))
   if p.alias.len > 0 and p.alias notin result:
     result.add(p.alias)
   if p.short != '\0' and ("-" & p.short) notin result:
     result.add("-" & p.short)
 
 func cliDisplayName*(p: CliGrammarParam): string =
-  ## How messages name a parameter: ``--<name>`` for a flag, ``<name>`` for
-  ## a positional.
-  if p.kind == cpkFlag: "--" & p.name else: "<" & p.name & ">"
+  ## How messages name a parameter: ``--<longName>`` for a flag, ``<name>``
+  ## for a positional.
+  if p.kind == cpkFlag: "--" & cliLongName(p) else: "<" & p.name & ">"
+
+func cliSourceKeyOf*(p: CliGrammarParam; source: string): string =
+  ## The parameter's configuration key in the file source ``source``: a
+  ## named source's key when the description declares that source, else
+  ## the ``file`` source's (``configKey``). Empty when files cannot supply
+  ## it.
+  for k in p.sourceKeys:
+    if k.source == source:
+      return k.spelling
+  p.configKey
+
+func cliHasFileSource*(g: CliGrammar; source: string): bool =
+  ## Whether the description declares the named file source ``source``.
+  for s in g.fileSources:
+    if s.source == source:
+      return true
+  false
+
+func cliFileSourceConvention*(g: CliGrammar; source: string): CliConvention =
+  ## The convention of the file source ``source``: a named one's, else the
+  ## ``file`` source's.
+  for s in g.fileSources:
+    if s.source == source:
+      return s.convention
+  g.keyStyle
+
+func cliConfigKeysJson*(p: CliGrammarParam): JsonNode =
+  ## ``{"file": "<key>", "<named source>": "<key>", ...}``: the parameter's
+  ## configuration key in every file source, ``file`` first, then the named
+  ## ones in declaration order; ``{}`` when files cannot supply it.
+  result = newJObject()
+  if p.configKey.len == 0 or csFile notin p.sources:
+    return
+  result[CliSourceFile] = %p.configKey
+  for k in p.sourceKeys:
+    result[k.source] = %k.spelling
+
+func cliConventionsJson*(g: CliGrammar): JsonNode =
+  ## ``{"cli": "<convention>", "file": "<convention>", "<named source>":
+  ## "<convention>", ...}``: the convention of every source the description
+  ## knows.
+  result = newJObject()
+  result[CliSourceCli] = %($g.flagConvention)
+  result[CliSourceFile] = %($g.keyStyle)
+  for s in g.fileSources:
+    result[s.source] = %($s.convention)

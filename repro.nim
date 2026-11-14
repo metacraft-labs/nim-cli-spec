@@ -81,6 +81,11 @@ const clispecTests = [
     needsToml: true),
   ClispecTest(source: "tests/test_cs_m4_unknown_key_rejected.nim",
     needsToml: true),
+  ClispecTest(source: "tests/test_cs_m4b_convention_conversion.nim"),
+  ClispecTest(source: "tests/test_cs_m4b_per_source_convention.nim",
+    needsToml: true),
+  ClispecTest(source: "tests/test_cs_m4b_override_precedence.nim",
+    needsToml: true),
   ClispecTest(source: "tests/test_suite_lists_agree.nim"),
 ]
 

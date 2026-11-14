@@ -36,7 +36,11 @@
 ##   takes the rest of the word, or the next word when it is last.
 ## * A ``bool`` parameter is a switch: bare it means ``true``,
 ##   ``--flag=false`` is accepted too, and ``negatable = true`` adds
-##   ``--no-<name>``.
+##   ``--no-<long name>``.
+## * A flag's long spelling is ``--`` followed by its name in the command
+##   line's naming convention, or its override (``CliGrammarParam.longName``,
+##   ``clispec/model``, "Naming conventions"); the declared name is not
+##   accepted when the two differ.
 ## * ``counted = true``: each occurrence (``-v``, ``-vv``) adds one.
 ## * ``optionalValue``: bare, the flag takes that value; ``--flag=value``
 ##   gives another. It never takes the next word.
@@ -139,11 +143,11 @@ func findFlag(g: CliGrammar; scope: seq[int];
 
 func matchLong(g: CliGrammar; scope: seq[int]; word: string): FlagMatch =
   ## A word starting with ``--``: an exact spelling, ``<spelling>=value``,
-  ## ``--no-<name>`` or a ``concat`` spelling followed by its value.
+  ## ``--no-<longName>`` or a ``concat`` spelling followed by its value.
   let eq = word.find('=')
   let head = if eq >= 0: word[0 ..< eq] else: word
   let id = findFlag(g, scope, proc (p: CliGrammarParam): bool =
-    head == "--" & p.name or head == p.alias)
+    head == "--" & cliLongName(p) or head == p.alias)
   if id >= 0:
     result = FlagMatch(found: true, id: id, spelling: head)
     if eq >= 0:
@@ -152,7 +156,7 @@ func matchLong(g: CliGrammar; scope: seq[int]; word: string): FlagMatch =
   if head.startsWith("--no-"):
     let name = head[5 .. ^1]
     let neg = findFlag(g, scope, proc (p: CliGrammarParam): bool =
-      p.negatable and p.name == name)
+      p.negatable and cliLongName(p) == name)
     if neg >= 0:
       result = FlagMatch(found: true, id: neg, spelling: head, negated: true)
       if eq >= 0:

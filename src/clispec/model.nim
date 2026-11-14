@@ -41,21 +41,86 @@
 ## ============================
 ##
 ## A parameter's ``name`` is its canonical long flag (``output`` is
-## ``--output``). Its configuration-file key, ``configKey``, is derived from
-## the path of the command that DECLARES it followed by its name, joined with
-## ``.`` and spelt exactly as declared (``subcmd "build": flag jobs`` gives
-## ``build.jobs``; a parameter declared directly under ``cli:`` or in the root
-## ``call:`` gives just its name). ``key = "<dotted.key>"`` replaces the
-## derived key. A parameter whose ``sources`` exclude files has no key.
+## ``--output``), spelt in the command line's convention (``longName``). Its
+## configuration-file key, ``configKey``, is derived from the path of the
+## command that DECLARES it followed by its name, joined with ``.``, each
+## segment spelt in the file source's convention (``subcmd "build": flag
+## jobs`` gives ``build.jobs``; a parameter declared directly under ``cli:``
+## or in the root ``call:`` gives just its name). ``key = "<dotted.key>"``
+## replaces the derived key. A parameter whose ``sources`` exclude files has
+## no key. A description that names file sources of its own gets a key per
+## named source too (``sourceKeys``).
 ## Environment variables are never derived: a parameter reads exactly the
 ## variables its ``env`` lists, and none when it lists none.
 ##
-## A description may declare a key style (``keyStyle snakeCase`` directly
-## under ``cli:``) that respells every DERIVED key segment: ``declared`` (the
-## default) keeps them as written, ``snakeCase`` turns ``writeReport`` and
-## ``debug-dump`` into ``write_report`` and ``debug_dump``, ``kebabCase``
-## into ``write-report`` and ``debug-dump``. A key given with ``key`` is
-## used as written whatever the style.
+## Naming conventions
+## ==================
+##
+## A name can be spelt in a *convention* (``CliConvention``): ``declared``
+## (exactly as written), ``camelCase``, ``snakeCase`` or ``kebabCase``.
+## ``cliConvert`` is the one function that respells a name, so a name is
+## spelt the same way wherever it appears. It splits the name into words
+## (``cliWords``) by these rules:
+##
+## 1. Letters (``A``-``Z``, ``a``-``z``), digits and every byte above 127
+##    (the parts of a non-ASCII character) are word characters; every other
+##    character (``-``, ``_``, ``.``, a space) ends the current word and is
+##    dropped.
+## 2. A new word starts at an upper-case letter that follows a lower-case
+##    letter, a digit or a non-ASCII byte (``writeReport`` is ``write`` +
+##    ``Report``; ``sha256Sum`` is ``sha256`` + ``Sum``), and at an upper-case
+##    letter that follows an upper-case letter and is followed by a
+##    lower-case one: an acronym's last capital starts the next word
+##    (``HTTPPort`` is ``HTTP`` + ``Port``).
+## 3. Nothing else starts a word: digits stay with the word before them
+##    (``ipv6Address`` is ``ipv6`` + ``Address``, ``HTTP2Server`` is
+##    ``HTTP2`` + ``Server``), and a run of capitals with no lower-case letter
+##    after it is one word (``userID`` is ``user`` + ``ID``).
+##
+## ``snakeCase`` and ``kebabCase`` lower-case every word and join them with
+## ``_`` and ``-``. ``camelCase`` lower-cases the first word and spells every
+## other one with an upper-case first letter and the rest lower-case
+## (``HTTPPort`` is ``httpPort``, ``user_id`` is ``userId``). Only ASCII
+## letters change case. A name with no word character is kept as written.
+## Converting loses what the words do not record (``HTTPPort`` and
+## ``httpPort`` both become ``http_port``), which is why ``declared`` exists
+## and why a name can override its spelling (below).
+##
+## Conventions per source
+## ======================
+##
+## Each source of a parameter's value spells its names in one convention,
+## set once in the description (``convention <source> = <convention>``
+## directly under ``cli:``):
+##
+## * ``cli``: the command line's long flags (``flag writeReport`` is
+##   ``--write-report`` under ``kebabCase``). Subcommand words, ``alias``
+##   and ``short`` spellings are used as written.
+## * ``file``: every configuration file, unless a named source below says
+##   otherwise. ``keyStyle <convention>`` is the older spelling of
+##   ``convention file = <convention>``.
+## * ``"<name>"``: one named file source: the configuration layer with that
+##   name or, failing that, the configuration format with that name
+##   (``clispec/sources``).
+##
+## Every source defaults to ``declared``, which is also what confutils does
+## (its configuration keys are the field names, unconverted). Environment
+## variables are never derived, so no convention applies to them.
+##
+## Overrides refine the conversion for one name, as opt-ins on the parameter:
+##
+## * ``perConvention = [kebabCase = "url-base", ...]``: the spelling of the
+##   parameter's name in one convention, used by every source with that
+##   convention (an acronym, or a word the splitter divides wrongly). In a
+##   file source it replaces the last segment of the derived key.
+## * ``perSource = [cli = "port", "project" = "web.port", ...]``: the long
+##   flag (without ``--``) in ``cli``, or the whole key, used as written, in
+##   a named file source. ``key = "<dotted.key>"`` is the per-source override
+##   for every file source.
+##
+## The most specific one wins: the override for the source (a named file
+## source's own, then ``key``), then the override for the source's
+## convention, then the conversion (``cliSpelling``, ``cliSourceKey``).
 
 type
   CliParamKind* = enum
@@ -106,16 +171,38 @@ type
       ## A float; an integer is accepted too.
     cctBool = "bool"
 
-  CliKeyStyle* = enum
-    ## How derived configuration keys are spelt (``keyStyle`` under
-    ## ``cli:``). Only derived segments are respelt; ``key = "..."`` is kept
-    ## as written.
-    cksDeclared = "declared"
-      ## Every segment exactly as declared (the default).
-    cksSnakeCase = "snakeCase"
+  CliConvention* = enum
+    ## A naming convention (see "Naming conventions" above).
+    cnDeclared = "declared"
+      ## Exactly as declared (the default for every source).
+    cnCamelCase = "camelCase"
+      ## ``write_report`` → ``writeReport``, ``HTTPPort`` → ``httpPort``.
+    cnSnakeCase = "snakeCase"
       ## ``writeReport`` → ``write_report``, ``debug-dump`` → ``debug_dump``.
-    cksKebabCase = "kebabCase"
+    cnKebabCase = "kebabCase"
       ## ``writeReport`` → ``write-report``, ``debug_dump`` → ``debug-dump``.
+
+  CliKeyStyle* = CliConvention
+    ## The older name of ``CliConvention`` (``keyStyle`` under ``cli:``).
+
+  CliSourceConvention* = object
+    ## ``convention "<name>" = <convention>``: the convention of one named
+    ## configuration-file source.
+    source*: string
+      ## The layer's or format's name.
+    convention*: CliConvention
+
+  CliConventionSpelling* = object
+    ## One ``perConvention`` entry: the spelling of a parameter's name in
+    ## one convention.
+    convention*: CliConvention
+    spelling*: string
+
+  CliSourceSpelling* = object
+    ## One ``perSource`` entry, or one resolved key: a spelling in one
+    ## source (``cli``, or a named file source).
+    source*: string
+    spelling*: string
 
   CliVisibility* = enum
     ## Where a command or parameter is listed.
@@ -194,9 +281,22 @@ type
     complete*: CliExpr
       ## ``complete = <completer>``: dynamic value completion.
     configKey*: string
-      ## The configuration-file key: ``key = "<dotted.key>"`` when given,
-      ## else derived (see "Names and configuration keys" above). Empty when
+      ## The configuration-file key in the ``file`` source:
+      ## ``key = "<dotted.key>"`` when given, else derived (see "Names and
+      ## configuration keys" and "Naming conventions" above). Empty when
       ## ``sources`` exclude files.
+    sourceKeys*: seq[CliSourceSpelling]
+      ## The configuration-file key in each named file source the
+      ## description declares (``convention "<name>" = ...``), in the order
+      ## they are declared. Empty when ``sources`` exclude files.
+    longName*: string
+      ## The long flag without ``--`` in the ``cli`` convention: ``name``
+      ## respelt, or its override. Empty for a positional. A model built by
+      ## hand may leave it empty, and the flag is then ``--<name>``.
+    perConvention*: seq[CliConventionSpelling]
+      ## ``perConvention = [<convention> = "<spelling>", ...]``.
+    perSource*: seq[CliSourceSpelling]
+      ## ``perSource = [cli = "<flag>", "<source>" = "<key>", ...]``.
     keyDeclared*: bool
       ## ``configKey`` was given with ``key``, not derived.
     sources*: set[CliSource]
@@ -282,9 +382,15 @@ type
       ## scopes nested inside it.
     groups*: seq[CliGroup]
       ## Every ``group`` section, in the order first declared.
-    keyStyle*: CliKeyStyle
-      ## ``keyStyle <style>`` under ``cli:``: how derived configuration keys
-      ## are spelt.
+    keyStyle*: CliConvention
+      ## The convention of the ``file`` source: ``convention file = <c>``
+      ## (or ``keyStyle <c>``) under ``cli:``.
+    flagConvention*: CliConvention
+      ## The convention of the ``cli`` source's long flags:
+      ## ``convention cli = <c>`` under ``cli:``.
+    fileSources*: seq[CliSourceConvention]
+      ## Every named file source, ``convention "<name>" = <c>``, in
+      ## declaration order.
     configSchema*: string
       ## ``configSchema "<id>"`` under ``cli:``: the identifier a
       ## configuration file must carry in its top-level ``schema`` string
@@ -299,45 +405,100 @@ func isSet*(e: CliExpr): bool =
   ## Whether the expression was given.
   e.code.len > 0
 
-func cliWords(segment: string): seq[string] =
-  ## The words of a name: split at ``-``, ``_`` and other non-alphanumeric
-  ## characters and before an upper-case letter that starts a word
-  ## (``writeReport`` → ``write``, ``Report``; ``HTTPPort`` → ``HTTP``,
-  ## ``Port``).
+const
+  CliSourceCli* = "cli"
+    ## The source name of the command line in conventions and overrides.
+  CliSourceFile* = "file"
+    ## The source name of every configuration file not named on its own.
+
+const
+  cksDeclared* = cnDeclared ## The older name of ``cnDeclared``.
+  cksSnakeCase* = cnSnakeCase ## The older name of ``cnSnakeCase``.
+  cksKebabCase* = cnKebabCase ## The older name of ``cnKebabCase``.
+
+func isWordChar(ch: char): bool =
+  ch in {'a'..'z', 'A'..'Z', '0'..'9'} or ord(ch) >= 128
+
+func cliWords*(name: string): seq[string] =
+  ## The words of a name, by the rules in "Naming conventions" above:
+  ## ``writeReport`` → ``write``, ``Report``; ``HTTPPort`` → ``HTTP``,
+  ## ``Port``; ``ipv6-address`` → ``ipv6``, ``address``.
   var word = ""
-  for i, ch in segment:
-    if ch notin {'a'..'z', 'A'..'Z', '0'..'9'}:
+  for i, ch in name:
+    if not isWordChar(ch):
       if word.len > 0:
         result.add(word)
         word = ""
       continue
     if ch in {'A'..'Z'} and word.len > 0:
-      let prevLower = segment[i - 1] in {'a'..'z', '0'..'9'}
-      let nextLower = i + 1 < segment.len and segment[i + 1] in {'a'..'z'}
-      if prevLower or (segment[i - 1] in {'A'..'Z'} and nextLower):
+      let prev = name[i - 1]
+      let prevLower = prev in {'a'..'z', '0'..'9'} or ord(prev) >= 128
+      let nextLower = i + 1 < name.len and name[i + 1] in {'a'..'z'}
+      if prevLower or (prev in {'A'..'Z'} and nextLower):
         result.add(word)
         word = ""
     word.add(ch)
   if word.len > 0:
     result.add(word)
 
-func cliKeySegment*(segment: string; style: CliKeyStyle): string =
-  ## One derived key segment spelt in ``style``.
-  case style
-  of cksDeclared:
-    result = segment
-  of cksSnakeCase, cksKebabCase:
-    let sep = if style == cksSnakeCase: '_' else: '-'
-    for word in cliWords(segment):
+func lowerAscii(ch: char): char =
+  if ch in {'A'..'Z'}: char(ord(ch) + 32) else: ch
+
+func upperAscii(ch: char): char =
+  if ch in {'a'..'z'}: char(ord(ch) - 32) else: ch
+
+func cliConvert*(name: string; convention: CliConvention): string =
+  ## ``name`` spelt in ``convention`` (see "Naming conventions" above).
+  ## ``cnDeclared`` returns ``name`` unchanged, and so does any convention
+  ## for a name with no word character.
+  case convention
+  of cnDeclared:
+    return name
+  of cnSnakeCase, cnKebabCase:
+    let sep = if convention == cnSnakeCase: '_' else: '-'
+    for word in cliWords(name):
       if result.len > 0:
         result.add(sep)
       for ch in word:
-        result.add(if ch in {'A'..'Z'}: char(ord(ch) + 32) else: ch)
-    if result.len == 0:
-      result = segment
+        result.add(lowerAscii(ch))
+  of cnCamelCase:
+    for i, word in cliWords(name):
+      for j, ch in word:
+        result.add(if i > 0 and j == 0: upperAscii(ch) else: lowerAscii(ch))
+  if result.len == 0:
+    result = name
+
+func cliKeySegment*(segment: string; style: CliConvention): string =
+  ## One derived key segment spelt in ``style`` (``cliConvert``).
+  cliConvert(segment, style)
+
+func cliOverride*(source: string; convention: CliConvention;
+                  perSource: openArray[CliSourceSpelling];
+                  perConvention: openArray[CliConventionSpelling]):
+    tuple[found, bySource: bool; spelling: string] =
+  ## The most specific override of a name in ``source``, whose convention
+  ## is ``convention``: the ``perSource`` entry for ``source``, else the
+  ## ``perConvention`` entry for ``convention``; ``found`` is false when
+  ## neither is given. ``bySource`` tells which one it was.
+  for o in perSource:
+    if o.source == source:
+      return (true, true, o.spelling)
+  for o in perConvention:
+    if o.convention == convention:
+      return (true, false, o.spelling)
+  (false, false, "")
+
+func cliSpelling*(name, source: string; convention: CliConvention;
+                  perSource: openArray[CliSourceSpelling] = [];
+                  perConvention: openArray[CliConventionSpelling] = []):
+    string =
+  ## The spelling of the name ``name`` in ``source``: its override for the
+  ## source, else its override for ``convention``, else ``name`` converted.
+  let o = cliOverride(source, convention, perSource, perConvention)
+  if o.found: o.spelling else: cliConvert(name, convention)
 
 func cliDerivedKey*(path: openArray[string]; name: string;
-                    style: CliKeyStyle): string =
+                    style: CliConvention): string =
   ## The derived configuration key of a parameter ``name`` declared by the
   ## command at ``path``: the segments joined with ``.``, each spelt in
   ## ``style``.
@@ -345,3 +506,38 @@ func cliDerivedKey*(path: openArray[string]; name: string;
     result.add(cliKeySegment(segment, style))
     result.add('.')
   result.add(cliKeySegment(name, style))
+
+func cliSourceKey*(path: openArray[string]; name, source: string;
+                   convention: CliConvention; declaredKey: string;
+                   perSource: openArray[CliSourceSpelling] = [];
+                   perConvention: openArray[CliConventionSpelling] = []):
+    string =
+  ## The configuration key of a parameter ``name`` declared by the command
+  ## at ``path``, in the file source ``source`` (``"file"`` or a named one)
+  ## whose convention is ``convention``. ``declaredKey`` is its ``key``, or
+  ## empty. Most specific first: the source's own ``perSource`` entry (the
+  ## whole key), ``declaredKey`` (every file source's), the
+  ## ``perConvention`` entry for ``convention`` (the last segment), the
+  ## conversion.
+  var named: seq[CliSourceSpelling] = @[]
+  for o in perSource:
+    if o.source == source:
+      named.add(o)
+  if named.len == 0 and declaredKey.len > 0:
+    named.add(CliSourceSpelling(source: source, spelling: declaredKey))
+  let o = cliOverride(source, convention, named, perConvention)
+  if o.found and o.bySource:
+    return o.spelling
+  for segment in path:
+    result.add(cliConvert(segment, convention))
+    result.add('.')
+  result.add(if o.found: o.spelling else: cliConvert(name, convention))
+
+func cliFileSourceConvention*[C, P](model: CliModel[C, P];
+                                    source: string): CliConvention =
+  ## The convention of the file source ``source``: a named one's, else the
+  ## ``file`` source's.
+  for s in model.fileSources:
+    if s.source == source:
+      return s.convention
+  model.keyStyle

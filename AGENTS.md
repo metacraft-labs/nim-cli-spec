@@ -18,7 +18,10 @@ first.
 
 - `src/clispec.nim`: the umbrella; re-exports every module below.
 - `src/clispec/model.nim`: the model types. Plain values, usable at compile
-  time and at run time.
+  time and at run time. Also the naming conventions: `cliWords` /
+  `cliConvert` (the one word-splitting rule every source's spelling goes
+  through) and the override precedence (`cliOverride`, `cliSpelling`,
+  `cliSourceKey`).
 - `src/clispec/dsl.nim`: the compile-time parser, the extension hooks'
   contract, and the `cli`-prefixed AST helpers extension hooks use.
 - `src/clispec/grammar.nim`: the run-time tables (`CliGrammar`) derived
@@ -54,7 +57,9 @@ first.
   README. The `test_cs_m4_*` tests load `tests/cs_m4_fixture.nim`'s program
   from real TOML files in a temporary directory and an environment table:
   precedence and origins, merge rules, enforcement, defaults after the merge
-  and schema validation.
+  and schema validation. The `test_cs_m4b_*` tests cover naming conventions:
+  the conversion table, each source in its own convention (TOML layers and
+  the command line), and the precedence of the overrides.
 - `tests/test_suite_lists_agree.nim` keeps the three lists of test modules
   equal: the Justfile's `tests`, the nimble `test` task and `repro.nim`'s
   `clispecTests`. It also keeps the TOML dependencies' revisions equal across
@@ -71,6 +76,11 @@ first.
   consumer needs (for example, which parameters name a build's outputs)
   belongs in that consumer's extension, declared through the `ext` slots and
   the two hooks, not in the model or the parser.
+- **Spell names through `cliConvert`.** A long flag or a configuration key
+  comes from the model's `longName`, `configKey` and `sourceKeys`, which the
+  parser derives with the source's convention and the parameter's
+  overrides. Never rebuild one from `name` (`"--" & p.name`); use
+  `cliLongName` / `cliSourceKeyOf` on the grammar.
 - **Grammar changes change consumers.** Consumers build their command lines
   and the external tools they run on this parser, and keep golden captures of
   what it produces. A change to what an existing declaration means is a

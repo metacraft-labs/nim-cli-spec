@@ -52,7 +52,8 @@
 ## one JSON object, with keys in a fixed order:
 ##
 ## .. code-block:: json
-##   {"schema": "clispec-help/1", "program": "tool", "command": COMMAND}
+##   {"schema": "clispec-help/1", "program": "tool", "command": COMMAND,
+##    "conventions": {"cli": "kebabCase", "file": "snakeCase", ...}}
 ##
 ## ``COMMAND`` is ``{"name", "path", "aliases", "help", "visibility",
 ## "usage", "parameters": [PARAMETER...], "commands": [COMMAND...]}`` and
@@ -62,7 +63,12 @@
 ## "list", "separator" (string or null), "counted", "required", "default"
 ## (string or null), "env", "help", "group" (string or null), "visibility",
 ## "position" (positional only), "declaredIn", "dynamicCompletion",
-## "completer" (string or null)}``. ``value`` says whether a flag takes a
+## "completer" (string or null), "configKeys"}``. ``conventions`` names the
+## naming convention of the command line (``cli``), of every configuration
+## file (``file``) and of each named file source; ``configKeys`` is a
+## parameter's key in each of those file sources (``{}`` when no file may
+## supply it), and its ``spellings`` and ``negation`` are spelt in the
+## command line's convention. ``value`` says whether a flag takes a
 ## value and ``format`` how: ``separate`` flags take ``--flag=value`` or the
 ## next word, ``equals`` ones only ``--flag=value`` (an ``equals`` or
 ## ``concat`` alias is followed directly by the value, ``-DX``).
@@ -147,12 +153,13 @@ func flagLeft(p: CliGrammarParam): string =
   var parts: seq[string] = @[]
   if p.short != '\0':
     parts.add("-" & p.short)
-  if p.alias.len > 0 and p.alias != "--" & p.name:
+  if p.alias.len > 0 and p.alias != "--" & cliLongName(p):
     if p.format == cafConcat and kind == "required":
       parts.add(p.alias & v)
     else:
       parts.add(p.alias)
-  let long = if p.negatable: "--[no-]" & p.name else: "--" & p.name
+  let long = if p.negatable: "--[no-]" & cliLongName(p)
+             else: "--" & cliLongName(p)
   case kind
   of "none":
     parts.add(long)
@@ -282,7 +289,8 @@ func paramJson(p: CliGrammarParam): JsonNode =
   result["name"] = %p.name
   result["kind"] = %(if p.kind == cpkFlag: "flag" else: "positional")
   result["spellings"] = %cliFlagSpellings(p)
-  result["negation"] = if p.negatable: %("--no-" & p.name) else: newJNull()
+  result["negation"] = if p.negatable: %("--no-" & cliLongName(p))
+                       else: newJNull()
   result["value"] = %takesValue(p)
   result["format"] = %(case p.format
     of cafSeparate: "separate"
@@ -304,6 +312,7 @@ func paramJson(p: CliGrammarParam): JsonNode =
   result["declaredIn"] = %p.declaredIn
   result["dynamicCompletion"] = %p.hasCompleter
   result["completer"] = if p.hasCompleter: %p.completer else: newJNull()
+  result["configKeys"] = cliConfigKeysJson(p)
 
 proc commandJson(g: CliGrammar; command: int; program: string): JsonNode =
   let holder = helpHolder(g, command)
@@ -333,6 +342,7 @@ proc cliHelpJsonNode*(g: CliGrammar; command: int; program: string): JsonNode =
   result["schema"] = %"clispec-help/1"
   result["program"] = %program
   result["command"] = commandJson(g, command, program)
+  result["conventions"] = cliConventionsJson(g)
 
 proc cliHelpJson*(g: CliGrammar; command: int; program: string): string =
   ## The machine-readable help of ``command``, pretty-printed (see the module

@@ -78,7 +78,9 @@
 ##   ``tuple[config: Tool, origins: ToolOrigins]``: the origin object has the
 ##   configuration object's shape (``ToolOrigins``, ``ToolBuildOrigins``,
 ##   the same ``command`` discriminator) with a ``CliOrigin`` per field.
-## * ``Tool.configSchema`` is the configuration-file schema.
+## * ``Tool.configSchema`` is the configuration-file schema, and
+##   ``Tool.configSchema(source)`` the same with its keys spelt as the named
+##   file source ``source`` spells them.
 ## * ``Tool.cliGrammar`` is the grammar and ``Tool.cliModel`` the model, both
 ##   constants.
 ##
@@ -438,12 +440,18 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
     # parameter may use those keys. (A description that loads no file, an
     # external tool's for one, may name a parameter ``extensions``.)
     for p in decls:
-      if p.configKey.len > 0 and (p.configKey == "schema" or
-          p.configKey.split('.')[0] == "extensions"):
-        problemAt("clispec: parameter '" & p.name & "': configuration key '" &
-          p.configKey & "' is reserved: a configuration file's `schema` " &
-          "string and its `extensions` table are not parameters; give the " &
-          "parameter another `key`", p.sourceFile, p.sourceLine)
+      var keys = @[p.configKey]
+      for k in p.sourceKeys:
+        keys.add(k.spelling)
+      for key in keys:
+        if key.len > 0 and (key == "schema" or
+            key.split('.')[0] == "extensions"):
+          problemAt("clispec: parameter '" & p.name & "': configuration " &
+            "key '" & key & "' is reserved: a configuration file's " &
+            "`schema` string and its `extensions` table are not " &
+            "parameters; give the parameter another `key`", p.sourceFile,
+            p.sourceLine)
+          break
   var ctx = GenContext(g: g, exported: exported,
     grammarConst: genSym(nskConst, typeName & "Grammar"))
   ctx.typeNames = newSeq[string](g.commands.len)
@@ -562,8 +570,15 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
 
     proc `configSchemaName`(t: typedesc[`T`]): CliConfigSchema =
       ## The schema of the program's configuration files: the identifier
-      ## they declare and every valid key with its type.
+      ## they declare and every valid key with its type, spelt as the
+      ## ``file`` source spells it.
       cliConfigSchemaOf(`gc`)
+
+    proc `configSchemaName`(t: typedesc[`T`]; source: string):
+        CliConfigSchema =
+      ## The schema with its keys spelt as the file source ``source`` (a
+      ## named source the description declares) spells them.
+      cliConfigSchemaOf(`gc`, source)
 
     proc `helpTextName`(t: typedesc[`T`]; path: openArray[string] = [];
                         program = `prog`): string {.

@@ -52,9 +52,16 @@
 ##   word (``placement = before``); everywhere else the default is after it.
 ## * Directly under ``cli:`` only, ``configSchema "<id>"`` names the schema
 ##   identifier the program's configuration files declare, and
-##   ``keyStyle declared|snakeCase|kebabCase`` how derived configuration keys
-##   are spelt (``clispec/model``, "Names and configuration keys").
-##   ``parseCliModel`` reads both before anything else.
+##   ``convention <source> = declared|camelCase|snakeCase|kebabCase`` the
+##   naming convention of one source: ``cli`` (the long flags), ``file``
+##   (every configuration file) or ``"<name>"`` (the configuration layer or
+##   format of that name). ``keyStyle <convention>`` is the older spelling
+##   of ``convention file = <convention>``. ``parseCliModel`` reads them
+##   before anything else (``clispec/model``, "Naming conventions").
+## * A parameter refines its spellings with ``perConvention = [<convention>
+##   = "<spelling>", ...]`` (its name in one convention) and ``perSource =
+##   [cli = "<flag>", "<source>" = "<dotted.key>", ...]`` (its long flag, or
+##   its whole key in one named file source).
 ##
 ## Anything else — an unknown statement, or a named argument the parameter
 ## kind does not take — is offered to the consumer's extension (below) and
@@ -78,8 +85,15 @@
 ## naming no parameter of the command, or the parameter itself; one of the
 ## library's arguments given twice; two subcommands of one command answering
 ## to the same word; ``aliases`` on ``call:``; a ``help`` statement
-## inside a ``group`` section; and ``keyStyle`` or ``configSchema`` anywhere
-## but directly under ``cli:``. (``cliProgram`` adds rules of its own for a
+## inside a ``group`` section; ``keyStyle``, ``convention`` or
+## ``configSchema`` anywhere but directly under ``cli:``; an unknown
+## convention, or one source's convention given twice; a ``perConvention``
+## entry for ``declared`` or one convention given twice; a ``perSource``
+## entry naming a file source the description does not declare, ``file``
+## (that is ``key``), the same source twice, ``cli`` on a positional or when
+## ``sources`` exclude ``cli``, or a file source when they exclude ``file``;
+## and two parameters of one command whose long flags or keys in one source
+## come out the same once converted and overridden. (``cliProgram`` adds rules of its own for a
 ## program's own command line, such as reserved configuration keys.)
 ##
 ## Whether a ``default``, ``optionalValue``, ``values`` entry or ``implies``
@@ -127,6 +141,16 @@ import ./[model, origins]
 export model
 
 type
+  CliNaming* = object
+    ## The conventions of a description's sources, which every key and
+    ## long flag is spelt in (``clispec/model``, "Naming conventions").
+    fileConvention*: CliConvention
+      ## The ``file`` source's (``CliModel.keyStyle``).
+    flagConvention*: CliConvention
+      ## The command line's long flags'.
+    fileSources*: seq[CliSourceConvention]
+      ## The named file sources'.
+
   CliScope* = object
     ## What a command-extension hook is told about the scope a statement
     ## appears in.
@@ -163,6 +187,11 @@ type
 # AST helpers. Exported with a ``cli`` prefix for extension hooks, which
 # read the same shapes.
 # ---------------------------------------------------------------------------
+
+func cliNamingOf*[C, P](model: CliModel[C, P]): CliNaming =
+  ## The conventions a model's description declares.
+  CliNaming(fileConvention: model.keyStyle,
+    flagConvention: model.flagConvention, fileSources: model.fileSources)
 
 proc cliIdentText*(node: NimNode): string =
   ## The spelling of an identifier node. Nim parses the word ``out`` in a
@@ -466,10 +495,119 @@ proc elementTypeOf(nimType: string): string =
 
 const
   commonParamKeys = ["help", "default", "env", "values", "complete", "key",
-    "sources", "merge", "separator", "implies", "visibility"]
+    "sources", "merge", "separator", "implies", "visibility",
+    "perconvention", "persource"]
     ## The named arguments every parameter takes, normalised.
   flagOnlyParamKeys = ["short", "optionalvalue", "negatable", "counted"]
     ## The named arguments only a flag takes, normalised.
+
+proc cliConventionLit*(node: NimNode; what: string): CliConvention =
+  ## A convention written as an identifier: ``declared``, ``camelCase``,
+  ## ``snakeCase`` or ``kebabCase`` (compared as Nim compares identifiers).
+  ## Anything else is a compile error naming ``what``.
+  let text = if node.kind in {nnkIdent, nnkSym, nnkAccQuoted}:
+               cliIdentText(node)
+             else: ""
+  for c in CliConvention:
+    if text.len > 0 and nimIdentNormalize(text) == nimIdentNormalize($c):
+      return c
+  error("clispec: " & what & " must be declared, camelCase, snakeCase or " &
+    "kebabCase, not " & node.repr, node)
+
+proc validFlagName(text: string): bool =
+  ## A long flag's name (without ``--``) or a key segment: non-empty, no
+  ## leading ``-``, and no ``=``, ``.`` or white space.
+  if text.len == 0 or text[0] == '-':
+    return false
+  for ch in text:
+    if ch in {'=', '.'} + Whitespace:
+      return false
+  true
+
+proc validDottedKey(text: string): bool =
+  text.len > 0 and not text.startsWith(".") and not text.endsWith(".") and
+    ".." notin text
+
+proc parsePerConvention(value: NimNode; param: string):
+    seq[CliConventionSpelling] =
+  ## ``perConvention = [<convention> = "<spelling>", ...]``.
+  if value.kind != nnkBracket or value.len == 0:
+    cliParamError(param, "perConvention must be a non-empty list such as " &
+      "[kebabCase = \"http-port\"], got: " & value.repr, value)
+  for item in value:
+    if item.kind != nnkExprEqExpr:
+      cliParamError(param, "perConvention entries are written " &
+        "<convention> = \"<spelling>\", got: " & item.repr, item)
+    let convention = cliConventionLit(item[0],
+      "parameter '" & param & "': a perConvention entry's convention")
+    if convention == cnDeclared:
+      cliParamError(param, "perConvention cannot override `declared`: " &
+        "that is the name as written", item[0])
+    let spelling = cliStrLit(item[1], "perConvention spelling")
+    if not validFlagName(spelling):
+      cliParamError(param, "the " & $convention & " spelling must be one " &
+        "name without '.', '=', white space or a leading '-', got: \"" &
+        spelling & "\"", item[1])
+    for seen in result:
+      if seen.convention == convention:
+        cliParamError(param, "perConvention gives " & $convention &
+          " twice", item)
+    result.add(CliConventionSpelling(convention: convention,
+      spelling: spelling))
+
+proc parsePerSource(value: NimNode; param: string; kind: CliParamKind):
+    seq[CliSourceSpelling] =
+  ## ``perSource = [cli = "<flag>", "<source>" = "<key>", ...]``. Whether
+  ## a named source exists is checked once the description's conventions
+  ## are known (``addScopeParam``).
+  if value.kind != nnkBracket or value.len == 0:
+    cliParamError(param, "perSource must be a non-empty list such as " &
+      "[cli = \"port\", \"project\" = \"web.port\"], got: " & value.repr,
+      value)
+  for item in value:
+    if item.kind != nnkExprEqExpr:
+      cliParamError(param, "perSource entries are written " &
+        "cli = \"<flag>\" or \"<source>\" = \"<key>\", got: " & item.repr,
+        item)
+    var source = ""
+    if item[0].kind in {nnkStrLit..nnkTripleStrLit}:
+      source = item[0].strVal
+      if source in [CliSourceCli, CliSourceFile] or source.len == 0:
+        cliParamError(param, "perSource names a file source with a " &
+          "string that is not empty, `cli` or `file`, got: " & item[0].repr,
+          item[0])
+    elif item[0].kind in {nnkIdent, nnkSym, nnkAccQuoted}:
+      case cliIdentText(item[0]).normalize
+      of "cli":
+        source = CliSourceCli
+      of "file":
+        cliParamError(param, "the override for every file source is " &
+          "written key = \"<dotted.key>\", not perSource = [file = ...]",
+          item[0])
+      else:
+        cliParamError(param, "perSource names `cli` or a file source as " &
+          "a string (\"project\"), not " & item[0].repr, item[0])
+    else:
+      cliParamError(param, "perSource names `cli` or a file source as " &
+        "a string (\"project\"), not " & item[0].repr, item[0])
+    let spelling = cliStrLit(item[1], "perSource spelling")
+    if source == CliSourceCli:
+      if kind == cpkPositional:
+        cliParamError(param, "a positional has no long flag, so perSource " &
+          "cannot give its cli spelling", item)
+      if not validFlagName(spelling):
+        cliParamError(param, "the cli spelling is a long flag's name " &
+          "without --, with no '.', '=', white space or leading '-', " &
+          "got: \"" & spelling & "\"", item[1])
+    elif not validDottedKey(spelling):
+      cliParamError(param, "the key in source '" & source & "' must be a " &
+        "non-empty dotted name such as \"section.name\", got: \"" &
+        spelling & "\"", item[1])
+    for seen in result:
+      if seen.source == source:
+        cliParamError(param, "perSource gives source '" & source &
+          "' twice", item)
+    result.add(CliSourceSpelling(source: source, spelling: spelling))
 
 proc parseCliParam*[P](node: NimNode): CliParam[P] =
   ## Parses one ``pos`` / ``flag`` / ``boolFlag`` declaration. Named
@@ -524,7 +662,7 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
   # ``is`` head.)
   var given: seq[string] = @[]
   var requiredNode: NimNode = nil
-  var keyNode, envNode, defaultNode: NimNode = nil
+  var keyNode, envNode, defaultNode, perSourceNode: NimNode = nil
   for i in 2 ..< node.len:
     let arg = node[i]
     if arg.kind != nnkExprEqExpr:
@@ -595,6 +733,11 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
           value: cliExprOf(item[1])))
     of "visibility":
       result.visibility = cliVisibilityLit(value, "parameter '" & name & "'")
+    of "perconvention":
+      result.perConvention = parsePerConvention(value, name)
+    of "persource":
+      result.perSource = parsePerSource(value, name, result.kind)
+      perSourceNode = value
     of "short":
       if value.kind != nnkCharLit or
           char(value.intVal) notin {'a'..'z', 'A'..'Z', '0'..'9'}:
@@ -656,6 +799,13 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
   if result.keyDeclared and csFile notin result.sources:
     cliParamError(name, "`key` names a configuration-file key, but " &
       "`sources` exclude file", keyNode)
+  for o in result.perSource:
+    if o.source == CliSourceCli and csCli notin result.sources:
+      cliParamError(name, "perSource gives a cli spelling, but `sources` " &
+        "exclude cli", perSourceNode)
+    if o.source != CliSourceCli and csFile notin result.sources:
+      cliParamError(name, "perSource gives a key in file source '" &
+        o.source & "', but `sources` exclude file", perSourceNode)
   if result.env.len > 0 and csEnv notin result.sources:
     cliParamError(name, "`env` names environment variables, but `sources` " &
       "exclude env", envNode)
@@ -716,7 +866,8 @@ proc flagSpellings(param: CliParam): seq[string] =
   ## ``--<name>``, its ``alias`` (without a trailing ``=``) and ``-<short>``.
   if param.kind != cpkFlag:
     return
-  result.add("--" & param.name)
+  result.add("--" & (if param.longName.len > 0: param.longName
+                     else: param.name))
   var alias = param.alias
   while alias.endsWith("="):
     alias.setLen(alias.len - 1)
@@ -752,6 +903,14 @@ proc checkNewParam[P](params: seq[CliParam[P]]; param: CliParam[P];
       cliParamError(param.name, "configuration key '" & param.configKey &
         "' is already used by '" & other.name & "' in " &
         label & where, node)
+    for mineKey in param.sourceKeys:
+      for theirs in other.sourceKeys:
+        if mineKey.source == theirs.source and
+            mineKey.spelling == theirs.spelling:
+          cliParamError(param.name, "configuration key '" &
+            mineKey.spelling & "' in file source '" & mineKey.source &
+            "' is already used by '" & other.name & "' in " & label & where,
+            node)
 
 proc noteGroup(groups: var seq[CliGroup]; name, help: string; node: NimNode) =
   ## Records a ``group`` section. A group may be opened in several scopes;
@@ -826,29 +985,53 @@ type
     isRoot: bool
     path: seq[string]
     wholeBody: NimNode
-    keyStyle: CliKeyStyle
+    naming: CliNaming
 
 proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
                           parent: CliCommand[C, P]; wholeBody: NimNode;
                           header: CliCommandHeader;
                           commands: var seq[CliCommand[C, P]];
                           groups: var seq[CliGroup];
-                          keyStyle: CliKeyStyle): CliCommand[C, P]
+                          naming: CliNaming): CliCommand[C, P]
 
 proc addScopeParam[C, P](cmd: var CliCommand[C, P]; stmt: NimNode;
                          group: string; ctx: ScopeContext) =
   ## Parses a parameter declaration of the scope and adds it to ``cmd``,
   ## with what only the scope knows: its placement under ``cli:``, its group,
-  ## the declaring path and the configuration key derived from it.
+  ## the declaring path, and its spellings in every source: the
+  ## configuration keys derived from the path and the long flag, each in its
+  ## source's convention with the parameter's overrides applied.
   var param = parseCliParam[P](stmt)
   if ctx.isRoot and param.kind == cpkFlag:
     param.placement = capBeforeSubcommand
   param.group = group
   param.declaredIn = ctx.path
+  for o in param.perSource:
+    if o.source == CliSourceCli:
+      continue
+    var known = false
+    for s in ctx.naming.fileSources:
+      if s.source == o.source:
+        known = true
+    if not known:
+      cliParamError(param.name, "perSource names the file source '" &
+        o.source & "', which the description does not declare (declare " &
+        "it with convention \"" & o.source & "\" = <convention> under cli:)",
+        stmt)
+  let declaredKey = if param.keyDeclared: param.configKey else: ""
   if csFile notin param.sources:
     param.configKey = ""
-  elif not param.keyDeclared:
-    param.configKey = cliDerivedKey(ctx.path, param.name, ctx.keyStyle)
+  else:
+    param.configKey = cliSourceKey(ctx.path, param.name, CliSourceFile,
+      ctx.naming.fileConvention, declaredKey, param.perSource,
+      param.perConvention)
+    for s in ctx.naming.fileSources:
+      param.sourceKeys.add(CliSourceSpelling(source: s.source,
+        spelling: cliSourceKey(ctx.path, param.name, s.source, s.convention,
+          declaredKey, param.perSource, param.perConvention)))
+  if param.kind == cpkFlag:
+    param.longName = cliSpelling(param.name, CliSourceCli,
+      ctx.naming.flagConvention, param.perSource, param.perConvention)
   checkNewParam(cmd.params, param, cliCommandLabel(ctx.path, ctx.isRoot),
     stmt)
   cmd.params.add(param)
@@ -886,7 +1069,7 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
                 cliCommandLabel(ctx.path & @[seen.owner]), stmt)
           childWords.add((word, childName))
       discard parseScopeImpl[C, P](stmt[^1], childPath, false, cmd,
-        ctx.wholeBody, childHeader, commands, groups, ctx.keyStyle)
+        ctx.wholeBody, childHeader, commands, groups, ctx.naming)
     of "group":
       if group.len > 0:
         error("clispec: group '" & group & "' cannot contain another " &
@@ -905,7 +1088,7 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
       noteGroup(groups, title, groupHelp, stmt)
       walkScope[C, P](cmd, stmt[^1], title, ctx, commands, groups, helpGiven,
         childWords)
-    of "keystyle", "configschema":
+    of "keystyle", "configschema", "convention":
       # Read by ``parseCliModel`` before the scope is walked; valid only
       # directly under ``cli:``.
       if not ctx.isRoot or group.len > 0:
@@ -937,7 +1120,7 @@ proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
                           header: CliCommandHeader;
                           commands: var seq[CliCommand[C, P]];
                           groups: var seq[CliGroup];
-                          keyStyle: CliKeyStyle): CliCommand[C, P] =
+                          naming: CliNaming): CliCommand[C, P] =
   let info = body.lineInfoObj()
   result.sourceFile = info.filename
   result.sourceLine = info.line
@@ -957,7 +1140,7 @@ proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
   var childWords: seq[tuple[word, owner: string]] = @[]
   walkScope[C, P](result, body, "",
     ScopeContext(isRoot: isRoot, path: path, wholeBody: wholeBody,
-      keyStyle: keyStyle),
+      naming: naming),
     commands, groups, helpGiven, childWords)
 
   # ``implies`` may name any parameter the implying one's command sees once
@@ -986,16 +1169,16 @@ proc parseCliScope*[C, P](body: NimNode; path: seq[string]; isRoot: bool;
                           parent: CliCommand[C, P]; wholeBody: NimNode;
                           commands: var seq[CliCommand[C, P]];
                           groups: var seq[CliGroup];
-                          keyStyle = cksDeclared): CliCommand[C, P] =
+                          naming = CliNaming()): CliCommand[C, P] =
   ## Parses one scope — the root ``cli:`` body, or a ``call:`` /
   ## ``subcmd`` body — in source order and returns its command. The scope
   ## starts from ``parent``'s parameters and extension (what the enclosing
   ## scope had declared when this one opened). Every nested scope is
   ## appended to ``commands`` after the scopes nested inside it; the root is
-  ## not appended. ``group`` sections are recorded in ``groups``. Derived
-  ## configuration keys are spelt in ``keyStyle``.
+  ## not appended. ``group`` sections are recorded in ``groups``. Keys and
+  ## long flags are spelt in the conventions of ``naming``.
   parseScopeImpl[C, P](body, path, isRoot, parent, wholeBody,
-    CliCommandHeader(), commands, groups, keyStyle)
+    CliCommandHeader(), commands, groups, naming)
 
 proc parseCliScope*[C, P](body: NimNode; path: seq[string]; isRoot: bool;
                           parent: CliCommand[C, P]; wholeBody: NimNode;
@@ -1011,25 +1194,58 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
   ## defaults, which every scope inherits unless a statement changes them.
   var root: CliCommand[C, P]
   root.ext = rootExt
-  # The program-wide statements come first: the key style decides every
-  # derived key, so it must be known before any parameter is read.
-  var styleSeen = false
+  # The program-wide statements come first: the conventions decide every
+  # key and long flag, so they must be known before any parameter is read.
+  var fileSeen, cliSeen = false
   for stmt in body:
     case cliCalleeName(stmt).normalize
     of "keystyle":
+      # The older spelling of ``convention file = <c>``.
       if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2:
         error("clispec: keyStyle is written keyStyle declared | " &
-          "snakeCase | kebabCase", stmt)
-      if styleSeen:
-        error("clispec: keyStyle is given twice", stmt)
-      styleSeen = true
-      case cliIdentText(stmt[1]).normalize
-      of "declared": result.keyStyle = cksDeclared
-      of "snakecase": result.keyStyle = cksSnakeCase
-      of "kebabcase": result.keyStyle = cksKebabCase
+          "camelCase | snakeCase | kebabCase", stmt)
+      if fileSeen:
+        error("clispec: the convention of source 'file' is given twice " &
+          "(keyStyle is convention file = ...)", stmt)
+      fileSeen = true
+      result.keyStyle = cliConventionLit(stmt[1], "keyStyle")
+    of "convention":
+      if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2 or
+          stmt[1].kind != nnkExprEqExpr:
+        error("clispec: convention is written convention <source> = " &
+          "<convention>, where <source> is cli, file or a file source's " &
+          "name as a string", stmt)
+      let target = stmt[1][0]
+      let convention = cliConventionLit(stmt[1][1], "a convention")
+      if target.kind in {nnkStrLit..nnkTripleStrLit}:
+        let name = target.strVal
+        if name.len == 0 or name in [CliSourceCli, CliSourceFile]:
+          error("clispec: a named file source is a non-empty string other " &
+            "than \"cli\" and \"file\", got: " & target.repr, target)
+        for seen in result.fileSources:
+          if seen.source == name:
+            error("clispec: the convention of source '" & name &
+              "' is given twice", stmt)
+        result.fileSources.add(CliSourceConvention(source: name,
+          convention: convention))
+      elif target.kind in {nnkIdent, nnkSym, nnkAccQuoted} and
+          cliIdentText(target).normalize == "cli":
+        if cliSeen:
+          error("clispec: the convention of source 'cli' is given twice",
+            stmt)
+        cliSeen = true
+        result.flagConvention = convention
+      elif target.kind in {nnkIdent, nnkSym, nnkAccQuoted} and
+          cliIdentText(target).normalize == "file":
+        if fileSeen:
+          error("clispec: the convention of source 'file' is given twice " &
+            "(keyStyle is convention file = ...)", stmt)
+        fileSeen = true
+        result.keyStyle = convention
       else:
-        error("clispec: keyStyle must be declared, snakeCase or " &
-          "kebabCase, not " & stmt[1].repr, stmt[1])
+        error("clispec: convention names the source cli, file or a file " &
+          "source's name as a string (\"project\"), not " & target.repr,
+          target)
     of "configschema":
       if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2:
         error("clispec: configSchema is written configSchema \"<id>\"",
@@ -1042,7 +1258,7 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
     else:
       discard
   result.root = parseCliScope[C, P](body, @[], true, root, body,
-    result.commands, result.groups, result.keyStyle)
+    result.commands, result.groups, cliNamingOf(result))
 
 # ---------------------------------------------------------------------------
 # Type checks of the expressions a model holds.

@@ -61,6 +61,9 @@ type
       ## The line of the file the value was written on (``csFile``).
     key*: string
       ## The configuration key as written in the file (``csFile``).
+    fileSource*: string
+      ## The file source whose spelling ``key`` is in: ``file`` or a named
+      ## source the description declares (``csFile``).
     variable*: string
       ## The environment variable (``csEnv``).
     verbatim*: bool
@@ -95,14 +98,19 @@ type
     line*: int
       ## Its line (``cokFile``, ``cokEnforced``).
     key*: string
-      ## The configuration key (``cokFile``, ``cokEnforced``).
+      ## The configuration key, as the file spelt it (``cokFile``,
+      ## ``cokEnforced``).
+    fileSource*: string
+      ## The file source whose spelling ``key`` is in: ``file``, or a named
+      ## source the description declares with its own naming convention
+      ## (``cokFile``, ``cokEnforced``).
     variable*: string
       ## The environment variable (``cokEnv``).
     argvIndex*: int
       ## The index in argv (``cokCli``); -1 otherwise.
     spelling*: string
-      ## The spelling used on the command line (``cokCli``); empty for a
-      ## positional.
+      ## The spelling used on the command line (``cokCli``), in the command
+      ## line's naming convention; empty for a positional.
     impliedBy*: string
       ## The name of the parameter whose ``implies`` set the value
       ## (``cokImplied``).
@@ -165,7 +173,7 @@ func cliSiteOf*(c: CliCandidate): CliSite =
   of csFile:
     CliSite(kind: if c.binding: cokEnforced else: cokFile,
       layer: c.layerName, path: c.path, line: c.line, key: c.key,
-      argvIndex: -1)
+      fileSource: c.fileSource, argvIndex: -1)
   of csEnv:
     CliSite(kind: cokEnv, variable: c.variable, argvIndex: -1)
   of csCli:
