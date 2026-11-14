@@ -22,6 +22,11 @@
 ## that run the Nim compiler while they execute (they call
 ## ``getCurrentCompilerExe()``).
 ##
+## And it checks that ``clispec.nimble`` states the version ``version.txt``
+## holds (Nimble cannot read ``version.txt``: it evaluates the nimble file
+## from its own working directory, and in an installed copy of the package
+## that has no ``version.txt``).
+##
 ## The files are read as text rather than evaluated because evaluating them
 ## needs three different tools; the text forms read here are the ones each
 ## file is written in, and a reformatting that defeats a reader fails this
@@ -182,6 +187,15 @@ suite "test_suite_lists_agree":
         repro.add(t.stem)
     check duplicates(repro).len == 0
     check sortedList(repro) == e2e
+
+  test "clispec.nimble's version is version.txt's":
+    let wanted = readFile(repoDir / "version.txt").strip()
+    check wanted.len > 0
+    var found: seq[string] = @[]
+    for line in readFile(repoDir / "clispec.nimble").splitLines():
+      if line.startsWith("version ") and "=" in line:
+        found.add(line.split("=", 1)[1].strip().strip(chars = {'"'}))
+    check found == @[wanted]
 
   test "repro.nim declares the compiler for exactly the tests that run it":
     for t in reproTests():

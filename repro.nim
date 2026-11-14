@@ -97,7 +97,7 @@ package clispec:
     when not defined(windows):
       useFlakeDevShell()
     task "bump-version", command = "just bump-version",
-      description = "Bump version number (version.txt)"
+      description = "Bump version number (version.txt, clispec.nimble)"
 
   build:
     var testBuildActions: seq[BuildActionDef] = @[]

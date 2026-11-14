@@ -1,7 +1,8 @@
-import std/[os, strutils]
-# Nimble evaluates this file from its own working directory, not the
-# package's, so the version file is located relative to this file.
-version       = readFile(thisDir() / "version.txt").strip()
+# The version is written here as a literal, not read from version.txt:
+# Nimble evaluates this file from its own working directory, and again in
+# the installed copy of the package, which holds only `src/` and this file.
+# `just bump-version` writes both; test_suite_lists_agree checks they agree.
+version       = "0.1.0"
 author        = "Metacraft Labs"
 description   = "Declarative command-line descriptions for Nim: a typed CLI model, the cli: language that builds it, and the typed configuration object, parser and help generated from it."
 license       = "Apache-2.0"

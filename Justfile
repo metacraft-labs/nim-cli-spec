@@ -87,9 +87,11 @@ format:
       echo "nimpretty not found; skipping" >&2
     fi
 
-# Set the package version (version.txt).
+# Set the package version (version.txt and clispec.nimble's `version`).
 bump-version version:
     printf '%s\n' "{{version}}" > version.txt
+    sed -i.bak -e 's/^version       = ".*"$/version       = "{{version}}"/' clispec.nimble
+    rm -f clispec.nimble.bak
 
 # Remove test logs, binaries and the nimcache.
 clean:
