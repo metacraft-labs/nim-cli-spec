@@ -659,8 +659,14 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
         continue
       fail(cekUnknownFlag, i, word)
     if not m.found:
+      # The spelling is the flag name alone; a value written in the word
+      # (``--name=value``, ``--name:value`` under ``colonValues``) or taken
+      # from the next one (``equalsTakesNext``) goes in ``value``.
       let sep = cliValueSeparator(g, word)
-      fail(cekUnknownFlag, i, (if sep > 0: word[0 ..< sep] else: word))
+      if sep > 0:
+        fail(cekUnknownFlag, i, word[0 ..< sep], word[sep + 1 .. ^1])
+      else:
+        fail(cekUnknownFlag, i, word)
     let p = g.params[m.id]
     var c = CliCandidate(source: csCli, argvIndex: i, valueArgvIndex: -1,
       spelling: m.spelling)

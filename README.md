@@ -616,6 +616,10 @@ wording, and every wording names the command (`'tool build'`):
 
 The error also carries the offending argv index, the spelling, the value,
 what was expected and `exitCode`, the program's declared usage exit code.
+For an unknown flag written with a value (`--nope=v`, `--nope:v` under
+`colonValues`, `--nope= v` under `equalsTakesNext`), the spelling is the
+flag name alone (`--nope`) and the value is `v`; the wording names only
+the spelling.
 `cekConflictingSources` and the `source` of an invalid value are what a
 library that adds other sources (confutils) reports through the same
 taxonomy: an invalid value that came from a configuration file or the

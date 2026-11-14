@@ -62,7 +62,12 @@ type
       ## ``frobnicate``), or the parameter's display name (``--output``,
       ## ``<target>``) for a missing one.
     value*: string
-      ## The rejected value (``cekInvalidValue``).
+      ## The rejected value (``cekInvalidValue``, ``cekSwitchFalseValue``).
+      ## For ``cekUnknownFlag``, the value written with the flag
+      ## (``--nope=v``, ``--nope:v`` under ``colonValues``, or the next word
+      ## under ``equalsTakesNext``, ``--nope= v``), whose ``spelling`` is
+      ## then the flag name alone (``--nope``); empty when none was
+      ## written. The wording does not show it.
     expected*: string
       ## What would have been accepted: ``an integer``,
       ## ``one of: red, green``, ``no value``, or for a subcommand error the

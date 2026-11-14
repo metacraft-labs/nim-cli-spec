@@ -523,6 +523,54 @@ suite "test_cs_m10_parse_compat_rules":
       "unknown flag '--output:' for 'next'"
     check NextOnly.load(@["-o:x"]).output == ":x"
 
+  test "an unknown flag's value: spelling is the name, value what was written":
+    proc unknown(e: ref CliUsageError; spelling, value, msg: string;
+                 argvIndex = 0) =
+      check e != nil
+      check e.kind == cekUnknownFlag
+      check e.spelling == spelling
+      check e.value == value
+      check e.argvIndex == argvIndex
+      check e.msg == msg
+    # ``=`` attaches a value under every grammar.
+    unknown(usageError(proc () = discard Plain.load(@["--bogus=x"])),
+      "--bogus", "x", "unknown flag '--bogus' for 'plain'")
+    unknown(usageError(proc () = discard Plain.load(@["--bogus"])),
+      "--bogus", "", "unknown flag '--bogus' for 'plain'")
+    unknown(usageError(proc () = discard Plain.load(@["--bogus="])),
+      "--bogus", "", "unknown flag '--bogus' for 'plain'")
+    unknown(usageError(proc () = discard Plain.load(@["--bogus=a=b"])),
+      "--bogus", "a=b", "unknown flag '--bogus' for 'plain'")
+    # ``:`` only under colonValues; the first ``:`` or ``=`` ends the name.
+    unknown(usageError(proc () = discard Getopt.load(@["--bogus:1"])),
+      "--bogus", "1", "unknown flag '--bogus' for 'getopt'")
+    unknown(usageError(proc () = discard Getopt.load(@["--bogus:a=b"])),
+      "--bogus", "a=b", "unknown flag '--bogus' for 'getopt'")
+    unknown(usageError(proc () = discard Getopt.load(@["--bogus=a:b"])),
+      "--bogus", "a:b", "unknown flag '--bogus' for 'getopt'")
+    unknown(usageError(proc () = discard NextOnly.load(@["--bogus:1"])),
+      "--bogus:1", "", "unknown flag '--bogus:1' for 'next'")
+    # equalsTakesNext: the next word is the value, unless it starts with -.
+    unknown(usageError(proc () = discard Getopt.load(@["--bogus=", "v"])),
+      "--bogus", "v", "unknown flag '--bogus' for 'getopt'")
+    unknown(usageError(proc () = discard Getopt.load(@["--bogus:", "v"])),
+      "--bogus", "v", "unknown flag '--bogus' for 'getopt'")
+    unknown(usageError(proc () = discard NextOnly.load(@["--bogus=", "v"])),
+      "--bogus", "v", "unknown flag '--bogus' for 'next'")
+    unknown(usageError(proc () = discard Getopt.load(@["--bogus=", "-v"])),
+      "--bogus", "", "unknown flag '--bogus' for 'getopt'")
+    unknown(usageError(proc () = discard Getopt.load(@["--bogus="])),
+      "--bogus", "", "unknown flag '--bogus' for 'getopt'")
+    unknown(usageError(proc () =
+      discard Getopt.load(@["--keep", "--bogus=", "v"])),
+      "--bogus", "v", "unknown flag '--bogus' for 'getopt'", argvIndex = 1)
+    # Without equalsTakesNext the next word is not read.
+    unknown(usageError(proc () = discard ColonOnly.load(@["--bogus=", "v"])),
+      "--bogus", "", "unknown flag '--bogus' for 'colon'")
+    # A single-dash word keeps its whole spelling and no value.
+    unknown(usageError(proc () = discard Getopt.load(@["-x:1"])),
+      "-x:1", "", "unknown flag '-x:1' for 'getopt'")
+
   test "completion under colonValues and equalsTakesNext":
     proc values(cs: seq[CliCompletion]): seq[string] =
       for c in cs:
