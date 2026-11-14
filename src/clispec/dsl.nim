@@ -1495,7 +1495,15 @@ proc cliFailWhenNot*(cond: NimNode; message: string; file: string; line,
   result = nnkWhenStmt.newTree(nnkElifBranch.newTree(
     nnkPrefix.newTree(ident("not"), nnkPar.newTree(cond)),
     newStmtList(pragma)))
-  result.setLineInfo(file, line, column)
+  # ``setLineInfo`` is shallow, and the nodes built above take the line of
+  # the macro invocation (or of whatever the compiler last read), which is
+  # where a diagnostic about the pragma's argument would land; put the
+  # whole check where the offending argument was written.
+  proc setDeepLineInfo(n: NimNode) =
+    n.setLineInfo(file, line, column)
+    for child in n:
+      setDeepLineInfo(child)
+  setDeepLineInfo(result)
 
 proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
   ## Code that checks, where it is placed, what the parser cannot check from
