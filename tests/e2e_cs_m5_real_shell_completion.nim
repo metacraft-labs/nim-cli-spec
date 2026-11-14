@@ -9,13 +9,19 @@
 ##    with a scratch ``HOME``, ``ZDOTDIR`` and XDG directories and none of
 ##    the user's startup files (``bash --norc --noprofile``, ``zsh -f``,
 ##    ``fish --no-config``, ``pwsh -NoProfile``);
-## 2. types a partial command line, presses Tab, then Enter, and reads the
+## 2. sets ``PATH`` again from ``CLISPEC_E2E_PATH`` (the fixture's directory
+##    first), because startup files that even those options do not skip
+##    may assign ``PATH`` outright (NixOS's ``/etc/zshenv``, which ``zsh -f``
+##    still reads, does), and checks that ``shx`` resolves in the shell
+##    (``command -v``, ``command -q``, ``Get-Command``), failing with the
+##    shell's ``PATH`` if it does not, before any case runs;
+## 3. types a partial command line, presses Tab, then Enter, and reads the
 ##    line the fixture prints: the words it received. That is what the shell
 ##    completed, so the assertions are on the shell's own output, not on the
 ##    script. A control case runs the same keystrokes before the script is
 ##    loaded and must come back uncompleted, which shows the completion came
 ##    from the script;
-## 3. for fish and PowerShell, also asks the shell's completion machinery
+## 4. for fish and PowerShell, also asks the shell's completion machinery
 ##    for the full candidate list (``complete -C``, ``TabExpansion2``) and
 ##    compares it exactly.
 ##
@@ -100,15 +106,21 @@ var binDir = ""
 var ranShells: seq[string] = @[]
 var skippedShells: seq[string] = @[]
 
+proc intendedPath(): string =
+  ## The ``PATH`` every shell runs with: the fixture's directory first.
+  binDir & $PathSep & getEnv("PATH")
+
 proc shellEnv(): seq[(string, string)] =
   ## A minimal environment: scratch home and XDG directories, the fixture
-  ## first on PATH.
+  ## first on PATH. ``CLISPEC_E2E_PATH`` holds the same ``PATH``, for the
+  ## shell to set again after its startup files (``pathCheck``).
   let home = scratch / "home"
   for d in ["home", "config", "data", "cache", "state", "work"]:
     createDir(scratch / d)
   writeFile(scratch / "inputrc", "set bell-style none\n")
   result = @[
-    ("PATH", binDir & $PathSep & getEnv("PATH")),
+    ("PATH", intendedPath()),
+    ("CLISPEC_E2E_PATH", intendedPath()),
     ("HOME", home), ("USERPROFILE", home), ("ZDOTDIR", home),
     ("XDG_CONFIG_HOME", scratch / "config"),
     ("XDG_DATA_HOME", scratch / "data"),
@@ -356,15 +368,46 @@ when not defined(windows):
   type Outcome = object
     label, got, expected: string
 
-  proc runShell(s: var Session; setup, echoReady: string; startMs: int;
-                spaceAfterTab = false): seq[Outcome] =
-    ## The control case, then the script, then every case; the test body
-    ## compares each outcome. Nothing is typed until the shell has started
-    ## and gone quiet: .NET reads the terminal's answer to its cursor query
-    ## from the same input, so PowerShell mishandles typeahead.
+  const
+    shxMarker = "CLISPEC_SHX_"
+      ## What a shell's ``pathCheck`` prints, then ``FOUND``, or
+      ## ``MISSING`` and the shell's ``PATH``. Each command spells it so
+      ## that the echoed command line does not contain it.
+    posixPathCheck = "export PATH=\"$CLISPEC_E2E_PATH\"; " &
+      "if command -v shx >/dev/null 2>&1; then echo CLISPEC_SH''X_FOUND; " &
+      "else echo CLISPEC_SH''X_MISSING \"PATH=$PATH\"; fi"
+      ## bash and zsh.
+    fishPathCheck = "set -gx PATH (string split -- : $CLISPEC_E2E_PATH); " &
+      "if command -q shx; echo CLISPEC_SH''X_FOUND; " &
+      "else; echo CLISPEC_SH''X_MISSING \"PATH=$PATH\"; end"
+    pwshPathCheck = "$env:PATH = $env:CLISPEC_E2E_PATH; " &
+      "if (Get-Command shx -CommandType Application " &
+      "-ErrorAction SilentlyContinue) { 'CLISPEC_' + 'SHX_FOUND' } " &
+      "else { 'CLISPEC_' + 'SHX_MISSING PATH=' + $env:PATH }"
+
+  proc runShell(s: var Session; pathCheck, setup, echoReady: string;
+                startMs: int; spaceAfterTab = false): seq[Outcome] =
+    ## ``PATH`` set again and ``shx`` found, the control case, then the
+    ## script, then every case; the test body compares each outcome.
+    ## Nothing is typed until the shell has started and gone quiet: .NET
+    ## reads the terminal's answer to its cursor query from the same input,
+    ## so PowerShell mishandles typeahead.
     s.settle(1500, startMs)
     result.add(Outcome(label: "started", expected: "ready",
       got: (if s.ready(echoReady, startMs): "ready" else: "no ready marker")))
+    # Startup files the shell reads despite its options may have replaced
+    # PATH; every case runs ``shx`` from it.
+    s.settle(300, 10_000)
+    s.send(pathCheck & "\r")
+    let line = s.lineAfter(shxMarker, startMs)
+    let found = line == shxMarker & "FOUND"
+    result.add(Outcome(label: "shx resolves on PATH", expected: "found",
+      got: (if found: "found"
+            elif line.len == 0: "no answer to: " & pathCheck
+            else: "shx is not on PATH in " & s.name & " after setting " &
+              "PATH=" & intendedPath() & "; the shell answered: " & line)))
+    if not found:
+      return
     result.add(Outcome(label: "before the script: " & control.typed &
       " <Tab>", got: s.runCase(control, spaceAfterTab),
       expected: control.expected))
@@ -445,8 +488,8 @@ suite "e2e_cs_m5_real_shell_completion":
         var s = spawn("bash", exe, ["--norc", "--noprofile", "-i"],
           shellEnv(), scratch / "work")
         try:
-          s.checkOutcomes(s.runShell("source " & quoteShell(script),
-            "echo CLISPEC_READ''Y", 20_000))
+          s.checkOutcomes(s.runShell(posixPathCheck,
+            "source " & quoteShell(script), "echo CLISPEC_READ''Y", 20_000))
         finally:
           checkpoint(s.transcript)
           s.stop()
@@ -464,7 +507,7 @@ suite "e2e_cs_m5_real_shell_completion":
         writeScript("zsh", script)
         var s = spawn("zsh", exe, ["-f", "-i"], shellEnv(), scratch / "work")
         try:
-          s.checkOutcomes(s.runShell(
+          s.checkOutcomes(s.runShell(posixPathCheck,
             "autoload -U compinit && compinit -u -D && source " &
             quoteShell(script), "echo CLISPEC_READ''Y", 20_000))
         finally:
@@ -485,8 +528,8 @@ suite "e2e_cs_m5_real_shell_completion":
         var s = spawn("fish", exe, ["--no-config", "-i"], shellEnv(),
           scratch / "work")
         try:
-          s.checkOutcomes(s.runShell("source " & quoteShell(script),
-            "echo CLISPEC_READ''Y", 30_000))
+          s.checkOutcomes(s.runShell(fishPathCheck,
+            "source " & quoteShell(script), "echo CLISPEC_READ''Y", 30_000))
           # fish's completion machinery, asked for the whole list.
           s.send("complete -C 'shx '; complete -C 'shx build --mode '; " &
             "echo CLISPEC_LIST''_END\r")
@@ -543,7 +586,7 @@ suite "e2e_cs_m5_real_shell_completion":
         var s = spawn("pwsh", pwsh, ["-NoProfile", "-NoLogo"], shellEnv(),
           scratch / "work")
         try:
-          s.checkOutcomes(s.runShell("& " &
+          s.checkOutcomes(s.runShell(pwshPathCheck, "& " &
             powerShellLiteral(binDir / addFileExt("shx", ExeExt)) &
             " completion powershell | Out-String | Invoke-Expression",
             "function prompt { 'CLISPEC_PROMPT> ' }; " &
