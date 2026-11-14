@@ -8,8 +8,9 @@
 ## constant and one from a ``when`` expression), optional values that may
 ## also be the next word, flags that also set another parameter in
 ## command-line order, switches that refuse a false value,
-## case-insensitive option names, ``-o=value``, and help requested in the
-## loader's ways. It is described once here in clispec, with the opt-in
+## case-insensitive option names, ``-o=value``, ``--name:value``,
+## ``--name= value`` (a value after a trailing ``=``), and help requested in
+## the loader's ways. It is described once here in clispec, with the opt-in
 ## compatibility rules on.
 ##
 ## The expected parse results and the expected options table are the
@@ -52,7 +53,8 @@ cliProgram(Rec, "rec record"):
   convention cli = kebabCase
   flagMatching ignoreStyle
   parsing shortEquals, helpWithAnyValue, helpInCluster,
-    valueErrorsBeforeHelp, switchesRefuseFalse, lenientSwitchValues
+    valueErrorsBeforeHelp, switchesRefuseFalse, lenientSwitchValues,
+    colonValues, equalsTakesNext
   flag output is Option[string], short = 'o', valueName = "path",
     help = "Output file (default: <program>.out)"
   flag attach is Option[Mode], valueName = "early|late|lazy",
@@ -202,6 +204,56 @@ const
   (@["--bogus=1"], "unknown --bogus"),
   (@["prog"], "unexpected prog"),
   (@["--a-switch-with-a-long-name"], "output=none attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=true aslr=none"),
+  (@["--output:t.out"], "output=t.out attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--output=t.out"], "output=t.out attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--output:"], "output= attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--output="], "output= attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--output:a=b"], "output=a=b attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--output=a:b"], "output=a:b attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--output::x"], "output=:x attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["-o:t.out"], "output=t.out attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["-o:"], "output= attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["-o=t.out"], "output=t.out attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["-o::x"], "output=:x attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--output=", "t.out"], "output=t.out attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--output:", "t.out"], "output=t.out attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--output=", "-x"], "unknown -x"),
+  (@["--output=", "--split"], "output= attach=none attachExplicit=false checkpointInterval=none split=true portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--output=", ""], "output= attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--output=", "a", "b"], "unexpected b"),
+  (@["-o", "--x:y"], "output=--x:y attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--output", "--x:y"], "output=--x:y attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--keep-env", "--A:B"], "output=none attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv=--A:B cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["-o", "-o:z"], "output=-o:z attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--output", "--a=", "b"], "unexpected b"),
+  (@["--output", "--a:", "b"], "unexpected b"),
+  (@["--keep-env=", "A", "--keep-env:B", "--keep-env:", "C"], "output=none attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=none keepEnv=A,B,C cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--split:true"], "output=none attach=none attachExplicit=false checkpointInterval=none split=true portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--split:off"], "false --split=off"),
+  (@["--split:"], "output=none attach=none attachExplicit=false checkpointInterval=none split=true portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--split=", "yes"], "output=none attach=none attachExplicit=false checkpointInterval=none split=true portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--split=", "no"], "false --split=no"),
+  (@["--split=", "maybe"], "invalid --split maybe"),
+  (@["--split:", "--trace"], "output=none attach=none attachExplicit=false checkpointInterval=none split=true portable=none trace=fast keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--trace:full"], "output=none attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=full keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--trace=", "full"], "output=none attach=none attachExplicit=false checkpointInterval=none split=false portable=none trace=full keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--trace=", "bogus"], "invalid --trace bogus"),
+  (@["--trace:"], "invalid --trace "),
+  (@["--trace=", "-o", "x"], "invalid --trace "),
+  (@["--portable:off"], "output=none attach=none attachExplicit=false checkpointInterval=none split=false portable=off trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--portable=", "off"], "output=none attach=none attachExplicit=false checkpointInterval=none split=false portable=off trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--checkpoint-interval:5"], "output=none attach=none attachExplicit=false checkpointInterval=5 split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--checkpoint-interval=", "5"], "output=none attach=none attachExplicit=false checkpointInterval=5 split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--CHECKPOINT-INTERVAL:5"], "output=none attach=none attachExplicit=false checkpointInterval=5 split=false portable=none trace=none keepEnv= cooperative=false legacyAttach=false diag= diagStrict=false diagMemory=false longSwitch=false aslr=none"),
+  (@["--checkpoint_interval:5"], "unknown --checkpoint_interval"),
+  (@["--bogus:1"], "unknown --bogus"),
+  (@["--bogus=", "x"], "unknown --bogus"),
+  (@["--bogus:"], "unknown --bogus"),
+  (@["--help:1"], "help"),
+  (@["--help=", "x"], "help"),
+  (@["--help:"], "help"),
+  (@["--HELP:json"], "help"),
+  (@["--output=", "x", "-h"], "help"),
   ]
     ## What the equivalent confutils type's ``load`` gives for each argv.
 
@@ -242,10 +294,19 @@ suite "test_cs_m10_confutils_compat_record":
     check cliOptionsTable(Rec.cliGrammar, 0, forkLayout) == expectedTable
 
   test "every argv parses as the confutils loader parses it":
-    check expectedParses.len >= 50
+    check expectedParses.len >= 110
     for (argv, expected) in expectedParses:
       checkpoint($argv)
       check line(argv) == expected
+
+  test "a short option's empty attached value does not drop the next word":
+    # The fork's getopt skips the word after ``-o=`` or ``-o:`` (it reads
+    # ``-o=`` ``t.out`` ``--split`` as an empty output, ``--split`` given,
+    # and ``-o:`` ``--split`` as ``--split`` not given). Clispec reads that
+    # word as it would read it anywhere else.
+    check line(@["-o=", "--split"]) == line(@["-o=", "--split=true"])
+    check line(@["-o:", "--split"]) == line(@["-o:", "--split=true"])
+    check line(@["-o:", "t.out"]) == "unexpected t.out"
 
   test "the full help keeps clispec's own frame around the same rows":
     let text = Rec.helpText(layout = forkLayout)

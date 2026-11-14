@@ -289,6 +289,25 @@ type
       ## (``y``, ``yes``, ``true``, ``1``, ``on`` and ``n``, ``no``,
       ## ``false``, ``0``, ``off``, ignoring ASCII case and ``_``), and an
       ## empty one (``--flag=``) means true.
+    cprColonValues = "colonValues"
+      ## ``:`` attaches a value as ``=`` does: in a ``--`` word the first
+      ## ``:`` or ``=`` ends the spelling (``--name:value``, so
+      ## ``--name:a=b`` gives ``a=b``), and in a cluster of short flags a
+      ## letter followed by ``:`` takes the rest of the word as its value
+      ## (``-o:value``; a switch, an explicit value). Without the rule
+      ## ``--name:value`` is the spelling ``--name:value`` and ``-o:value``
+      ## gives ``-o`` the value ``:value``. A word that is the value of the
+      ## flag before it (``-o --x:y``) is that value, verbatim.
+    cprEqualsTakesNext = "equalsTakesNext"
+      ## A ``--`` word that ends with the ``=`` attaching its value
+      ## (``--name=``, or ``--name:`` under ``colonValues``) takes the next
+      ## word as that value when there is one and it does not start with
+      ## ``-`` (an empty word is a value); otherwise the value is empty.
+      ## This holds for every ``--`` word read as a flag, a switch's
+      ## (``--flag= yes``) and the help request's included, but not for a
+      ## word that is the value of the flag before it (``--output --a= b``
+      ## gives ``--output`` the value ``--a=``) nor for a short flag
+      ## (``-o= x`` gives ``-o`` an empty value under ``shortEquals``).
 
   CliGroup* = object
     ## A ``group "<title>":`` section: parameters listed together in help.

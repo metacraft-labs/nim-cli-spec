@@ -57,6 +57,32 @@ cliProgram(Pos, "pos"):
   flag jobs is int, short = 'j'
   pos count is int, default = 0
 
+cliProgram(Getopt, "getopt"):
+  parsing colonValues, equalsTakesNext, lenientSwitchValues,
+    helpWithAnyValue
+  flag output is string, short = 'o'
+  flag keepEnv is seq[string]
+  flag jobs is int, short = 'j'
+  boolFlag split is bool, short = 's', refuseFalse = true
+  boolFlag keep is bool, short = 'k'
+  flag quiet is int, counted = true, short = 'q'
+  boolFlag color is bool, negatable = true
+  flag trace is string, values = ["fast", "full"], optionalValue = "fast",
+    acceptsNextWord = true
+  pos rest is seq[string], required = false
+
+cliProgram(ColonOnly, "colon"):
+  parsing colonValues
+  flag output is string, short = 'o'
+  boolFlag keep is bool, short = 'k'
+  pos rest is seq[string], required = false
+
+cliProgram(NextOnly, "next"):
+  parsing equalsTakesNext
+  flag output is string, short = 'o'
+  boolFlag keep is bool, short = 'k'
+  pos rest is seq[string], required = false
+
 cliProgram(RefuseAll, "refuse"):
   parsing switchesRefuseFalse
   boolFlag split is bool
@@ -113,6 +139,15 @@ suite "test_cs_m10_parse_compat_rules":
     let missing = usageError(proc () = discard Plain.load(@["--output"]))
     check missing.kind == cekMissingValue
     check missing.expected == ""
+    # ``:`` attaches nothing, and a trailing ``=`` an empty value.
+    check usageError(proc () = discard Plain.load(@["--output:x"])).msg ==
+      "unknown flag '--output:x' for 'plain'"
+    check Plain.load(@["-o:x"]).output == ":x"
+    check Plain.load(@["--output="]).output == ""
+    check usageError(proc () = discard Plain.load(@["--output=", "x"])).msg ==
+      "unexpected argument 'x' for 'plain'"
+    check usageError(proc () = discard Plain.load(@["--split=", "yes"])).kind ==
+      cekUnexpectedPositional
     let j = parseJson(Plain.helpJson())
     check j["parsing"] == %*{"flagMatching": "exact", "rules": []}
     for p in j["command"]["parameters"]:
@@ -353,6 +388,164 @@ suite "test_cs_m10_parse_compat_rules":
     check usageError(proc () = discard Rules.load(@["-o"])).expected == "path"
     check usageError(proc () = discard Rules.load(@["--jobs"])).expected == ""
 
+  # The expected answers below are what confutils' getopt (the fork at
+  # 331c5fa, ``load(..., negatableSwitches = false)``) gives for the
+  # equivalent options.
+
+  test "colonValues: --name:value and -o:value":
+    check Getopt.load(@["--output:t.out"]).output == "t.out"
+    check Getopt.load(@["--output:"]).output == ""
+    check Getopt.load(@["--output:a=b"]).output == "a=b"
+    check Getopt.load(@["--output=a:b"]).output == "a:b"
+    check Getopt.load(@["--output::x"]).output == ":x"
+    check Getopt.load(@["-o:t.out"]).output == "t.out"
+    check Getopt.load(@["-o:"]).output == ""
+    check Getopt.load(@["-o::x"]).output == ":x"
+    check Getopt.load(@["-k", "-j:4"]).jobs == 4
+    check Getopt.load(@["-kj:4"]).jobs == 4
+    check Getopt.load(@["-k:yes"]).keep
+    check Getopt.load(@["-k:0"]).keep == false
+    check Getopt.load(@["--keep:true"]).keep
+    check Getopt.load(@["--keep:"]).keep
+    check Getopt.load(@["--trace:full"]).trace == "full"
+    check Getopt.load(@["--keepEnv:A", "--keepEnv=B"]).keepEnv == @["A", "B"]
+    let f = usageError(proc () = discard Getopt.load(@["--split:off"]))
+    check f.kind == cekSwitchFalseValue
+    check f.spelling == "--split"
+    check f.value == "off"
+    check usageError(proc () = discard Getopt.load(@["-q:1"])).kind ==
+      cekInvalidValue
+    check usageError(proc () = discard Getopt.load(@["--no-color:x"])).kind ==
+      cekInvalidValue
+    let u = usageError(proc () = discard Getopt.load(@["--bogus:1"]))
+    check u.kind == cekUnknownFlag
+    check u.spelling == "--bogus"
+    check helpAsked(proc () = discard Getopt.load(@["--help:1"]))
+    try:
+      discard Getopt.load(@["--help:json"])
+      check false
+    except CliHelpRequest as h:
+      check h.json
+    # A flag's value is taken verbatim, whatever it looks like.
+    check Getopt.load(@["-o", "--x:y"]).output == "--x:y"
+    check Getopt.load(@["--output", "--x:y"]).output == "--x:y"
+    check Getopt.load(@["-o", "-o:z"]).output == "-o:z"
+    check Getopt.load(@["--keepEnv", "--A:B"]).keepEnv == @["--A:B"]
+    # After ``--`` every word is a positional.
+    check Getopt.load(@["--", "--output:x"]).rest == @["--output:x"]
+    # Under colonValues alone, a trailing ``:`` is an empty value.
+    check ColonOnly.load(@["--output:"]).output == ""
+    let c = ColonOnly.load(@["--output:", "x"])
+    check c.output == ""
+    check c.rest == @["x"]
+    check ColonOnly.load(@["-o:x"]).output == "x"
+    let gr = Getopt.cliGrammar
+    let t = cliTokenize(gr, @["-k", "--output:a"])
+    let cand = t.candidates[idOf(gr, "output")][0]
+    check cand.spelling == "--output"
+    check cand.text == "a"
+    check cand.argvIndex == 1
+    check cand.valueArgvIndex == -1
+
+  test "equalsTakesNext: --name= value":
+    check Getopt.load(@["--output=", "t.out"]).output == "t.out"
+    check Getopt.load(@["--output:", "t.out"]).output == "t.out"
+    check Getopt.load(@["--output="]).output == ""
+    check Getopt.load(@["--output:"]).output == ""
+    # A word starting with ``-`` is not taken; an empty word is.
+    let x = usageError(proc () = discard Getopt.load(@["--output=", "-x"]))
+    check x.kind == cekUnknownFlag
+    check x.spelling == "-x"
+    let s = Getopt.load(@["--output=", "--keep"])
+    check s.output == ""
+    check s.keep
+    let e = Getopt.load(@["--output=", ""])
+    check e.output == ""
+    check e.rest.len == 0
+    let ab = Getopt.load(@["--output=", "a", "b"])
+    check ab.output == "a"
+    check ab.rest == @["b"]
+    check Getopt.load(@["--output=", "a=b"]).output == "a=b"
+    check Getopt.load(@["--keepEnv=", "A", "--keepEnv:B", "--keepEnv:",
+      "C"]).keepEnv == @["A", "B", "C"]
+    # A switch's explicit value.
+    check Getopt.load(@["--keep=", "yes"]).keep
+    check Getopt.load(@["--keep=", "no"]).keep == false
+    let no = usageError(proc () = discard Getopt.load(@["--split=", "no"]))
+    check no.kind == cekSwitchFalseValue
+    check no.value == "no"
+    let maybe = usageError(proc () =
+      discard Getopt.load(@["--split=", "maybe"]))
+    check maybe.kind == cekInvalidValue
+    check maybe.value == "maybe"
+    let st = Getopt.load(@["--split:", "--trace"])
+    check st.split
+    check st.trace == "fast"
+    # An optional value.
+    check Getopt.load(@["--trace=", "full"]).trace == "full"
+    let tb = usageError(proc () = discard Getopt.load(@["--trace=", "bogus"]))
+    check tb.kind == cekInvalidValue
+    check tb.value == "bogus"
+    check usageError(proc () = discard Getopt.load(@["--trace="])).value == ""
+    # Unknown flags and help.
+    let ub = usageError(proc () = discard Getopt.load(@["--bogus=", "x"]))
+    check ub.kind == cekUnknownFlag
+    check ub.spelling == "--bogus"
+    check helpAsked(proc () = discard Getopt.load(@["--help=", "x"]))
+    check helpAsked(proc () = discard Getopt.load(@["--help:"]))
+    check helpAsked(proc () = discard Getopt.load(@["--output=", "x", "-h"]))
+    # The value of the flag before is never read as a flag.
+    let v = Getopt.load(@["--output", "--a=", "b"])
+    check v.output == "--a="
+    check v.rest == @["b"]
+    check Getopt.load(@["--output", "--a:", "b"]).output == "--a:"
+    # A short flag never takes the next word after ``=`` or ``:``.
+    let sh = Getopt.load(@["-o:", "t.out"])
+    check sh.output == ""
+    check sh.rest == @["t.out"]
+    # After ``--``, nothing is joined.
+    check Getopt.load(@["--", "--output=", "x"]).rest == @["--output=", "x"]
+    # The candidate records where its value came from.
+    let gr = Getopt.cliGrammar
+    let t = cliTokenize(gr, @["-k", "--output=", "a", "--keep=", "on"])
+    let o = t.candidates[idOf(gr, "output")][0]
+    check o.text == "a"
+    check o.spelling == "--output"
+    check o.argvIndex == 1
+    check o.valueArgvIndex == 2
+    let k = t.candidates[idOf(gr, "keep")]
+    check k[1].text == "true"
+    check k[1].argvIndex == 3
+    check k[1].valueArgvIndex == 4
+    # Under equalsTakesNext alone, ``:`` attaches nothing.
+    check NextOnly.load(@["--output=", "x"]).output == "x"
+    check usageError(proc () = discard NextOnly.load(@["--output:", "x"])).msg ==
+      "unknown flag '--output:' for 'next'"
+    check NextOnly.load(@["-o:x"]).output == ":x"
+
+  test "completion under colonValues and equalsTakesNext":
+    proc values(cs: seq[CliCompletion]): seq[string] =
+      for c in cs:
+        result.add(c.value)
+    check values(Getopt.complete(@["--trace:f"])) ==
+      @["--trace:fast", "--trace:full"]
+    check values(Getopt.complete(@["--trace=", ""])) == @["fast", "full"]
+    check values(Getopt.complete(@["--trace:", "fu"])) == @["full"]
+    check values(Getopt.complete(@["--keep=", ""])) == @["true", "false"]
+    check values(Getopt.complete(@["--trace=", "--ou"])) == @["--output"]
+    check values(Getopt.complete(@["--bogus=", ""])).len == 0
+    # A taken value is skipped; one that starts with ``-`` is a flag.
+    check values(Getopt.complete(@["--output=", "x", "--tr"])) ==
+      @["--trace"]
+    check values(Getopt.complete(@["--output=", "--keep", "--trace", ""])) ==
+      @["fast", "full"]
+    # The value of the flag before is not read as ``--name=``.
+    check values(Getopt.complete(@["--output", "--keep=", ""])).len == 0
+    # Without equalsTakesNext, the word after ``--keep=`` is a positional.
+    check values(ColonOnly.complete(@["--keep=", ""])).len == 0
+    check values(ColonOnly.complete(@["--keep:"])) == @["--keep:true",
+      "--keep:false"]
+
   test "the help request carries the layout CliOptions names":
     try:
       discard Rules.load(@["-h"], CliOptions(helpLayout: CliHelpLayout(
@@ -396,6 +589,11 @@ suite "test_cs_m10_parse_compat_rules":
     let j = parseJson(Rules.helpJson())
     check j["parsing"]["rules"] == %*["shortEquals", "helpWithAnyValue",
       "helpInCluster", "valueErrorsBeforeHelp", "lenientSwitchValues"]
+    check Getopt.cliModel.parseRules == {cprHelpWithAnyValue,
+      cprLenientSwitchValues, cprColonValues, cprEqualsTakesNext}
+    check parseJson(Getopt.helpJson())["parsing"]["rules"] == %*[
+      "helpWithAnyValue", "lenientSwitchValues", "colonValues",
+      "equalsTakesNext"]
     for p in j["command"]["parameters"]:
       case p["name"].getStr
       of "output": check p["placeholder"].getStr == "path"

@@ -22,6 +22,11 @@
 ## * the word after a flag that takes the next word as its value
 ##   (``format = separate``, no ``optionalValue``), or after a cluster of
 ##   short flags whose last letter takes a value, is that flag's value.
+## * under ``colonValues``, ``--flag:<partial>`` completes like
+##   ``--flag=<partial>``; under ``equalsTakesNext``, a word that does not
+##   start with ``-`` after ``--flag=`` (or ``--flag:``) is that flag's
+##   value, a switch's included (``true`` and ``false``), and a word that
+##   starts with ``-`` there is completed as a flag.
 ## * any other word is a subcommand word or a positional: the subcommands
 ##   of the command reached so far (their names, or an alias when the name
 ##   does not match what was typed), followed by the values of the
@@ -156,6 +161,11 @@ type
     optionalNext: int
       ## A bare ``acceptsNextWord`` flag whose value the next word may be,
       ## or -1.
+    attachedNext: int
+      ## Under ``equalsTakesNext``, after ``--flag=``: the flag whose value
+      ## the next word is when it does not start with ``-``; -2 when that
+      ## word is consumed but completes as nothing (an unknown flag, a
+      ## negation or a counted flag); -1 otherwise.
     positionals: int
       ## Bare words placed as positionals of the current command.
 
@@ -190,6 +200,12 @@ proc walkFlag(g: CliGrammar; w: var Walk; word: string) =
       m = cliMatchFlagWord(g, g.commands[call].params, word)
       if m.found:
         enter(g, w, call)
+  if cprEqualsTakesNext in g.parseRules and word.startsWith("--") and
+      cliValueSeparator(g, word) == word.high:
+    w.attachedNext = if m.found and not m.negated and
+                         not g.params[m.id].counted: m.id
+                     else: -2
+    return
   if m.found:
     let p = g.params[m.id]
     if not m.negated and m.attached.isNone and takesNextWord(p):
@@ -231,12 +247,16 @@ proc walkFlag(g: CliGrammar; w: var Walk; word: string) =
 
 proc walk(g: CliGrammar; words: openArray[string];
           options: CliOptions): Walk =
-  result = Walk(pendingValue: -1, optionalNext: -1)
+  result = Walk(pendingValue: -1, optionalNext: -1, attachedNext: -1)
   descend(g, result)
   for word in words:
     if result.pendingValue >= 0:
       result.pendingValue = -1
       continue
+    if result.attachedNext != -1:
+      result.attachedNext = -1
+      if word.len == 0 or word[0] != '-':
+        continue
     if result.optionalNext >= 0:
       let id = result.optionalNext
       result.optionalNext = -1
@@ -387,6 +407,11 @@ proc cliComplete*(g: CliGrammar; completers: openArray[CliCompleter];
   if w.pendingValue >= 0:
     return valueCandidates(g, completers, w.pendingValue, typed, w, before,
       switchValues = false)
+  if w.attachedNext != -1 and not typed.startsWith("-"):
+    if w.attachedNext >= 0:
+      return valueCandidates(g, completers, w.attachedNext, typed, w, before,
+        switchValues = true)
+    return @[]
   if w.optionalNext >= 0 and not typed.startsWith("-"):
     # The word after a bare ``acceptsNextWord`` flag may be its value, or
     # whatever would come next without it.

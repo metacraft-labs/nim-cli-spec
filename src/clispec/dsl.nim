@@ -51,7 +51,8 @@
 ## * Directly under ``cli:``, ``flagMatching exact | ignoreCase |
 ##   ignoreStyle`` and ``parsing <rule>, ...`` (``shortEquals``,
 ##   ``helpWithAnyValue``, ``helpInCluster``, ``valueErrorsBeforeHelp``,
-##   ``switchesRefuseFalse``, ``lenientSwitchValues``) opt into the
+##   ``switchesRefuseFalse``, ``lenientSwitchValues``, ``colonValues``,
+##   ``equalsTakesNext``) opt into the
 ##   command-line rules ``clispec/model`` documents.
 ## * ``call:`` opens the anonymous command, ``subcmd "<name>":`` a named one;
 ##   both nest. A nested scope sees the parameters its enclosing scopes
@@ -1428,7 +1429,7 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
         error("clispec: parsing is written parsing <rule>, ... (" &
           "shortEquals, helpWithAnyValue, helpInCluster, " &
           "valueErrorsBeforeHelp, switchesRefuseFalse, " &
-          "lenientSwitchValues)", stmt)
+          "lenientSwitchValues, colonValues, equalsTakesNext)", stmt)
       for k in 1 ..< stmt.len:
         var found = false
         for r in CliParseRule:
@@ -1442,8 +1443,8 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
         if not found:
           error("clispec: unknown parsing rule " & stmt[k].repr &
             " (expected shortEquals, helpWithAnyValue, helpInCluster, " &
-            "valueErrorsBeforeHelp, switchesRefuseFalse or " &
-            "lenientSwitchValues)", stmt[k])
+            "valueErrorsBeforeHelp, switchesRefuseFalse, " &
+            "lenientSwitchValues, colonValues or equalsTakesNext)", stmt[k])
     else:
       discard
   result.root = parseCliScope[C, P](body, @[], true, root, body,

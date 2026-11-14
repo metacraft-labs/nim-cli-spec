@@ -67,7 +67,9 @@
 ## in that mode when none matches exactly; ``parsing`` names
 ## ``shortEquals`` (``-o=value``), ``helpWithAnyValue`` (``--help=1``),
 ## ``helpInCluster`` (``-help``), ``valueErrorsBeforeHelp``,
-## ``switchesRefuseFalse`` and ``lenientSwitchValues``. On a flag,
+## ``switchesRefuseFalse``, ``lenientSwitchValues``, ``colonValues``
+## (``--name:value``, ``-o:value``) and ``equalsTakesNext`` (``--name=
+## value``). On a flag,
 ## ``acceptsNextWord`` lets an optional value be the next word when it is a
 ## valid value, ``refuseFalse`` makes a switch's false value the error
 ## ``cekSwitchFalseValue``, and ``alsoSets`` adds, for each occurrence, a
@@ -196,12 +198,23 @@ func matchModes(g: CliGrammar): seq[CliFlagMatching] =
   if g.flagMatching == cfmExact: @[cfmExact]
   else: @[cfmExact, g.flagMatching]
 
+func cliValueSeparator*(g: CliGrammar; word: string): int =
+  ## Where the spelling of ``word``, a ``--`` word, ends and the value
+  ## written in the same word begins: the index of its first ``=`` (under
+  ## ``colonValues``, of its first ``:`` or ``=``), or -1.
+  result = word.find('=')
+  if cprColonValues in g.parseRules:
+    let colon = word.find(':')
+    if colon >= 0 and (result < 0 or colon < result):
+      result = colon
+
 func matchLong(g: CliGrammar; scope: seq[int]; word: string): FlagMatch =
-  ## A word starting with ``--``: an exact spelling, ``<spelling>=value``,
-  ## ``--no-<longName>`` or a ``concat`` spelling followed by its value.
+  ## A word starting with ``--``: an exact spelling, ``<spelling>=value``
+  ## (or ``<spelling>:value`` under ``colonValues``), ``--no-<longName>``
+  ## or a ``concat`` spelling followed by its value.
   ## Under a ``flagMatching`` other than ``exact``, a spelling that matches
   ## in that mode is accepted when none matches exactly.
-  let eq = word.find('=')
+  let eq = cliValueSeparator(g, word)
   let head = if eq >= 0: word[0 ..< eq] else: word
   for listed in matchModes(g):
     let mode = listed
@@ -304,7 +317,7 @@ func isHelpSpelling(g: CliGrammar; scope: seq[int]; word: string;
   ## ``--help=<anything>`` asks for help too.
   if options.disableHelpFlag:
     return
-  let eq = if word.startsWith("--"): word.find('=') else: -1
+  let eq = if word.startsWith("--"): cliValueSeparator(g, word) else: -1
   let head = if eq >= 0: word[0 ..< eq] else: word
   let canonical = if head == "-h": "-h"
                   elif cliSameSpelling(g.flagMatching, head, "--help"):
@@ -499,7 +512,7 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
   var i = 0
 
   while i < argv.len:
-    let word = argv[i]
+    var word = argv[i]
     let isFlagWord = not terminated and word.len > 1 and word[0] == '-'
     if not terminated and word == "--":
       terminated = true
@@ -529,6 +542,16 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
         positionals.add((word, i))
       inc i
       continue
+
+    # ``equalsTakesNext``: ``--name= value`` is ``--name=value`` when the
+    # next word does not start with ``-``. (A word that is a flag's value
+    # never gets here: it is consumed with its flag.)
+    var joinedNext = false
+    if cprEqualsTakesNext in g.parseRules and word.startsWith("--") and
+        cliValueSeparator(g, word) == word.high and i + 1 < argv.len and
+        (argv[i + 1].len == 0 or argv[i + 1][0] != '-'):
+      word.add(argv[i + 1])
+      joinedNext = true
 
     # A flag. Help first, then the command's own flags, then (for a command
     # with subcommands and a call:) the call:'s.
@@ -580,10 +603,11 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
             break
           let p = g.params[id]
           let spelling = "-" & letter
-          let equalsValue = cprShortEquals in g.parseRules and
-            k + 1 < word.len and word[k + 1] == '='
+          let equalsValue = k + 1 < word.len and
+            ((word[k + 1] == '=' and cprShortEquals in g.parseRules) or
+             (word[k + 1] == ':' and cprColonValues in g.parseRules))
           if equalsValue:
-            # ``-o=value``: the value follows the ``=``.
+            # ``-o=value`` (``-o:value``): the value follows the ``=``.
             let text = word[k + 2 .. ^1]
             if p.counted:
               fail(cekInvalidValue, i, spelling, text, "no value")
@@ -635,8 +659,8 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
         continue
       fail(cekUnknownFlag, i, word)
     if not m.found:
-      fail(cekUnknownFlag, i,
-        (if word.find('=') > 0: word[0 ..< word.find('=')] else: word))
+      let sep = cliValueSeparator(g, word)
+      fail(cekUnknownFlag, i, (if sep > 0: word[0 ..< sep] else: word))
     let p = g.params[m.id]
     var c = CliCandidate(source: csCli, argvIndex: i, valueArgvIndex: -1,
       spelling: m.spelling)
@@ -670,6 +694,11 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
       inc i
     else:
       fail(cekMissingValue, i, m.spelling, expected = p.placeholder)
+    if joinedNext:
+      # The value is the next word.
+      if c.form == ccfValue:
+        c.valueArgvIndex = i + 1
+      inc i
     addCandidate(m.id, c)
     inc i
 

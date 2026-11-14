@@ -493,7 +493,22 @@ Directly under `cli:`:
   - `lenientSwitchValues`: a switch's explicit value is read as Nim's
     `parseBool` reads it (`y`, `yes`, `true`, `1`, `on`, and `n`, `no`,
     `false`, `0`, `off`, ignoring ASCII case and `_`), and `--flag=` is
-    true.
+    true;
+  - `colonValues`: `:` attaches a value as `=` does, `--name:value` (the
+    first `:` or `=` ends the spelling, so `--name:a=b` gives `a=b`) and
+    `-o:value` (a letter of a cluster followed by `:` takes the rest of
+    the word; a switch, an explicit value);
+  - `equalsTakesNext`: a `--` word ending with the `=` that attaches its
+    value (`--name=`, or `--name:` under `colonValues`) takes the next
+    word as that value when it does not start with `-` (an empty word is
+    a value), else the value is empty: `--output= x`, `--flag= yes`,
+    `--help= json`. A short flag does not (`-o= x` gives `-o` an empty
+    value under `shortEquals`).
+
+  Neither of the last two looks inside a word that is the value of the
+  flag before it: `-o --x:y` gives `-o` the value `--x:y`, and
+  `--output --a= b` gives `--output` the value `--a=` and leaves `b` a
+  word of its own.
 
 On a flag:
 
@@ -520,9 +535,13 @@ On a flag:
 The help side is `valueName`, `longHelp`, `help` as a constant expression
 and `CliHelpLayout` (see [Help](#help)).
 
-What still differs from that loader: `--name:value`, and `--name= value`
-(a value after a trailing `=`), are not read as its `getopt` read them; an
-unknown letter in a cluster of short flags is reported as the whole word
+What still differs from that loader: its `getopt` skips the word after a
+short option with an empty attached value (`-o=` or `-o:` followed by
+`x`), where clispec reads that word as usual; it skips blanks inside a
+word around the `=` or `:` (`"--name= x"` and `"--name :x"`, each one
+word, give `x`), where clispec keeps them; `--` is an unknown option to
+it, not the end of the flags; an unknown letter in a cluster of short
+flags is reported as the whole word
 (`-coop`), not the letter; errors decided once the whole command line is
 read (a value its type rejects, a bare word no positional accepts) come
 after the ones the tokenizer finds (an unknown flag, a refused false
@@ -541,7 +560,7 @@ const Paragraph = "A second paragraph."
 cliProgram(Rec, "rec"):
   flagMatching ignoreStyle
   parsing shortEquals, helpWithAnyValue, valueErrorsBeforeHelp,
-    switchesRefuseFalse
+    switchesRefuseFalse, colonValues, equalsTakesNext
   flag output is Option[string], short = 'o', valueName = "path",
     help = "Output file"
   flag attach is Option[string], values = ["early", "late"],
@@ -554,6 +573,9 @@ cliProgram(Rec, "rec"):
   boolFlag split is bool, help = "Split the output"
 
 assert Rec.load(@["-O=t.out"]).output == some("t.out")
+assert Rec.load(@["--output:t.out"]).output == some("t.out")
+assert Rec.load(@["--output=", "t.out"]).output == some("t.out")
+assert Rec.load(@["-o", "--x:y"]).output == some("--x:y")
 assert Rec.load(@["--legacy", "--attach=late"]).attach == some("late")
 assert Rec.load(@["--attach=late", "--legacy"]).attach == some("early")
 assert Rec.load(@["--trace", "full"]).trace == some("full")
@@ -758,7 +780,8 @@ What is offered where:
   `--flag=<partial>`, the flag's values: its closed set (`values`, or an
   enum's values), else its completer's, else `true`/`false` for a switch
   written `--flag=`. In a list with a `separator`, the element after the last
-  separator.
+  separator. Under `colonValues`, `--flag:<partial>` too; under
+  `equalsTakesNext`, a word after `--flag=` that does not start with `-`.
 - Any other word: the subcommands (a name, or an alias when the name does not
   match what was typed), then the values of the positional the word fills.
   After `--`, positionals only.
