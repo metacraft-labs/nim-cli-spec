@@ -57,6 +57,19 @@ type
     hasOptionalValue*: bool
     separator*: string
     help*: string
+    longHelp*: string
+      ## Further paragraphs of description, one per line (``longHelp``).
+    placeholder*: string
+      ## The declared ``valueName``, or empty (help then shows the closed
+      ## value set or the type's name; see ``cliPlaceholder``).
+    acceptsNextWord*: bool
+      ## ``acceptsNextWord = true``.
+    refuseFalse*: bool
+      ## ``refuseFalse = true``. Whether a switch refuses a false value is
+      ## ``cliRefusesFalse``, which also reads the program's
+      ## ``switchesRefuseFalse``.
+    alsoSets*: seq[CliGrammarAlsoSet]
+      ## ``alsoSets``, resolved to parameter ids, in declaration order.
     group*: string
     visibility*: CliVisibility
     env*: seq[string]
@@ -97,6 +110,12 @@ type
       ## The type its configuration-file value (each element, for a list)
       ## must have (generated code; ``cctInteger`` for a counted flag).
 
+  CliGrammarAlsoSet* = object
+    ## One ``alsoSets`` entry, resolved: the parameter id that also receives
+    ## a value, and the value as command-line text.
+    id*: int
+    text*: string
+
   CliGrammarCommand* = object
     ## One command: the root, a ``subcmd`` or a ``call:``.
     name*: string
@@ -136,6 +155,11 @@ type
       ## The long flags' convention (``CliModel.flagConvention``).
     fileSources*: seq[CliSourceConvention]
       ## The named file sources and their conventions.
+    flagMatching*: CliFlagMatching
+      ## How words are compared with flag spellings
+      ## (``CliModel.flagMatching``).
+    parseRules*: set[CliParseRule]
+      ## The opt-in command-line rules (``CliModel.parseRules``).
 
   CliGrammarProblem* = object
     ## A description that is a valid model but not a parseable program.
@@ -174,7 +198,9 @@ func toGrammarParam[P](p: CliParam[P]; declaredBy: int): CliGrammarParam =
     required: p.required, repeated: p.repeated, position: p.position,
     negatable: p.negatable, counted: p.counted,
     hasOptionalValue: p.optionalValue.isSet, separator: p.separator,
-    help: p.help, group: p.group, visibility: p.visibility, env: p.env,
+    help: p.help, longHelp: p.longHelp, placeholder: p.valueName,
+    acceptsNextWord: p.acceptsNextWord, refuseFalse: p.refuseFalse,
+    group: p.group, visibility: p.visibility, env: p.env,
     configKey: p.configKey, sourceKeys: p.sourceKeys, sources: p.sources,
     merge: p.merge,
     hasDefault: p.default.isSet, defaultText: displayDefault(p.default),
@@ -197,6 +223,8 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
   result.keyStyle = model.keyStyle
   result.flagConvention = model.flagConvention
   result.fileSources = model.fileSources
+  result.flagMatching = model.flagMatching
+  result.parseRules = model.parseRules
   # The model lists the scopes in post-order: each one after the scopes
   # nested inside it. Rebuild the tree with a stack: when a scope arrives,
   # the scopes directly inside it are the run of entries on top of the stack
@@ -290,6 +318,12 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
               nimIdentNormalize(implication.param):
             result.params[id].implies.add(result.commands[k].params[jj])
             result.params[id].impliesText.add(implication.value.code)
+            break
+      for a in p.alsoSets:
+        for jj, other in scope.params:
+          if nimIdentNormalize(other.name) == nimIdentNormalize(a.param):
+            result.params[id].alsoSets.add(CliGrammarAlsoSet(
+              id: result.commands[k].params[jj], text: a.text))
             break
   # Rules for parsing a program's own command line.
   for k, cmd in result.commands:
@@ -430,3 +464,25 @@ func cliConventionsJson*(g: CliGrammar): JsonNode =
   result[CliSourceFile] = %($g.keyStyle)
   for s in g.fileSources:
     result[s.source] = %($s.convention)
+
+func cliRefusesFalse*(g: CliGrammar; p: CliGrammarParam): bool =
+  ## Whether the switch ``p`` refuses an explicit false value on the command
+  ## line: its own ``refuseFalse``, or every switch's under the program's
+  ## ``switchesRefuseFalse``.
+  p.isSwitch and (p.refuseFalse or cprSwitchesRefuseFalse in g.parseRules)
+
+func cliSameSpelling*(mode: CliFlagMatching; word, spelling: string): bool =
+  ## Whether ``word`` is ``spelling`` under the matching mode ``mode``
+  ## (``CliFlagMatching``).
+  case mode
+  of cfmExact:
+    word == spelling
+  of cfmIgnoreCase:
+    cmpIgnoreCase(word, spelling) == 0
+  of cfmIgnoreStyle:
+    cmpIgnoreStyle(word, spelling) == 0
+
+func cliSameLetter*(mode: CliFlagMatching; a, b: char): bool =
+  ## Whether two short-flag letters are the same under ``mode``.
+  if mode == cfmExact: a == b
+  else: toLowerAscii(a) == toLowerAscii(b)

@@ -93,6 +93,13 @@ library.
   `clispecTests` (and for `tests/e2e_*.nim`: the Justfile's `e2e-tests`,
   the nimble `e2e` task and the `realShells: true` entries). A new test
   module goes into all three lists.
+- The `test_cs_m10_*` tests cover the opt-in features for command lines
+  that come from confutils' type-based loader: the help layout, placeholders
+  and long help (`test_cs_m10_help_layout`), each parsing rule and its
+  absence (`test_cs_m10_parse_compat_rules`), and a generic `record`-like
+  command whose parse results and options table are checked against what
+  confutils' loader and `renderOptionsTable` produced for the equivalent
+  type (`test_cs_m10_confutils_compat_record`).
 - `tests/test_cs_m9_clispec_has_no_serialization_dependency.nim` fails when
   `clispec.nimble`, `flake.nix` or `repro.nim` declares a serialization
   library or a module under `src/` imports one.

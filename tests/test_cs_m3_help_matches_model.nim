@@ -272,7 +272,12 @@ Output:
         "completer": null,
         "configKeys": {
           "file": "verbose"
-        }
+        },
+        "longHelp": "",
+        "placeholder": "bool",
+        "acceptsNextWord": false,
+        "refuseFalse": false,
+        "alsoSets": []
       },
       {
         "name": "trace",
@@ -299,7 +304,12 @@ Output:
         "completer": null,
         "configKeys": {
           "file": "trace"
-        }
+        },
+        "longHelp": "",
+        "placeholder": "string",
+        "acceptsNextWord": false,
+        "refuseFalse": false,
+        "alsoSets": []
       },
       {
         "name": "report",
@@ -328,7 +338,12 @@ Output:
         "completer": null,
         "configKeys": {
           "file": "report"
-        }
+        },
+        "longHelp": "",
+        "placeholder": "string",
+        "acceptsNextWord": false,
+        "refuseFalse": false,
+        "alsoSets": []
       },
       {
         "name": "url",
@@ -357,7 +372,12 @@ Output:
         "completer": "completeRemoteUrls",
         "configKeys": {
           "file": "remote.url"
-        }
+        },
+        "longHelp": "",
+        "placeholder": "string",
+        "acceptsNextWord": false,
+        "refuseFalse": false,
+        "alsoSets": []
       },
       {
         "name": "depth",
@@ -386,7 +406,12 @@ Output:
         "completer": null,
         "configKeys": {
           "file": "remote.depth"
-        }
+        },
+        "longHelp": "",
+        "placeholder": "int",
+        "acceptsNextWord": false,
+        "refuseFalse": false,
+        "alsoSets": []
       },
       {
         "name": "long",
@@ -416,7 +441,12 @@ Output:
         "completer": null,
         "configKeys": {
           "file": "remote.long"
-        }
+        },
+        "longHelp": "",
+        "placeholder": "bool",
+        "acceptsNextWord": false,
+        "refuseFalse": false,
+        "alsoSets": []
       }
     ],
     "commands": [
@@ -457,7 +487,12 @@ Output:
             "completer": null,
             "configKeys": {
               "file": "verbose"
-            }
+            },
+            "longHelp": "",
+            "placeholder": "bool",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
           },
           {
             "name": "trace",
@@ -484,7 +519,12 @@ Output:
             "completer": null,
             "configKeys": {
               "file": "trace"
-            }
+            },
+            "longHelp": "",
+            "placeholder": "string",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
           },
           {
             "name": "report",
@@ -513,7 +553,12 @@ Output:
             "completer": null,
             "configKeys": {
               "file": "report"
-            }
+            },
+            "longHelp": "",
+            "placeholder": "string",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
           },
           {
             "name": "url",
@@ -542,7 +587,12 @@ Output:
             "completer": "completeRemoteUrls",
             "configKeys": {
               "file": "remote.url"
-            }
+            },
+            "longHelp": "",
+            "placeholder": "string",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
           },
           {
             "name": "depth",
@@ -571,7 +621,12 @@ Output:
             "completer": null,
             "configKeys": {
               "file": "remote.depth"
-            }
+            },
+            "longHelp": "",
+            "placeholder": "int",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
           },
           {
             "name": "name",
@@ -600,7 +655,12 @@ Output:
             "completer": null,
             "configKeys": {
               "file": "remote.add.name"
-            }
+            },
+            "longHelp": "",
+            "placeholder": "string",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
           }
         ],
         "commands": []
@@ -642,7 +702,12 @@ Output:
             "completer": null,
             "configKeys": {
               "file": "verbose"
-            }
+            },
+            "longHelp": "",
+            "placeholder": "bool",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
           },
           {
             "name": "trace",
@@ -669,7 +734,12 @@ Output:
             "completer": null,
             "configKeys": {
               "file": "trace"
-            }
+            },
+            "longHelp": "",
+            "placeholder": "string",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
           },
           {
             "name": "report",
@@ -698,7 +768,12 @@ Output:
             "completer": null,
             "configKeys": {
               "file": "report"
-            }
+            },
+            "longHelp": "",
+            "placeholder": "string",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
           },
           {
             "name": "url",
@@ -727,7 +802,12 @@ Output:
             "completer": "completeRemoteUrls",
             "configKeys": {
               "file": "remote.url"
-            }
+            },
+            "longHelp": "",
+            "placeholder": "string",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
           },
           {
             "name": "depth",
@@ -756,7 +836,12 @@ Output:
             "completer": null,
             "configKeys": {
               "file": "remote.depth"
-            }
+            },
+            "longHelp": "",
+            "placeholder": "int",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
           },
           {
             "name": "all",
@@ -786,7 +871,12 @@ Output:
             "completer": null,
             "configKeys": {
               "file": "remote.prune.all"
-            }
+            },
+            "longHelp": "",
+            "placeholder": "bool",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
           }
         ],
         "commands": []
@@ -796,6 +886,10 @@ Output:
   "conventions": {
     "cli": "declared",
     "file": "declared"
+  },
+  "parsing": {
+    "flagMatching": "exact",
+    "rules": []
   }
 }
 """

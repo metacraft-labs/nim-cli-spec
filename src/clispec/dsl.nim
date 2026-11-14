@@ -38,6 +38,21 @@
 ##   ``optionalValue = <expr>``, ``negatable = true`` and
 ##   ``counted = true``. ``clispec/model`` documents what each one means and
 ##   how expressions and configuration keys are kept.
+## * Also for every parameter: ``longHelp = "<text>"`` (further paragraphs)
+##   and ``valueName = "<text>"`` (the help placeholder). ``help`` and
+##   ``longHelp`` take a constant string expression too: a literal or ``&``
+##   of literals is folded here, anything else (a ``const``, a ``when``
+##   expression) is kept as ``helpExpr`` / ``longHelpExpr`` and evaluated by
+##   the generator (``cliModelValue``). ``sources = {}`` declares a
+##   parameter no source supplies directly.
+## * And for a flag: ``acceptsNextWord = true`` (with ``optionalValue``),
+##   ``refuseFalse = true`` (a switch) and ``alsoSets = [<param> =
+##   "<text>", ...]``.
+## * Directly under ``cli:``, ``flagMatching exact | ignoreCase |
+##   ignoreStyle`` and ``parsing <rule>, ...`` (``shortEquals``,
+##   ``helpWithAnyValue``, ``helpInCluster``, ``valueErrorsBeforeHelp``,
+##   ``switchesRefuseFalse``, ``lenientSwitchValues``) opt into the
+##   command-line rules ``clispec/model`` documents.
 ## * ``call:`` opens the anonymous command, ``subcmd "<name>":`` a named one;
 ##   both nest. A nested scope sees the parameters its enclosing scopes
 ##   declared before it opened. The head takes ``help``, ``visibility`` and
@@ -82,11 +97,17 @@
 ## a non-``bool``; a counted flag that is negatable or has an
 ## ``optionalValue``; ``negatable`` or ``counted`` set to anything but
 ## ``true`` or ``false``; a flag-only argument on a positional; ``implies``
-## naming no parameter of the command, or the parameter itself; one of the
-## library's arguments given twice; two subcommands of one command answering
+## naming no parameter of the command, or the parameter itself; ``alsoSets``
+## naming no parameter of the command, the parameter itself or one parameter
+## twice, or with a value that is not a string literal; ``acceptsNextWord``
+## without ``optionalValue``; ``refuseFalse`` on a non-``bool`` or with
+## ``negatable``; ``help`` or ``longHelp`` that is not a constant string
+## expression; an unknown ``parsing`` rule or ``flagMatching`` mode; one of
+## the library's arguments given twice; two subcommands of one command answering
 ## to the same word; ``aliases`` on ``call:``; a ``help`` statement
-## inside a ``group`` section; ``keyStyle``, ``convention`` or
-## ``configSchema`` anywhere but directly under ``cli:``; an unknown
+## inside a ``group`` section; ``keyStyle``, ``convention``,
+## ``configSchema``, ``flagMatching`` or ``parsing`` anywhere but directly
+## under ``cli:``; an unknown
 ## convention, or one source's convention given twice; a ``perConvention``
 ## entry for ``declared`` or one convention given twice; a ``perSource``
 ## entry naming a file source the description does not declare, ``file``
@@ -375,6 +396,75 @@ proc cliExprOf*(node: NimNode): CliExpr =
   CliExpr(code: node.repr, sourceFile: info.filename, sourceLine: info.line,
     sourceColumn: info.column)
 
+proc constExprText(n: NimNode): string =
+  ## The source text of a constant expression, parenthesised so that
+  ## ``parseExpr`` reads it back on one line (``repr`` prints a ``when``
+  ## expression over several lines, which does not parse back).
+  case n.kind
+  of nnkPar:
+    if n.len == 1: "(" & constExprText(n[0]) & ")" else: n.repr
+  of nnkInfix:
+    "(" & constExprText(n[1]) & " " & n[0].repr & " " &
+      constExprText(n[2]) & ")"
+  of nnkPrefix:
+    n[0].repr & "(" & constExprText(n[1]) & ")"
+  of nnkStmtList, nnkStmtListExpr:
+    if n.len == 1: constExprText(n[0]) else: n.repr
+  of nnkWhenStmt, nnkIfExpr, nnkIfStmt:
+    var parts: seq[string] = @[]
+    for i, b in n:
+      if b.kind in {nnkElifBranch, nnkElifExpr}:
+        let head = if i > 0: "elif "
+                   elif n.kind == nnkWhenStmt: "when "
+                   else: "if "
+        parts.add(head & constExprText(b[0]) & ": " & constExprText(b[1]))
+      else:
+        parts.add("else: " & constExprText(b[0]))
+    "(" & parts.join(" ") & ")"
+  of nnkCall, nnkCommand:
+    var args: seq[string] = @[]
+    for a in n[1 .. ^1]:
+      args.add(constExprText(a))
+    constExprText(n[0]) & "(" & args.join(", ") & ")"
+  else:
+    n.repr
+
+proc foldStrLit(n: NimNode; folded: var string): bool =
+  ## Whether ``n`` is a string literal or ``&`` of such (parenthesised or
+  ## not); ``folded`` is then its value.
+  case n.kind
+  of nnkStrLit..nnkTripleStrLit:
+    folded = n.strVal
+    true
+  of nnkPar:
+    n.len == 1 and foldStrLit(n[0], folded)
+  of nnkInfix:
+    var a, b = ""
+    if n[0].eqIdent("&") and foldStrLit(n[1], a) and foldStrLit(n[2], b):
+      folded = a & b
+      true
+    else:
+      false
+  else:
+    false
+
+proc cliConstStr*(node: NimNode; text: var string; expr: var CliExpr) =
+  ## A text argument that may be a constant string expression (``help``,
+  ## ``longHelp``): a string literal or ``&`` of literals is folded into
+  ## ``text``; anything else (a ``const``, a ``when`` expression, ``&`` of
+  ## those) is kept in ``expr`` for a generator to evaluate at compile time
+  ## where the description is (``cliModelValue``), and ``text`` is left
+  ## empty.
+  var folded = ""
+  if foldStrLit(node, folded):
+    text = folded
+    expr = CliExpr()
+  else:
+    text = ""
+    let info = node.lineInfoObj()
+    expr = CliExpr(code: constExprText(node), sourceFile: info.filename,
+      sourceLine: info.line, sourceColumn: info.column)
+
 proc cliStrList(node: NimNode; param, what: string): seq[string] =
   ## A string literal, or a bracketed list of string literals, each
   ## non-empty.
@@ -393,7 +483,8 @@ proc cliStrList(node: NimNode; param, what: string): seq[string] =
     result.add(item.strVal)
 
 proc cliSourcesLit(node: NimNode; param: string): set[CliSource] =
-  ## ``{cli, env, file}``.
+  ## ``{cli, env, file}``; ``{}`` declares a parameter no source supplies
+  ## directly (``CliParam.sources``).
   if node.kind notin {nnkCurly, nnkBracket}:
     cliParamError(param, "sources must be a set such as {cli, env, file}, " &
       "got: " & node.repr, node)
@@ -405,8 +496,6 @@ proc cliSourcesLit(node: NimNode; param: string): set[CliSource] =
     else:
       cliParamError(param, "unknown source '" & item.repr &
         "' (expected cli, env or file)", item)
-  if result.len == 0:
-    cliParamError(param, "sources must name at least one source", node)
 
 proc cliVisibilityLit*(node: NimNode; owner: string): CliVisibility =
   ## ``shown`` / ``internal`` / ``hidden``; anything else is a compile error
@@ -499,9 +588,10 @@ proc elementTypeOf(nimType: string): string =
 const
   commonParamKeys = ["help", "default", "env", "values", "complete", "key",
     "sources", "merge", "separator", "implies", "visibility",
-    "perconvention", "persource"]
+    "perconvention", "persource", "longhelp", "valuename"]
     ## The named arguments every parameter takes, normalised.
-  flagOnlyParamKeys = ["short", "optionalvalue", "negatable", "counted"]
+  flagOnlyParamKeys = ["short", "optionalvalue", "negatable", "counted",
+    "acceptsnextword", "refusefalse", "alsosets"]
     ## The named arguments only a flag takes, normalised.
 
 proc cliConventionLit*(node: NimNode; what: string): CliConvention =
@@ -666,6 +756,7 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
   var given: seq[string] = @[]
   var requiredNode: NimNode = nil
   var keyNode, envNode, defaultNode, perSourceNode: NimNode = nil
+  var acceptsNextWordNode, refuseFalseNode: NimNode = nil
   for i in 2 ..< node.len:
     let arg = node[i]
     if arg.kind != nnkExprEqExpr:
@@ -683,7 +774,32 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
     var consumed = true
     case key
     of "help":
-      result.help = cliStrLit(value, "help")
+      cliConstStr(value, result.help, result.helpExpr)
+    of "longhelp":
+      cliConstStr(value, result.longHelp, result.longHelpExpr)
+    of "valuename":
+      result.valueName = cliStrLit(value, "valueName")
+      if result.valueName.len == 0:
+        cliParamError(name, "valueName must not be empty", value)
+    of "acceptsnextword":
+      result.acceptsNextWord = strictBoolLit(value, name, spelled)
+      acceptsNextWordNode = arg
+    of "refusefalse":
+      result.refuseFalse = strictBoolLit(value, name, spelled)
+      refuseFalseNode = arg
+    of "alsosets":
+      if value.kind != nnkBracket or value.len == 0:
+        cliParamError(name, "alsoSets must be a non-empty list such as " &
+          "[other = \"value\"], got: " & value.repr, value)
+      for item in value:
+        if item.kind != nnkExprEqExpr or
+            item[0].kind notin {nnkIdent, nnkSym, nnkAccQuoted} or
+            item[1].kind notin {nnkStrLit..nnkTripleStrLit}:
+          cliParamError(name, "alsoSets entries are written " &
+            "<parameter> = \"<value as written on the command line>\", " &
+            "got: " & item.repr, item)
+        result.alsoSets.add(CliAlsoSet(param: cliIdentText(item[0]),
+          text: item[1].strVal))
     of "default":
       result.default = cliExprOf(value)
       defaultNode = value
@@ -823,6 +939,17 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
   if result.counted and result.optionalValue.isSet:
     cliParamError(name, "a counted flag takes no value, so it cannot have " &
       "an optionalValue", node)
+  if result.acceptsNextWord and not result.optionalValue.isSet:
+    cliParamError(name, "acceptsNextWord applies to a flag with an " &
+      "optionalValue (one whose value may be left out)", acceptsNextWordNode)
+  if result.refuseFalse:
+    if tc notin {tcUnknown, tcBool}:
+      cliParamError(name, "refuseFalse applies to a switch (a bool), not " &
+        result.nimType, refuseFalseNode)
+    if result.negatable:
+      cliParamError(name, "refuseFalse and negatable contradict each " &
+        "other: a negatable switch takes a false value as --no-" &
+        result.name, refuseFalseNode)
   result.sourceFile = info.filename
   result.sourceLine = info.line
 
@@ -1091,7 +1218,7 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
       noteGroup(groups, title, groupHelp, stmt)
       walkScope[C, P](cmd, stmt[^1], title, ctx, commands, groups, helpGiven,
         childWords)
-    of "keystyle", "configschema", "convention":
+    of "keystyle", "configschema", "convention", "flagmatching", "parsing":
       # Read by ``parseCliModel`` before the scope is walked; valid only
       # directly under ``cli:``.
       if not ctx.isRoot or group.len > 0:
@@ -1165,6 +1292,28 @@ proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
           implication.param & "', which is not a parameter of " &
           cliCommandLabel(path, isRoot),
           nodeAt(param.sourceFile, param.sourceLine))
+  # ``alsoSets`` names a parameter of the same command, not itself.
+  for i in inherited ..< result.params.len:
+    let param = result.params[i]
+    var targets: seq[string] = @[]
+    for a in param.alsoSets:
+      if nimIdentNormalize(a.param) == nimIdentNormalize(param.name):
+        error("clispec: parameter '" & param.name & "': alsoSets names " &
+          "the parameter itself", nodeAt(param.sourceFile, param.sourceLine))
+      if nimIdentNormalize(a.param) in targets:
+        error("clispec: parameter '" & param.name & "': alsoSets names '" &
+          a.param & "' twice", nodeAt(param.sourceFile, param.sourceLine))
+      targets.add(nimIdentNormalize(a.param))
+      var found = false
+      for other in result.params:
+        if nimIdentNormalize(other.name) == nimIdentNormalize(a.param):
+          found = true
+          break
+      if not found:
+        error("clispec: parameter '" & param.name & "': alsoSets names '" &
+          a.param & "', which is not a parameter of " &
+          cliCommandLabel(path, isRoot),
+          nodeAt(param.sourceFile, param.sourceLine))
   if not isRoot:
     commands.add(result)
 
@@ -1199,7 +1348,7 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
   root.ext = rootExt
   # The program-wide statements come first: the conventions decide every
   # key and long flag, so they must be known before any parameter is read.
-  var fileSeen, cliSeen = false
+  var fileSeen, cliSeen, matchingSeen = false
   for stmt in body:
     case cliCalleeName(stmt).normalize
     of "keystyle":
@@ -1258,6 +1407,43 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
       result.configSchema = cliStrLit(stmt[1], "configSchema")
       if result.configSchema.len == 0:
         error("clispec: configSchema must not be empty", stmt[1])
+    of "flagmatching":
+      if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2:
+        error("clispec: flagMatching is written flagMatching exact | " &
+          "ignoreCase | ignoreStyle", stmt)
+      if matchingSeen:
+        error("clispec: flagMatching is given twice", stmt)
+      matchingSeen = true
+      var found = false
+      for m in CliFlagMatching:
+        if nimIdentNormalize(cliIdentText(stmt[1])) ==
+            nimIdentNormalize($m):
+          result.flagMatching = m
+          found = true
+      if not found:
+        error("clispec: flagMatching must be exact, ignoreCase or " &
+          "ignoreStyle, not " & stmt[1].repr, stmt[1])
+    of "parsing":
+      if stmt.kind notin {nnkCommand, nnkCall} or stmt.len < 2:
+        error("clispec: parsing is written parsing <rule>, ... (" &
+          "shortEquals, helpWithAnyValue, helpInCluster, " &
+          "valueErrorsBeforeHelp, switchesRefuseFalse, " &
+          "lenientSwitchValues)", stmt)
+      for k in 1 ..< stmt.len:
+        var found = false
+        for r in CliParseRule:
+          if stmt[k].kind in {nnkIdent, nnkSym, nnkAccQuoted} and
+              nimIdentNormalize(cliIdentText(stmt[k])) ==
+                nimIdentNormalize($r):
+            if r in result.parseRules:
+              error("clispec: parsing names " & $r & " twice", stmt[k])
+            result.parseRules.incl(r)
+            found = true
+        if not found:
+          error("clispec: unknown parsing rule " & stmt[k].repr &
+            " (expected shortEquals, helpWithAnyValue, helpInCluster, " &
+            "valueErrorsBeforeHelp, switchesRefuseFalse or " &
+            "lenientSwitchValues)", stmt[k])
     else:
       discard
   result.root = parseCliScope[C, P](body, @[], true, root, body,
@@ -1288,6 +1474,14 @@ template cliElementAccepts*(T: typedesc; value: untyped): bool =
     cliAccepts(typeof(items(default(T)), typeOfIter), value)
   else:
     cliAccepts(T, value)
+
+template cliIsConstString*(value: untyped): bool =
+  ## Whether ``value`` is a string the compiler can evaluate at compile
+  ## time. Used by the checks ``cliModelTypeChecks`` generates for ``help``
+  ## and ``longHelp`` expressions.
+  compiles((block:
+    const clispecProbe {.used.}: string = value
+    clispecProbe))
 
 proc cliFailWhenNot*(cond: NimNode; message: string; file: string; line,
                      column: int): NimNode =
@@ -1358,6 +1552,17 @@ proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
           implication.param & " = `" & v.code & "`, which is not a valid " &
           targetType & " (the type of '" & implication.param & "')",
           v.sourceFile, v.sourceLine, v.sourceColumn))
+      for (what, e) in [("help", param.helpExpr),
+                        ("longHelp", param.longHelpExpr)]:
+        if e.isSet:
+          result.add(cliFailWhenNot(newCall(bindSym("cliIsConstString"),
+            parseExpr(e.code)), prefix & what & " = `" & e.code & "` is " &
+            "not a constant string expression", e.sourceFile, e.sourceLine,
+            e.sourceColumn))
+      if param.refuseFalse:
+        result.add(cliFailWhenNot(infix(typeNode, "is", ident("bool")),
+          prefix & "refuseFalse applies to a switch (a bool), not " &
+          param.nimType, param.sourceFile, param.sourceLine, 0))
       if param.counted:
         result.add(cliFailWhenNot(infix(typeNode, "is", ident("SomeInteger")),
           prefix & "counted requires an integer type, not " & param.nimType,
@@ -1378,6 +1583,37 @@ proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
           "CliCompletionContext): seq[CliCompletion]", c.sourceFile,
           c.sourceLine, c.sourceColumn))
 
+proc cliModelValue*[C, P](model: CliModel[C, P]): NimNode =
+  ## An expression whose value is ``model`` with every ``help`` and
+  ## ``longHelp`` written as a constant expression evaluated: ``newLit``
+  ## of the model, then an assignment of each ``helpExpr`` /
+  ## ``longHelpExpr`` to its text. Place it where the description's
+  ## constants are visible (a ``const`` at the description's scope). With no
+  ## such expression it is just ``newLit(model)``.
+  var assigns: seq[NimNode] = @[]
+  let m = genSym(nskVar, "model")
+  proc fill(scope: NimNode; params: seq[CliParam[P]]) =
+    for j, p in params:
+      let slot = nnkBracketExpr.newTree(newDotExpr(scope, ident("params")),
+        newLit(j))
+      for (field, e) in [("help", p.helpExpr), ("longHelp", p.longHelpExpr)]:
+        if e.isSet:
+          let value = parseExpr(e.code)
+          value.setLineInfo(e.sourceFile, e.sourceLine, e.sourceColumn)
+          assigns.add(newAssignment(newDotExpr(slot.copyNimTree,
+            ident(field)), value))
+  fill(newDotExpr(m, ident("root")), model.root.params)
+  for k, cmd in model.commands:
+    fill(nnkBracketExpr.newTree(newDotExpr(m, ident("commands")), newLit(k)),
+      cmd.params)
+  if assigns.len == 0:
+    return newLit(model)
+  var body = newStmtList(newVarStmt(m, newLit(model)))
+  for a in assigns:
+    body.add(a)
+  body.add(m)
+  nnkBlockStmt.newTree(newEmptyNode(), body)
+
 macro plainCliModel*(body: untyped): untyped =
   ## The model of a ``cli:`` body with no extension, as a constant, after
   ## the type checks of ``cliModelTypeChecks``:
@@ -1390,12 +1626,12 @@ macro plainCliModel*(body: untyped): untyped =
     NoCliExtension())
   let checks = cliModelTypeChecks(model)
   if checks.len == 0:
-    result = newLit(model)
+    result = cliModelValue(model)
   else:
     result = nnkStmtListExpr.newTree()
     for check in checks:
       result.add(check)
-    result.add(newLit(model))
+    result.add(cliModelValue(model))
 
 # ---------------------------------------------------------------------------
 # Parameter groups.

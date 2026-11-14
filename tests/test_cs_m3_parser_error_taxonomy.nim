@@ -27,6 +27,7 @@ cliProgram(Tx, "tx"):
     flag mode is string, values = ["debug", "release"]
     flag config is string, format = equals
     boolFlag dry is bool, negatable = true
+    boolFlag split is bool, refuseFalse = true
     flag shade is Shade
     flag retries is range[0 .. 9]
     flag slots is Option[int], values = [1, 2]
@@ -69,6 +70,10 @@ const cases: array[CliErrorKind, Case] = [
   cekMissingRequired: Case(argv: @["remote", "add", "origin"],
     message: "missing required parameter '--url' of 'tx remote'",
     path: @["remote"], argvIndex: -1),
+  cekSwitchFalseValue: Case(argv: @["build", "--split=off", "app"],
+    message: "switch '--split' of 'tx build' takes no false value (got " &
+      "'--split=off'); it is on when given and off when omitted",
+    path: @["build"], argvIndex: 1),
   cekConflictingSources: Case(argv: @[],
     message: "conflicting values for '--jobs' of 'tx build': " &
       "file a.toml:3 says 2, the command line says 4",

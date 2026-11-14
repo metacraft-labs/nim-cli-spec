@@ -153,6 +153,9 @@ type
     terminated: bool
     pendingValue: int
       ## A flag whose value the next word is, or -1.
+    optionalNext: int
+      ## A bare ``acceptsNextWord`` flag whose value the next word may be,
+      ## or -1.
     positionals: int
       ## Bare words placed as positionals of the current command.
 
@@ -191,6 +194,9 @@ proc walkFlag(g: CliGrammar; w: var Walk; word: string) =
     let p = g.params[m.id]
     if not m.negated and m.attached.isNone and takesNextWord(p):
       w.pendingValue = m.id
+    elif not m.negated and m.attached.isNone and p.hasOptionalValue and
+        p.acceptsNextWord:
+      w.optionalNext = m.id
     return
   if word.startsWith("--"):
     return
@@ -203,13 +209,9 @@ proc walkFlag(g: CliGrammar; w: var Walk; word: string) =
   for scope in scopes:
     var ok = true
     var pending = -1
+    var optional = -1
     for k in 1 ..< word.len:
-      var id = -1
-      for i in countdown(g.commands[scope].params.high, 0):
-        let p = g.params[g.commands[scope].params[i]]
-        if p.kind == cpkFlag and csCli in p.sources and p.short == word[k]:
-          id = g.commands[scope].params[i]
-          break
+      let id = cliFindShort(g, g.commands[scope].params, word[k])
       if id < 0:
         ok = false
         break
@@ -217,20 +219,29 @@ proc walkFlag(g: CliGrammar; w: var Walk; word: string) =
       if takesValue(p):
         if k == word.high and not p.hasOptionalValue:
           pending = id
+        elif k == word.high and p.acceptsNextWord:
+          optional = id
         break
     if ok:
       if scope != w.node:
         enter(g, w, scope)
       w.pendingValue = pending
+      w.optionalNext = optional
       return
 
-proc walk(g: CliGrammar; words: openArray[string]): Walk =
-  result = Walk(pendingValue: -1)
+proc walk(g: CliGrammar; words: openArray[string];
+          options: CliOptions): Walk =
+  result = Walk(pendingValue: -1, optionalNext: -1)
   descend(g, result)
   for word in words:
     if result.pendingValue >= 0:
       result.pendingValue = -1
       continue
+    if result.optionalNext >= 0:
+      let id = result.optionalNext
+      result.optionalNext = -1
+      if cliAcceptsWord(g, id, word, options):
+        continue
     if not result.terminated and word == "--":
       result.terminated = true
       continue
@@ -372,10 +383,16 @@ proc cliComplete*(g: CliGrammar; completers: openArray[CliCompleter];
   let at = max(0, min(cursor, words.len))
   let before = words[0 ..< at]
   let typed = if at < words.len: words[at] else: ""
-  let w = walk(g, before)
+  let w = walk(g, before, options)
   if w.pendingValue >= 0:
     return valueCandidates(g, completers, w.pendingValue, typed, w, before,
       switchValues = false)
+  if w.optionalNext >= 0 and not typed.startsWith("-"):
+    # The word after a bare ``acceptsNextWord`` flag may be its value, or
+    # whatever would come next without it.
+    for c in valueCandidates(g, completers, w.optionalNext, typed, w, before,
+        switchValues = false):
+      result.addCandidate(c.value, c.description)
   if not w.terminated and typed.startsWith("-"):
     var found = false
     if typed.len > 1:

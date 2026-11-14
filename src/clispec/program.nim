@@ -227,6 +227,14 @@ proc cliCompletersName*(names: CliGeneratedNames): NimNode =
   ## completers, by parameter id (not exported).
   ident("cliCompletersOf" & names.typeName)
 
+proc cliValueCheckName*(names: CliGeneratedNames): NimNode =
+  ## The generated ``CliValueCheck`` of the description (not exported):
+  ## ``proc (id: int; text: string): string``, which says whether a text is
+  ## a valid value of parameter ``id``. A library that calls the parser
+  ## itself passes it in ``CliOptions.valueCheck``
+  ## (``cliWithValueCheck``), as the generated ``load`` does.
+  ident("cliValueCheckOf" & names.typeName)
+
 proc cliCommandEnumName*(names: CliGeneratedNames; command: int): string =
   ## The discriminator enum of ``command``'s object (``<Type>Command``).
   names.typeNames[command] & "Command"
@@ -514,6 +522,12 @@ proc grammarConstCode[P](ctx: GenContext; decls: seq[CliParam[P]]): NimNode =
       infix(fieldType, "is", ident("seq"))))
     body.add(newAssignment(newDotExpr(param, ident("configType")),
       newCall(ident("cliConfigTypeOf"), fieldType)))
+    for (field, e) in [("help", decl.helpExpr),
+                      ("longHelp", decl.longHelpExpr)]:
+      if e.isSet:
+        let value = parseExpr(e.code)
+        value.setLineInfo(e.sourceFile, e.sourceLine, e.sourceColumn)
+        body.add(newAssignment(newDotExpr(param, ident(field)), value))
     let elemType = newCall(ident("cliElementType"), fieldType)
     if decl.values.len > 0:
       var lit = nnkBracket.newTree()
@@ -533,6 +547,43 @@ proc grammarConstCode[P](ctx: GenContext; decls: seq[CliParam[P]]): NimNode =
   body.add(gv)
   nnkConstSection.newTree(nnkConstDef.newTree(ctx.grammarConst, newEmptyNode(),
     nnkBlockStmt.newTree(newEmptyNode(), body)))
+
+proc valueCheckProc[P](ctx: GenContext; decls: seq[CliParam[P]]): NimNode =
+  ## ``proc cliValueCheckOf<Type>(id: int; text: string): string``: the
+  ## ``CliValueCheck`` of every parameter that takes a value. Only the
+  ## rules ``acceptsNextWord`` and ``valueErrorsBeforeHelp`` call it, so a
+  ## description that uses neither gets one that accepts everything (and
+  ## its types are not asked for anything new).
+  let g = ctx.g
+  let id = ident("id")
+  let text = ident("text")
+  var needed = cprValueErrorsBeforeHelp in g.parseRules
+  for p in g.params:
+    if p.acceptsNextWord:
+      needed = true
+  var caseStmt = nnkCaseStmt.newTree(id)
+  for k, decl in decls:
+    if g.params[k].counted or not needed:
+      continue
+    let fieldType = parseExpr(g.params[k].nimType)
+    let (allowedDecl, allowed) = cliFieldAllowed(decl, fieldType)
+    caseStmt.add(nnkOfBranch.newTree(newLit(k), newStmtList(allowedDecl,
+      newAssignment(ident("result"), newCall(nnkBracketExpr.newTree(
+        ident("cliCheckValue"), fieldType,
+        newCall(ident("cliElementType"), fieldType.copyNimTree)),
+        text, allowed)))))
+  var body = newStmtList()
+  if caseStmt.len > 1:
+    caseStmt.add(nnkElse.newTree(newStmtList(nnkDiscardStmt.newTree(
+      newEmptyNode()))))
+    body.add(caseStmt)
+  else:
+    body.add(nnkDiscardStmt.newTree(id), nnkDiscardStmt.newTree(text))
+  result = newProc(cliValueCheckName(ctx.names), params = [ident("string"),
+    newIdentDefs(id, ident("int")), newIdentDefs(text, ident("string"))],
+    body = body)
+  result.addPragma(nnkExprColonExpr.newTree(ident("raises"),
+    nnkBracket.newTree()))
 
 proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
                            exported: bool): NimNode =
@@ -586,6 +637,7 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
         typeSection.add(decl)
   result.add(typeSection)
   result.add(grammarConstCode(ctx, decls))
+  result.add(valueCheckProc(ctx, decls))
   # Builders, innermost first so each one's callees are declared.
   for k in countdown(g.commands.high, 0):
     if cliHasObject(g, k):
@@ -614,6 +666,7 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
   let loadName = exportedName("load", exported)
   let helpTextName = exportedName("helpText", exported)
   let helpJsonName = exportedName("helpJson", exported)
+  let optionsTableName = exportedName("optionsTable", exported)
   let grammarName = exportedName("cliGrammar", exported)
   let prog = newLit(program)
   let modelName = exportedName("cliModel", exported)
@@ -622,7 +675,8 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
   let completionScriptName = exportedName("completionScript", exported)
   let modelConst = genSym(nskConst, typeName & "Model")
   result.add(nnkConstSection.newTree(nnkConstDef.newTree(modelConst,
-    newEmptyNode(), newLit(model))))
+    newEmptyNode(), cliModelValue(model))))
+  let valueCheck = cliValueCheckName(ctx.names)
   result.add quote do:
     proc `grammarName`(t: typedesc[`T`]): CliGrammar =
       ## The command line's grammar.
@@ -639,9 +693,10 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
       ## object. Raises ``CliUsageError`` for a command line it rejects and
       ## ``CliHelpRequest`` when help is asked for (and its subtype
       ## ``CliCompletionRequest`` when a completion script asks).
-      if cliIsCompletionRequest(argv, options):
-        cliCompletionCheck(`gc`, `completersName`(), argv, options)
-      var r = cliResolve(`gc`, argv, options)
+      let opts = cliWithValueCheck(options, `valueCheck`)
+      if cliIsCompletionRequest(argv, opts):
+        cliCompletionCheck(`gc`, `completersName`(), argv, opts)
+      var r = cliResolve(`gc`, argv, opts)
       `rootBuilder`(`gc`, r)
 
     proc `loadName`(t: typedesc[`T`]; options = CliOptions()): `T` {.
@@ -650,11 +705,20 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
       `loadName`(t, cliCommandLineParams(), options)
 
     proc `helpTextName`(t: typedesc[`T`]; path: openArray[string] = [];
-                        program = `prog`): string {.
+                        program = `prog`; layout = CliHelpLayout()): string {.
         raises: [CliUsageError].} =
       ## The human-readable help of the command reached by the subcommand
-      ## words ``path``.
-      cliHelpText(`gc`, cliHelpCommand(`gc`, path, program), program)
+      ## words ``path``, laid out by ``layout``.
+      cliHelpText(`gc`, cliHelpCommand(`gc`, path, program), program,
+        layout)
+
+    proc `optionsTableName`(t: typedesc[`T`]; path: openArray[string] = [];
+                            layout = CliHelpLayout(); group = ""): string {.
+        raises: [CliUsageError].} =
+      ## The rows of the options table of the command reached by the
+      ## subcommand words ``path`` (``cliOptionsTable``).
+      cliOptionsTable(`gc`, cliHelpCommand(`gc`, path, `prog`), layout,
+        group)
 
     proc `completeName`(t: typedesc[`T`]; words: openArray[string];
                         cursor = -1; options = CliOptions()):
@@ -663,14 +727,16 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
       ## when ``cursor`` is -1; an empty word when it is ``words.len``),
       ## ``words`` being the command line without the program name.
       let at = if cursor < 0: max(0, words.len - 1) else: cursor
-      cliComplete(`gc`, `completersName`(), words, at, options)
+      cliComplete(`gc`, `completersName`(), words, at,
+        cliWithValueCheck(options, `valueCheck`))
 
     proc `completionReplyName`(t: typedesc[`T`]; args: openArray[string];
                                options = CliOptions()): string =
       ## The answer to ``<program> __complete <args...>`` (``args`` starts
       ## with the shell's name), which ``load`` also gives through
       ## ``CliCompletionRequest``.
-      cliCompletionReply(`gc`, `completersName`(), args, options)
+      cliCompletionReply(`gc`, `completersName`(), args,
+        cliWithValueCheck(options, `valueCheck`))
 
     proc `completionScriptName`(t: typedesc[`T`]; shell: CliShell;
                                 program = `prog`; command = "";

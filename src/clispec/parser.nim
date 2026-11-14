@@ -57,6 +57,24 @@
 ## * ``--help`` and ``-h`` request help (``--help=json`` the machine-readable
 ##   form) unless the program turns them off or declares those spellings
 ##   itself.
+##
+## Opt-in rules
+## ============
+##
+## A description can opt into rules that confutils' type-based loader
+## followed (``CliFlagMatching``, ``CliParseRule`` in ``clispec/model``):
+## ``flagMatching ignoreCase | ignoreStyle`` accepts a spelling that matches
+## in that mode when none matches exactly; ``parsing`` names
+## ``shortEquals`` (``-o=value``), ``helpWithAnyValue`` (``--help=1``),
+## ``helpInCluster`` (``-help``), ``valueErrorsBeforeHelp``,
+## ``switchesRefuseFalse`` and ``lenientSwitchValues``. On a flag,
+## ``acceptsNextWord`` lets an optional value be the next word when it is a
+## valid value, ``refuseFalse`` makes a switch's false value the error
+## ``cekSwitchFalseValue``, and ``alsoSets`` adds, for each occurrence, a
+## candidate for another parameter at the same argv index (``setBy`` names
+## the flag), which the merge orders with that parameter's own. The rules
+## that need to know whether a text is a valid value use
+## ``CliOptions.valueCheck``, which the generated ``load`` supplies.
 
 import std/[options, strutils]
 
@@ -65,6 +83,14 @@ import ./[model, grammar, errors, values, help, candidates]
 export errors, values, candidates
 
 type
+  CliValueCheck* = proc (id: int; text: string): string {.raises: [].}
+    ## Whether ``text`` is a valid value of parameter ``id`` (it converts to
+    ## the parameter's type and is in its ``values``): empty when it is,
+    ## else what would have been accepted, worded as the conversion words
+    ## it (``an integer``, ``one of: a, b``). The generated ``load``
+    ## supplies one (``cliValueCheckName``); the parser uses it for
+    ## ``acceptsNextWord`` and ``valueErrorsBeforeHelp``.
+
   CliOptions* = object
     ## How a program wants its command line parsed.
     program*: string
@@ -82,6 +108,12 @@ type
     disableCompletionEntry*: bool
       ## Do not treat that word as a completion request: the program
       ## answers completion requests itself, or not at all.
+    helpLayout*: CliHelpLayout
+      ## The layout of the help text a ``CliHelpRequest`` carries
+      ## (``clispec/help``); today's layout unless set.
+    valueCheck*: CliValueCheck
+      ## The value check of the program's parameters (``CliValueCheck``).
+      ## The generated ``load`` fills it in when it is nil.
 
   CliTokens* = object
     ## What ``cliTokenize`` read from argv.
@@ -118,6 +150,13 @@ type
     exitCode*: int
     program*: string
 
+func cliWithValueCheck*(options: CliOptions;
+                        check: CliValueCheck): CliOptions =
+  ## ``options`` with ``check`` as its ``valueCheck`` unless it has one.
+  result = options
+  if result.valueCheck.isNil:
+    result.valueCheck = check
+
 func effectiveProgram(g: CliGrammar; options: CliOptions): string =
   if options.program.len > 0: options.program else: g.program
 
@@ -152,27 +191,40 @@ func findFlag(g: CliGrammar; scope: seq[int];
       return scope[i]
   -1
 
+func matchModes(g: CliGrammar): seq[CliFlagMatching] =
+  ## The matching modes to try, in order: an exact spelling always wins.
+  if g.flagMatching == cfmExact: @[cfmExact]
+  else: @[cfmExact, g.flagMatching]
+
 func matchLong(g: CliGrammar; scope: seq[int]; word: string): FlagMatch =
   ## A word starting with ``--``: an exact spelling, ``<spelling>=value``,
   ## ``--no-<longName>`` or a ``concat`` spelling followed by its value.
+  ## Under a ``flagMatching`` other than ``exact``, a spelling that matches
+  ## in that mode is accepted when none matches exactly.
   let eq = word.find('=')
   let head = if eq >= 0: word[0 ..< eq] else: word
-  let id = findFlag(g, scope, proc (p: CliGrammarParam): bool =
-    head == "--" & cliLongName(p) or head == p.alias)
-  if id >= 0:
-    result = FlagMatch(found: true, id: id, spelling: head)
-    if eq >= 0:
-      result.attached = some(word[eq + 1 .. ^1])
-    return
-  if head.startsWith("--no-"):
-    let name = head[5 .. ^1]
-    let neg = findFlag(g, scope, proc (p: CliGrammarParam): bool =
-      p.negatable and cliLongName(p) == name)
-    if neg >= 0:
-      result = FlagMatch(found: true, id: neg, spelling: head, negated: true)
+  for listed in matchModes(g):
+    let mode = listed
+    let id = findFlag(g, scope, proc (p: CliGrammarParam): bool =
+      cliSameSpelling(mode, head, "--" & cliLongName(p)) or
+        (p.alias.len > 0 and cliSameSpelling(mode, head, p.alias)))
+    if id >= 0:
+      result = FlagMatch(found: true, id: id, spelling: head)
       if eq >= 0:
         result.attached = some(word[eq + 1 .. ^1])
       return
+  for listed in matchModes(g):
+    let mode = listed
+    if head.len > 5 and cliSameSpelling(mode, head[0 .. 4], "--no-"):
+      let name = head[5 .. ^1]
+      let neg = findFlag(g, scope, proc (p: CliGrammarParam): bool =
+        p.negatable and cliSameSpelling(mode, name, cliLongName(p)))
+      if neg >= 0:
+        result = FlagMatch(found: true, id: neg, spelling: head,
+          negated: true)
+        if eq >= 0:
+          result.attached = some(word[eq + 1 .. ^1])
+        return
   var best = -1
   for i in countdown(scope.high, 0):
     let p = g.params[scope[i]]
@@ -191,18 +243,23 @@ func matchSingleDash(g: CliGrammar; scope: seq[int];
   ## A word starting with one ``-``: an exact spelling, an ``equals``
   ## spelling with ``=value`` or a ``concat`` spelling with its value. Short
   ## clusters are handled by the caller.
-  let id = findFlag(g, scope, proc (p: CliGrammarParam): bool =
-    word == p.alias or (p.short != '\0' and word == "-" & p.short))
-  if id >= 0:
-    return FlagMatch(found: true, id: id, spelling: word)
+  for listed in matchModes(g):
+    let mode = listed
+    let id = findFlag(g, scope, proc (p: CliGrammarParam): bool =
+      cliSameSpelling(mode, word, p.alias) or
+        (p.short != '\0' and cliSameSpelling(mode, word, "-" & p.short)))
+    if id >= 0:
+      return FlagMatch(found: true, id: id, spelling: word)
   let eq = word.find('=')
   if eq > 0:
     let head = word[0 ..< eq]
-    let eid = findFlag(g, scope, proc (p: CliGrammarParam): bool =
-      p.format == cafEquals and head == p.alias)
-    if eid >= 0:
-      return FlagMatch(found: true, id: eid, spelling: head,
-        attached: some(word[eq + 1 .. ^1]))
+    for listed in matchModes(g):
+      let mode = listed
+      let eid = findFlag(g, scope, proc (p: CliGrammarParam): bool =
+        p.format == cafEquals and cliSameSpelling(mode, head, p.alias))
+      if eid >= 0:
+        return FlagMatch(found: true, id: eid, spelling: head,
+          attached: some(word[eq + 1 .. ^1]))
   var best = -1
   for i in countdown(scope.high, 0):
     let p = g.params[scope[i]]
@@ -215,6 +272,17 @@ func matchSingleDash(g: CliGrammar; scope: seq[int];
     let alias = g.params[best].alias
     return FlagMatch(found: true, id: best, spelling: alias,
       attached: some(word[alias.len .. ^1]))
+
+func cliFindShort*(g: CliGrammar; scope: seq[int]; letter: char): int =
+  ## The flag of ``scope`` whose ``short`` is ``letter`` (exactly, else
+  ## under the program's ``flagMatching``), or -1.
+  for listed in matchModes(g):
+    let mode = listed
+    let id = findFlag(g, scope, proc (p: CliGrammarParam): bool =
+      p.short != '\0' and cliSameLetter(mode, p.short, letter))
+    if id >= 0:
+      return id
+  -1
 
 func cliMatchFlagWord*(g: CliGrammar; scope: seq[int];
                        word: string): FlagMatch =
@@ -231,21 +299,61 @@ func takesNoValue(p: CliGrammarParam): bool =
 func isHelpSpelling(g: CliGrammar; scope: seq[int]; word: string;
                     options: CliOptions): tuple[help, json: bool] =
   ## ``--help``, ``--help=json`` or ``-h``, unless turned off or declared
-  ## by the program for one of its own flags.
+  ## by the program for one of its own flags. ``--help`` is compared under
+  ## the program's ``flagMatching``; with ``helpWithAnyValue``,
+  ## ``--help=<anything>`` asks for help too.
   if options.disableHelpFlag:
     return
-  let head = if word.startsWith("--help="): "--help" else: word
-  if head notin ["--help", "-h"]:
+  let eq = if word.startsWith("--"): word.find('=') else: -1
+  let head = if eq >= 0: word[0 ..< eq] else: word
+  let canonical = if head == "-h": "-h"
+                  elif cliSameSpelling(g.flagMatching, head, "--help"):
+                    "--help"
+                  else: ""
+  if canonical.len == 0:
     return
   if findFlag(g, scope, proc (p: CliGrammarParam): bool =
-      head in cliFlagSpellings(p)) >= 0:
+      canonical in cliFlagSpellings(p)) >= 0:
     return
-  if word == "--help" or word == "-h":
+  if eq < 0:
     return (true, false)
-  if word == "--help=json":
+  let value = word[eq + 1 .. ^1]
+  if value == "json":
     return (true, true)
-  if word == "--help=text":
+  if value == "text" or cprHelpWithAnyValue in g.parseRules:
     return (true, false)
+
+type SwitchValue = enum
+  svTrue, svFalse, svInvalid
+
+func switchValue(g: CliGrammar; text: string): SwitchValue =
+  ## How a switch reads an explicit value: as ``parseCliValue`` reads a
+  ## ``bool``, or under ``lenientSwitchValues`` as Nim's ``parseBool``
+  ## does, with an empty value true.
+  if cprLenientSwitchValues in g.parseRules:
+    if text.len == 0:
+      return svTrue
+    case normalize(text)
+    of "y", "yes", "true", "1", "on": svTrue
+    of "n", "no", "false", "0", "off": svFalse
+    else: svInvalid
+  else:
+    case text.toLowerAscii()
+    of "true", "yes", "on", "1": svTrue
+    of "false", "no", "off", "0": svFalse
+    else: svInvalid
+
+proc cliAcceptsWord*(g: CliGrammar; id: int; text: string;
+                     options: CliOptions): bool =
+  ## Whether ``text``, the word after a bare ``acceptsNextWord`` flag, is
+  ## taken as its value: it does not start with ``-`` and is a valid value
+  ## (``options.valueCheck`` says so; without a value check, it is one of
+  ## the closed value set's texts).
+  if text.len > 0 and text[0] == '-':
+    return false
+  if not options.valueCheck.isNil:
+    return options.valueCheck(id, text).len == 0
+  text in g.params[id].choices
 
 proc cliTokenize*(g: CliGrammar; argv: openArray[string];
                   options = CliOptions()): CliTokens {.
@@ -258,6 +366,8 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
   var selected = @[0]
   var candidates = newSeq[seq[CliCandidate]](g.params.len)
   var node = 0
+  var positionals: seq[tuple[word: string, index: int]] = @[]
+    ## The bare words of the current command, in argv order.
 
   proc fail(kind: CliErrorKind; at: int; spelling: string; value = "";
             expected = "") {.raises: [CliUsageError].} =
@@ -278,9 +388,113 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
 
   proc addCandidate(id: int; c: CliCandidate) =
     candidates[id].add(c)
+    # ``alsoSets``: every occurrence (of a switch, one that sets it to true)
+    # also supplies its text to each target, at the flag's own position.
+    let p = g.params[id]
+    if p.alsoSets.len == 0 or c.form == ccfNegated:
+      return
+    if p.isSwitch and c.form == ccfValue and switchValue(g, c.text) != svTrue:
+      return
+    for a in p.alsoSets:
+      candidates[a.id].add(CliCandidate(source: csCli, form: ccfValue,
+        text: a.text, argvIndex: c.argvIndex, valueArgvIndex: -1,
+        spelling: c.spelling, setBy: p.name))
+
+  proc switchCandidate(id, at: int; spelling, text: string): CliCandidate {.
+      raises: [CliUsageError].} =
+    ## A switch written with an explicit value (``--flag=value``).
+    result = CliCandidate(source: csCli, form: ccfValue, text: text,
+      argvIndex: at, valueArgvIndex: -1, spelling: spelling)
+    let p = g.params[id]
+    let lenient = cprLenientSwitchValues in g.parseRules
+    if not lenient and not cliRefusesFalse(g, p):
+      return
+    case switchValue(g, text)
+    of svTrue:
+      if lenient:
+        result.text = "true"
+    of svFalse:
+      if cliRefusesFalse(g, p):
+        fail(cekSwitchFalseValue, at, spelling, text)
+      if lenient:
+        result.text = "false"
+    of svInvalid:
+      discard
+
+  proc checkValuesBeforeHelp() {.raises: [CliUsageError].} =
+    ## ``valueErrorsBeforeHelp``: the earliest value written so far that
+    ## its parameter rejects, or bare word no positional accepts, reported
+    ## as the conversion (or the placement of positionals) would report it.
+    if cprValueErrorsBeforeHelp notin g.parseRules or
+        options.valueCheck.isNil:
+      return
+    var found = false
+    var bestAt, bestId = 0
+    var bestCand: CliCandidate
+    var bestText, bestExpected = ""
+    for id in 0 ..< candidates.len:
+      let p = g.params[id]
+      if p.counted:
+        continue
+      for c in candidates[id]:
+        if c.form != ccfValue or (found and c.argvIndex >= bestAt):
+          continue
+        let pieces = if p.separator.len > 0 and not c.verbatim:
+                       c.text.split(p.separator)
+                     else: @[c.text]
+        for piece in pieces:
+          let expected = options.valueCheck(id, piece)
+          if expected.len > 0:
+            found = true
+            bestAt = c.argvIndex
+            bestId = id
+            bestCand = c
+            bestText = piece
+            bestExpected = expected
+            break
+    # The bare words read so far, when the command's positionals take them
+    # in a fixed order (it has no list positional): a word no positional
+    # accepts, or one its positional rejects. With a list positional, which
+    # positional a word fills depends on the words not read yet.
+    let slots = cliPositionals(g, node)
+    var fixed = g.commands[node].children.len == 0
+    for id in slots:
+      if g.params[id].repeated or g.params[id].isList:
+        fixed = false
+    if fixed:
+      for k, w in positionals:
+        if found and w.index >= bestAt:
+          break
+        if k >= slots.len:
+          fail(cekUnexpectedPositional, w.index, w.word)
+        let p = g.params[slots[k]]
+        let pieces = if p.separator.len > 0: w.word.split(p.separator)
+                     else: @[w.word]
+        for piece in pieces:
+          let expected = options.valueCheck(slots[k], piece)
+          if expected.len > 0:
+            raise newCliUsageError(cekInvalidValue, program,
+              g.commands[p.declaredBy].path, w.index, cliDisplayName(p),
+              piece, expected, exitCode = exitCode)
+    if found:
+      let p = g.params[bestId]
+      let spelling = if bestCand.spelling.len > 0: bestCand.spelling
+                     else: cliDisplayName(p)
+      let index = if bestCand.valueArgvIndex >= 0: bestCand.valueArgvIndex
+                  else: bestCand.argvIndex
+      raise newCliUsageError(cekInvalidValue, program,
+        g.commands[p.declaredBy].path, index, spelling, bestText,
+        bestExpected, exitCode = exitCode)
+
+  proc requestHelp(json: bool) {.raises: [CliUsageError, CliHelpRequest].} =
+    checkValuesBeforeHelp()
+    let path = g.commands[node].path
+    let text = if json: cliHelpJson(g, node, program)
+               else: cliHelpText(g, node, program, options.helpLayout)
+    raise (ref CliHelpRequest)(msg: "help requested", commandPath: path,
+      json: json, text: text)
 
   descend()
-  var positionals: seq[tuple[word: string, index: int]] = @[]
   var terminated = false
   var i = 0
 
@@ -315,11 +529,7 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
     let scope = g.commands[node].params
     let helpAsk = isHelpSpelling(g, scope, word, options)
     if helpAsk.help:
-      let path = g.commands[node].path
-      let text = if helpAsk.json: cliHelpJson(g, node, program)
-                 else: cliHelpText(g, node, program)
-      raise (ref CliHelpRequest)(msg: "help requested", commandPath: path,
-        json: helpAsk.json, text: text)
+      requestHelp(helpAsk.json)
     var m = if word.startsWith("--"): matchLong(g, scope, word)
             else: matchSingleDash(g, scope, word)
     if not m.found and g.commands[node].children.len > 0 and
@@ -349,13 +559,35 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
         var consumedNext = false
         while k < word.len:
           let letter = word[k]
-          let id = findFlag(g, clusterScope, proc (p: CliGrammarParam): bool =
-            p.short == letter)
+          let id = cliFindShort(g, clusterScope, letter)
           if id < 0:
+            if letter == 'h' and attempt == 0 and
+                cprHelpInCluster in g.parseRules and
+                not options.disableHelpFlag and
+                (callNode < 0 or cliFindShort(g, scopes[^1], 'h') < 0):
+              # ``-help``, ``-vh``: the letters before it count, the rest
+              # of the word is not read.
+              for item in pending:
+                addCandidate(item.id, item.c)
+              requestHelp(false)
             ok = false
             break
           let p = g.params[id]
           let spelling = "-" & letter
+          let equalsValue = cprShortEquals in g.parseRules and
+            k + 1 < word.len and word[k + 1] == '='
+          if equalsValue:
+            # ``-o=value``: the value follows the ``=``.
+            let text = word[k + 2 .. ^1]
+            if p.counted:
+              fail(cekInvalidValue, i, spelling, text, "no value")
+            if p.isSwitch:
+              pending.add((id, switchCandidate(id, i, spelling, text)))
+            else:
+              pending.add((id, CliCandidate(source: csCli, form: ccfValue,
+                text: text, argvIndex: i, valueArgvIndex: -1,
+                spelling: spelling)))
+            break
           if takesNoValue(p):
             pending.add((id, CliCandidate(source: csCli,
               form: (if p.counted: ccfCount else: ccfBare), argvIndex: i,
@@ -368,15 +600,22 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
               text: rest, argvIndex: i, valueArgvIndex: -1,
               spelling: spelling)))
           elif p.hasOptionalValue:
-            pending.add((id, CliCandidate(source: csCli, form: ccfBare,
-              argvIndex: i, valueArgvIndex: -1, spelling: spelling)))
+            if p.acceptsNextWord and i + 1 < argv.len and
+                cliAcceptsWord(g, id, argv[i + 1], options):
+              pending.add((id, CliCandidate(source: csCli, form: ccfValue,
+                text: argv[i + 1], argvIndex: i, valueArgvIndex: i + 1,
+                spelling: spelling)))
+              consumedNext = true
+            else:
+              pending.add((id, CliCandidate(source: csCli, form: ccfBare,
+                argvIndex: i, valueArgvIndex: -1, spelling: spelling)))
           elif i + 1 < argv.len:
             pending.add((id, CliCandidate(source: csCli, form: ccfValue,
               text: argv[i + 1], argvIndex: i, valueArgvIndex: i + 1,
               spelling: spelling)))
             consumedNext = true
           else:
-            fail(cekMissingValue, i, spelling)
+            fail(cekMissingValue, i, spelling, expected = p.placeholder)
           break
         if ok and pending.len > 0:
           if attempt == 1:
@@ -402,19 +641,29 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
     elif m.attached.isSome:
       if p.counted:
         fail(cekInvalidValue, i, m.spelling, m.attached.get, "no value")
-      c.form = ccfValue
-      c.text = m.attached.get
+      if p.isSwitch:
+        c = switchCandidate(m.id, i, m.spelling, m.attached.get)
+      else:
+        c.form = ccfValue
+        c.text = m.attached.get
     elif takesNoValue(p):
       c.form = if p.counted: ccfCount else: ccfBare
     elif p.hasOptionalValue:
-      c.form = ccfBare
+      if p.acceptsNextWord and i + 1 < argv.len and
+          cliAcceptsWord(g, m.id, argv[i + 1], options):
+        c.form = ccfValue
+        c.text = argv[i + 1]
+        c.valueArgvIndex = i + 1
+        inc i
+      else:
+        c.form = ccfBare
     elif p.format == cafSeparate and i + 1 < argv.len:
       c.form = ccfValue
       c.text = argv[i + 1]
       c.valueArgvIndex = i + 1
       inc i
     else:
-      fail(cekMissingValue, i, m.spelling)
+      fail(cekMissingValue, i, m.spelling, expected = p.placeholder)
     addCandidate(m.id, c)
     inc i
 
@@ -584,6 +833,49 @@ proc restrictTo[E](g: CliGrammar; r: CliResolution; id: int;
     for a in allowed:
       texts.add(cliValueText(a))
     invalid(g, r, id, c, text, "one of: " & texts.join(", "))
+
+proc cliCheckValue*[T, E](text: string; allowed: openArray[E]): string {.
+    raises: [].} =
+  ## Whether ``text`` is a valid value of a parameter of type ``T`` whose
+  ## closed value set is ``allowed`` (empty when open), as the conversion
+  ## (``cliConvertCandidates``) would decide it for one candidate (one
+  ## element of a list): empty when it is, else what would have been
+  ## accepted. The generated ``CliValueCheck`` calls it.
+  mixin parseCliValue
+  when T is seq:
+    var item: E
+    try:
+      parseCliValue(text, item)
+    except CliValueError as e:
+      return e.expected
+    except ValueError:
+      return cliTypeDescription(E)
+    if allowed.len > 0 and item notin allowed:
+      var texts: seq[string] = @[]
+      for a in allowed:
+        texts.add(cliValueText(a))
+      return "one of: " & texts.join(", ")
+  else:
+    var value: T
+    try:
+      parseCliValue(text, value)
+    except CliValueError as e:
+      return e.expected
+    except ValueError:
+      return cliTypeDescription(T)
+    var v: E
+    when T is Option:
+      if value.isNone:
+        return ""
+      v = value.get
+    else:
+      v = value
+    if allowed.len > 0 and v notin allowed:
+      var texts: seq[string] = @[]
+      for a in allowed:
+        texts.add(cliValueText(a))
+      return "one of: " & texts.join(", ")
+  ""
 
 template cliElementType*(T: typedesc): typedesc =
   ## The type of one value of a parameter of type ``T``: the element of a

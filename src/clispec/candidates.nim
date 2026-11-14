@@ -56,6 +56,10 @@ type
       ## For a candidate another library supplied: an index into that
       ## library's own record of where the candidate came from. Unused for
       ## the command line, which ``argvIndex`` and ``spelling`` locate.
+    setBy*: string
+      ## The name of the flag whose ``alsoSets`` supplied the candidate (its
+      ## ``spelling`` and ``argvIndex`` are that flag's occurrence); empty
+      ## for a value written for the parameter itself.
     described*: string
       ## Where the candidate came from, in words, for an error about its
       ## value (``environment variable TOOL_JOBS``); empty for the command

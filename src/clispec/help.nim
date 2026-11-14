@@ -48,7 +48,16 @@
 ##
 ## Sections appear only when they have entries. Flags without a ``group``
 ## come under ``Options:``, then each ``group`` section in the order the
-## groups were first declared. The text is not wrapped.
+## groups were first declared. A value's placeholder is the declared
+## ``valueName``, else the closed value set, else the type's name; a
+## parameter's ``longHelp`` paragraphs follow its description, one per line.
+##
+## ``CliHelpLayout`` sets the indent, the description column, the width
+## descriptions are wrapped to, a row for the help flag, the list marker,
+## the order of a long alias and the notes; its defaults are the layout
+## above, in which nothing is wrapped. ``cliOptionsTable`` renders just the
+## rows of a command's options table, for a program that writes the rest of
+## its help screen itself.
 ##
 ## Machine-readable form (schema ``clispec-help/1``)
 ## =================================================
@@ -68,7 +77,12 @@
 ## "list", "separator" (string or null), "counted", "required", "default"
 ## (string or null), "env", "help", "group" (string or null), "visibility",
 ## "position" (positional only), "declaredIn", "dynamicCompletion",
-## "completer" (string or null), "configKeys"}``. ``conventions`` names the
+## "completer" (string or null), "configKeys", "longHelp", "placeholder",
+## "acceptsNextWord", "refuseFalse", "alsoSets" ([{"param", "value"}])}``,
+## and after ``conventions`` the document ends with ``"parsing":
+## {"flagMatching", "rules"}`` (the description's ``flagMatching`` mode and
+## ``parsing`` rules). ``placeholder`` is what help shows between ``<`` and
+## ``>`` (``valueName`` stays the type's name). ``conventions`` names the
 ## naming convention of the command line (``cli``), of every configuration
 ## file (``file``) and of each named file source; ``configKeys`` is a
 ## parameter's key in each of those file sources (``{}`` when no file may
@@ -88,6 +102,40 @@
 import std/[json, strutils]
 
 import ./[model, grammar]
+
+type
+  CliHelpLayout* = object
+    ## How the human-readable help lays its tables out. Every field's
+    ## default is today's layout, so ``CliHelpLayout()`` renders exactly
+    ## what ``cliHelpText`` always has.
+    indent*: int = 2
+      ## Spaces before the left column (the flag spellings).
+    column*: int = 0
+      ## The column the description starts at, counted from the start of
+      ## the line. 0 (the default) sizes it to the table: two spaces after
+      ## the widest left entry of at most ``maxLeft`` characters. With a
+      ## fixed column, a left entry that leaves fewer than two spaces before
+      ## it puts the description on the next line, at the column.
+    maxLeft*: int = 32
+      ## With ``column = 0``: the widest left entry the column is sized to;
+      ## a wider one puts its description on the next line.
+    width*: int = 0
+      ## The line width descriptions are word-wrapped to (0, the default:
+      ## not wrapped). Words are separated by white space and joined by one
+      ## space; a word longer than the line is kept whole.
+    helpFlag*: string = ""
+      ## When not empty, the options table ends with a row for the help
+      ## flag (``-h, --help``, the spellings that request help) with this
+      ## description.
+    listMarker*: bool = true
+      ## A list flag's placeholder is followed by ``...``
+      ## (``--tag <string>...``).
+    canonicalFirst*: bool = false
+      ## The canonical ``--<name>`` is listed before a long ``alias``
+      ## (``--cooperative, --coop``); by default the alias comes first.
+    notes*: bool = true
+      ## A description ends with ``[required]``, ``[default: x]`` and
+      ## ``[env: X]`` where they apply.
 
 func helpHolder(g: CliGrammar; command: int): int =
   ## The command whose help documents ``command``: a call:'s holder.
@@ -142,8 +190,12 @@ func elementTypeName(nimType: string): string =
     if result.startsWith(prefix) and result.endsWith("]"):
       result = result[prefix.len .. ^2].strip()
 
-func valuePlaceholder(p: CliGrammarParam): string =
-  if p.choices.len > 0: p.choices.join("|")
+func cliPlaceholder*(p: CliGrammarParam): string =
+  ## What help shows between ``<`` and ``>`` for a value: the declared
+  ## ``valueName``, else the closed value set joined with ``|``, else the
+  ## element type's name.
+  if p.placeholder.len > 0: p.placeholder
+  elif p.choices.len > 0: p.choices.join("|")
   else: elementTypeName(p.valueName)
 
 func takesValue(p: CliGrammarParam): string =
@@ -152,23 +204,39 @@ func takesValue(p: CliGrammarParam): string =
   elif p.hasOptionalValue: "optional"
   else: "required"
 
-func flagLeft(p: CliGrammarParam): string =
+func flagLeft(p: CliGrammarParam; layout: CliHelpLayout): string =
   ## ``-j, --jobs <int>``, ``--[no-]verbose``, ``-l<string>, --libs=<string>``.
-  let v = "<" & valuePlaceholder(p) & ">" &
+  let v = "<" & cliPlaceholder(p) & ">" &
     (if p.separator.len > 0: "[" & p.separator & "...]"
-     elif p.isList: "..."
+     elif p.isList and layout.listMarker: "..."
      else: "")
   let kind = takesValue(p)
   var parts: seq[string] = @[]
   if p.short != '\0':
     parts.add("-" & p.short)
+  var aliasPart = ""
   if p.alias.len > 0 and p.alias != "--" & cliLongName(p):
     if p.format == cafConcat and kind == "required":
-      parts.add(p.alias & v)
+      aliasPart = p.alias & v
     else:
-      parts.add(p.alias)
+      aliasPart = p.alias
+  let aliasAfter = layout.canonicalFirst and aliasPart.startsWith("--") and
+    p.format != cafConcat
+  if aliasPart.len > 0 and not aliasAfter:
+    parts.add(aliasPart)
   let long = if p.negatable: "--[no-]" & cliLongName(p)
              else: "--" & cliLongName(p)
+  if aliasAfter:
+    # ``--cooperative, --coop``: the placeholder closes the column.
+    parts.add(long)
+    parts.add(aliasPart)
+    case kind
+    of "none": discard
+    of "optional": parts[^1].add("[=" & v & "]")
+    else:
+      if p.format == cafSeparate: parts[^1].add(" " & v)
+      else: parts[^1].add("=" & v)
+    return parts.join(", ")
   case kind
   of "none":
     parts.add(long)
@@ -183,17 +251,28 @@ func positionalLeft(p: CliGrammarParam): string =
   let core = "<" & p.name & ">" & (if p.repeated or p.isList: "..." else: "")
   if p.required: core else: "[" & core & "]"
 
-func notes(p: CliGrammarParam): string =
+func notes(p: CliGrammarParam; layout: CliHelpLayout): string =
   var parts: seq[string] = @[]
   if p.help.len > 0:
     parts.add(p.help)
-  if p.required and p.kind == cpkFlag:
-    parts.add("[required]")
-  if p.hasDefault:
-    parts.add("[default: " & p.defaultText & "]")
-  if p.env.len > 0:
-    parts.add("[env: " & p.env.join(", ") & "]")
+  if layout.notes:
+    if p.required and p.kind == cpkFlag:
+      parts.add("[required]")
+    if p.hasDefault:
+      parts.add("[default: " & p.defaultText & "]")
+    if p.env.len > 0:
+      parts.add("[env: " & p.env.join(", ") & "]")
   parts.join(" ")
+
+func paragraphs(p: CliGrammarParam; layout: CliHelpLayout): seq[string] =
+  ## A parameter's description: ``help`` with its notes, then each
+  ## non-blank line of ``longHelp``.
+  let first = notes(p, layout)
+  if first.len > 0:
+    result.add(first)
+  for line in p.longHelp.splitLines():
+    if line.strip().len > 0:
+      result.add(line)
 
 func cliUsageLine*(g: CliGrammar; command: int; program: string): string =
   ## ``tool build [options] <target>``.
@@ -219,26 +298,99 @@ func cliUsageLine*(g: CliGrammar; command: int; program: string): string =
       words.add(positionalLeft(g.params[id]))
   words.join(" ")
 
-func table(rows: seq[tuple[left, right: string]]): seq[string] =
-  ## Two columns: the left one padded to its widest entry (at most 32
-  ## characters; a longer entry puts its text on the next line).
-  const maxLeft = 32
-  var width = 0
-  for row in rows:
-    if row.left.len <= maxLeft:
-      width = max(width, row.left.len)
-  for row in rows:
-    if row.right.len == 0:
-      result.add("  " & row.left)
-    elif row.left.len > maxLeft:
-      result.add("  " & row.left)
-      result.add("  " & repeat(' ', width + 2) & row.right)
-    else:
-      result.add("  " & row.left & repeat(' ', width - row.left.len + 2) &
-        row.right)
+func wrapInto(dest: var seq[string]; text: string; indent, width: int) =
+  ## ``text`` word-wrapped to ``width`` columns, each line indented by
+  ## ``indent`` spaces; a word longer than the line is kept whole.
+  var line = ""
+  for word in text.splitWhitespace():
+    if line.len > 0 and indent + line.len + 1 + word.len > width:
+      dest.add(repeat(' ', indent) & line)
+      line = ""
+    if line.len > 0:
+      line.add(' ')
+    line.add(word)
+  if line.len > 0:
+    dest.add(repeat(' ', indent) & line)
 
-proc cliHelpText*(g: CliGrammar; command: int; program: string): string =
-  ## The human-readable help of ``command`` (see the module documentation).
+type HelpRow = tuple[left: string, right: seq[string]]
+  ## One row of a table: the left column and the description's paragraphs.
+
+func table(rows: seq[HelpRow]; layout: CliHelpLayout): seq[string] =
+  ## Two columns (see ``CliHelpLayout``): by default the left one padded to
+  ## its widest entry (at most 32 characters; a longer entry puts its text
+  ## on the next line), each paragraph of the description on a line of its
+  ## own.
+  let pad = repeat(' ', layout.indent)
+  var column = layout.column
+  if column <= 0:
+    var width = 0
+    for row in rows:
+      if row.left.len <= layout.maxLeft:
+        width = max(width, row.left.len)
+    column = layout.indent + width + 2
+  for row in rows:
+    var body: seq[string] = @[]
+    for paragraph in row.right:
+      if layout.width > 0:
+        body.wrapInto(paragraph, column, layout.width)
+      else:
+        body.add(repeat(' ', column) & paragraph)
+    let left = pad & row.left
+    let beside = if layout.column <= 0: row.left.len <= layout.maxLeft
+                 else: left.len + 1 < column
+    if body.len == 0:
+      result.add(left)
+    elif beside:
+      result.add(left & repeat(' ', column - left.len) &
+        body[0][column .. ^1])
+      for line in body[1 .. ^1]:
+        result.add(line)
+    else:
+      result.add(left)
+      for line in body:
+        result.add(line)
+
+func helpFlagLeft(g: CliGrammar; command: int): string =
+  ## The spellings that request help in ``command`` (``-h, --help``), for
+  ## ``CliHelpLayout.helpFlag``; a spelling a flag of the command declares
+  ## does not.
+  var spellings: seq[string] = @[]
+  for s in ["-h", "--help"]:
+    var claimed = false
+    for id in g.commands[command].params:
+      if g.params[id].kind == cpkFlag and s in cliFlagSpellings(g.params[id]):
+        claimed = true
+    if not claimed:
+      spellings.add(s)
+  spellings.join(", ")
+
+func optionRows(g: CliGrammar; holder: int; params: seq[int];
+                section: string; layout: CliHelpLayout): seq[HelpRow] =
+  for id in params:
+    let p = g.params[id]
+    if p.kind == cpkFlag and p.group == section:
+      result.add((flagLeft(p, layout), paragraphs(p, layout)))
+  if section.len == 0 and layout.helpFlag.len > 0:
+    let left = helpFlagLeft(g, holder)
+    if left.len > 0:
+      result.add((left, @[layout.helpFlag]))
+
+proc cliOptionsTable*(g: CliGrammar; command: int;
+                      layout = CliHelpLayout(); group = ""): string =
+  ## Just the rows of the options table of ``command``'s help, laid out by
+  ## ``layout``: the flags of the section ``group`` (empty: the flags in no
+  ## group, under ``Options:``, followed by the help flag's row when
+  ## ``layout.helpFlag`` is set), one line per output line, each ending
+  ## with a newline. Empty when the section has no rows.
+  let holder = helpHolder(g, command)
+  let rows = optionRows(g, holder, cliHelpParams(g, holder), group, layout)
+  for line in table(rows, layout):
+    result.add(line & "\n")
+
+proc cliHelpText*(g: CliGrammar; command: int; program: string;
+                  layout = CliHelpLayout()): string =
+  ## The human-readable help of ``command`` (see the module documentation),
+  ## its tables laid out by ``layout``.
   let holder = helpHolder(g, command)
   let cmd = g.commands[holder]
   var lines = @["Usage: " & cliUsageLine(g, holder, program)]
@@ -253,33 +405,31 @@ proc cliHelpText*(g: CliGrammar; command: int; program: string): string =
     lines.add("Aliases: " & cmd.aliases.join(", "))
   let children = cliHelpCommands(g, holder)
   if children.len > 0:
-    var rows: seq[tuple[left, right: string]] = @[]
+    var rows: seq[HelpRow] = @[]
     for child in children:
       let c = g.commands[child]
-      rows.add(((@[c.name] & c.aliases).join(", "), c.help))
+      rows.add(((@[c.name] & c.aliases).join(", "),
+        (if c.help.len > 0: @[c.help] else: @[])))
     lines.add("")
     lines.add("Commands:")
-    lines.add(table(rows))
+    lines.add(table(rows, layout))
   let params = cliHelpParams(g, holder)
-  var positional: seq[tuple[left, right: string]] = @[]
+  var positional: seq[HelpRow] = @[]
   let target = if cmd.callChild >= 0: cmd.callChild else: holder
   for id in cliPositionals(g, target):
     if id in params:
-      positional.add((positionalLeft(g.params[id]), notes(g.params[id])))
+      positional.add((positionalLeft(g.params[id]),
+        paragraphs(g.params[id], layout)))
   if positional.len > 0:
     lines.add("")
     lines.add("Arguments:")
-    lines.add(table(positional))
+    lines.add(table(positional, layout))
   # Ungrouped flags, then each group in declaration order.
   var sections = @[""]
   for group in g.groups:
     sections.add(group.name)
   for section in sections:
-    var rows: seq[tuple[left, right: string]] = @[]
-    for id in params:
-      let p = g.params[id]
-      if p.kind == cpkFlag and p.group == section:
-        rows.add((flagLeft(p), notes(p)))
+    let rows = optionRows(g, holder, params, section, layout)
     if rows.len == 0:
       continue
     lines.add("")
@@ -289,11 +439,11 @@ proc cliHelpText*(g: CliGrammar; command: int; program: string): string =
       lines.add(section & ":")
       for group in g.groups:
         if group.name == section and group.help.len > 0:
-          lines.add("  " & group.help)
-    lines.add(table(rows))
+          lines.add(repeat(' ', layout.indent) & group.help)
+    lines.add(table(rows, layout))
   lines.join("\n") & "\n"
 
-func paramJson(p: CliGrammarParam): JsonNode =
+func paramJson(g: CliGrammar; p: CliGrammarParam): JsonNode =
   result = newJObject()
   result["name"] = %p.name
   result["kind"] = %(if p.kind == cpkFlag: "flag" else: "positional")
@@ -322,6 +472,14 @@ func paramJson(p: CliGrammarParam): JsonNode =
   result["dynamicCompletion"] = %p.hasCompleter
   result["completer"] = if p.hasCompleter: %p.completer else: newJNull()
   result["configKeys"] = cliConfigKeysJson(p)
+  result["longHelp"] = %p.longHelp
+  result["placeholder"] = %cliPlaceholder(p)
+  result["acceptsNextWord"] = %p.acceptsNextWord
+  result["refuseFalse"] = %cliRefusesFalse(g, p)
+  var also = newJArray()
+  for a in p.alsoSets:
+    also.add(%*{"param": g.params[a.id].name, "value": a.text})
+  result["alsoSets"] = also
 
 proc commandJson(g: CliGrammar; command: int; program: string): JsonNode =
   let holder = helpHolder(g, command)
@@ -338,7 +496,7 @@ proc commandJson(g: CliGrammar; command: int; program: string): JsonNode =
   result["usage"] = %cliUsageLine(g, holder, program)
   var params = newJArray()
   for id in cliHelpParams(g, holder, machineReadable = true):
-    params.add(paramJson(g.params[id]))
+    params.add(paramJson(g, g.params[id]))
   result["parameters"] = params
   var children = newJArray()
   for child in cliHelpCommands(g, holder):
@@ -352,6 +510,10 @@ proc cliHelpJsonNode*(g: CliGrammar; command: int; program: string): JsonNode =
   result["program"] = %program
   result["command"] = commandJson(g, command, program)
   result["conventions"] = cliConventionsJson(g)
+  var rules = newJArray()
+  for r in g.parseRules:
+    rules.add(%($r))
+  result["parsing"] = %*{"flagMatching": $g.flagMatching, "rules": rules}
 
 proc cliHelpJson*(g: CliGrammar; command: int; program: string): string =
   ## The machine-readable help of ``command``, pretty-printed (see the module

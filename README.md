@@ -128,13 +128,15 @@ Every parameter accepts:
 
 | Argument                                                         | Meaning                                                                                                                                                                                                                                                                          |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `help = "<text>"`                                                | the description shown by help and completion                                                                                                                                                                                                                                     |
+| `help = "<text>"`                                                | the description shown by help and completion; a constant string expression too (a `const`, `&` of literals and constants, a `when` expression), evaluated at compile time where the description is                                                                                |
+| `longHelp = "<text>"`                                            | further paragraphs of description, one per line, shown below `help` (a constant string expression too)                                                                                                                                                                            |
+| `valueName = "<text>"`                                           | the placeholder help shows for the value (`--output <path>`) instead of the closed value set or the type's name; a missing value's error carries it in `expected`                                                                                                                  |
 | `default = <expr>`                                               | the value when no source supplies one; not together with `required = true`. A positional with a default is optional                                                                                                                                                              |
 | `env = ["NAME", ...]`                                            | the environment variables that supply the value, first match wins (one name may be written without brackets)                                                                                                                                                                     |
 | `values = [a, b, c]`                                             | the closed set of accepted values (elements, for a list); an enum type is a closed set by itself                                                                                                                                                                                 |
 | `complete = <completer>`                                         | a `CliCompleter` that completes the value dynamically (see [Shell completion](#shell-completion))                                                                                                                                                                                |
 | `key = "section.name"`                                           | the configuration-file key, replacing the derived one                                                                                                                                                                                                                            |
-| `sources = {cli, env, file}`                                     | which sources may supply the value (default: all three)                                                                                                                                                                                                                          |
+| `sources = {cli, env, file}`                                     | which sources may supply the value (default: all three). `sources = {}`: none does directly; the parameter has no spelling and no key, and gets its value from another flag's `alsoSets`, an `implies` or its `default`                                                         |
 | `merge = replace \| append \| errorOnConflict \| <combine proc>` | how values from several sources combine: the highest source wins (a list repeated within one source collects); lists are concatenated lowest source first; two different values are an error; or a proc of yours receives every source's value (applied by confutils, which merges the sources)                     |
 | `separator = ","`                                                | a list may be given as one delimited value                                                                                                                                                                                                                                       |
 | `implies = [<param> = <value>, ...]`                             | setting this parameter sets the others unless they are given explicitly                                                                                                                                                                                                          |
@@ -144,7 +146,14 @@ A flag also accepts `short = 'x'` (a one-letter spelling, `-x`, beside
 `--<name>`), `optionalValue = <expr>` (the flag may appear bare, taking this
 value, or as `--flag=value`; it never takes the next word), `negatable = true`
 (`--no-<name>` sets a `bool` to false) and `counted = true` (`-v`, `-vv`: an
-integer counting the occurrences).
+integer counting the occurrences). Three more are opt-in rules that
+confutils' type-based loader followed (see
+[Command lines from confutils' type-based loader](#command-lines-from-confutils-type-based-loader)):
+`acceptsNextWord = true` (with `optionalValue`: written bare, the flag also
+takes the next word as its value when that word is a valid value),
+`refuseFalse = true` (a switch refuses `--flag=false`) and
+`alsoSets = [<param> = "<text>", ...]` (each occurrence also gives another
+parameter a value, in command-line order).
 
 A command takes `help`, `aliases` and `visibility` in its head
 (`subcmd "build", help = "...", aliases = ["b"]:`, `call(help = "..."):`), or
@@ -257,11 +266,16 @@ not a value of the parameter's type, `default` or `optionalValue` together with
 `env`, `counted` on a non-integer, `negatable` on a non-`bool`, a counted flag
 that is also negatable or has an `optionalValue`, `negatable` or `counted`
 set to anything but `true` or `false`, a flag-only argument on a positional, an
-`implies` naming no parameter of the command, an argument given twice, two
+`implies` naming no parameter of the command, an `alsoSets` naming no
+parameter of the command, the parameter itself, one parameter twice, or
+giving a value that is not a string literal, `acceptsNextWord` without
+`optionalValue`, `refuseFalse` on a non-`bool` or together with
+`negatable`, a `help` or `longHelp` that is not a constant string
+expression, an unknown `parsing` rule or `flagMatching` mode, an argument given twice, two
 subcommands of one command answering to the same word, `aliases` on `call:`,
 a `help` statement inside a `group` section (the section's help goes in
-its head), `keyStyle`, `convention` or `configSchema` anywhere but directly
-under `cli:`, an unknown convention or one source's convention given twice,
+its head), `keyStyle`, `convention`, `configSchema`, `flagMatching` or
+`parsing` anywhere but directly under `cli:`, an unknown convention or one source's convention given twice,
 a `perConvention` entry for `declared` or for one convention twice, a
 `perSource` entry for a file source the description does not declare, for
 `file` (that is `key`), for one source twice, for `cli` on a positional or
@@ -388,14 +402,20 @@ Generated for `Tool` (exported when written
 | `Tool.load(argv, options = CliOptions())`                       | parses `argv` (without the program name)                                     |
 | `Tool.load(options = CliOptions())`                             | parses the process's own arguments                                           |
 | `Tool.helpText(path = [])` / `Tool.helpJson(path = [])`         | the help of the command reached by the subcommand words `path`               |
+| `Tool.optionsTable(path = [], layout, group = "")`              | just the rows of that command's options table (see [Help](#help))            |
 | `Tool.complete(words, cursor = -1)`                             | the completion candidates for `words[cursor]` (the last word by default)     |
 | `Tool.completionScript(shell)` / `Tool.completionReply(args)`   | a shell's completion script; the answer to a script's request                |
 | `Tool.cliGrammar` / `Tool.cliModel`                             | the parser's tables and the model, both constants                            |
 
 `CliOptions` sets the program name used in messages, the exit code of usage
-errors (`usageExitCode`, 2 when not set), `disableHelpFlag`, and the word
+errors (`usageExitCode`, 2 when not set), `disableHelpFlag`, the word
 through which completion scripts ask for candidates (`completionEntry`,
-`__complete` when not set; `disableCompletionEntry` turns it off). A consumer
+`__complete` when not set; `disableCompletionEntry` turns it off), the
+layout of the help a `CliHelpRequest` carries (`helpLayout`), and
+`valueCheck`, which says whether a text is a valid value of a parameter and
+which the generated `load` fills in (a library that calls the parser itself
+passes `cliWithValueCheck(options, <the generated check>)`, as confutils
+does). A consumer
 whose model carries an extension generates the same code from its own macro
 with `cliProgramCode(model, typeName, program, exported)`.
 
@@ -413,7 +433,8 @@ with `cliProgramCode(model, typeName, program, exported)`.
 - A `bool` is a switch: bare it is `true`, `--flag=false` works, and
   `negatable = true` adds `--no-<name>`. `counted = true` counts
   occurrences. An `optionalValue` flag is bare or `--flag=value`, never
-  followed by its value as a separate word.
+  followed by its value as a separate word (unless it declares
+  `acceptsNextWord`, below).
 - A `seq` collects every occurrence, each split on its `separator` if it has
   one. Any other parameter given twice keeps its last value.
 - `--` ends the flags. The first bare word after a command with subcommands
@@ -427,6 +448,128 @@ with `cliProgramCode(model, typeName, program, exported)`.
   at most one list positional per command and no subcommands inside a
   `call:`.
 - `hidden` and `internal` items are accepted like any other.
+
+### Command lines from confutils' type-based loader
+
+A program whose command line was a confutils configuration type (an object
+whose fields carry `{.name.}`, `{.abbr.}`, `{.desc.}`, `{.longDesc.}`,
+`{.valueName.}`, `{.implicitValue.}` and `{.alsoSets.}` pragmas, loaded with
+`negatableSwitches = false`) can move onto a clispec description without a
+change its users can see. What that loader did differently from clispec's
+defaults is available as opt-in declarations; none changes a description
+that does not name it.
+
+Directly under `cli:`:
+
+- `flagMatching ignoreCase | ignoreStyle | exact`: how a word is compared
+  with flag spellings when no spelling matches it exactly (`exact`, the
+  default, accepts only exact ones). `ignoreCase` ignores ASCII case, in
+  long spellings, short letters (`-O` for `-o`) and `--help`. `ignoreStyle`
+  compares as Nim's `cmpIgnoreStyle` does, which is what the loader did:
+  ASCII case and every `_` are ignored and every other character must
+  match, so `--CHECKPOINT-INTERVAL` and `--check_point-interval` are
+  `--checkpoint-interval` while `--checkpoint_interval`,
+  `--checkpointInterval` and `--checkpointinterval` are not.
+- `parsing <rule>, ...`, any of:
+  - `shortEquals`: `-o=value` gives a short option `value` (otherwise, as
+    `getopt` reads it, the value is `=value`), and `-s=value` gives a short
+    switch an explicit value;
+  - `helpWithAnyValue`: `--help=<anything>` asks for help (`--help=json`
+    still gives the JSON);
+  - `helpInCluster`: `h` inside a cluster of short flags (`-help`, `-vh`)
+    asks for help when no flag claims `-h`; the letters before it are read
+    as usual;
+  - `valueErrorsBeforeHelp`: a value written before the help request that
+    its flag rejects (it does not convert, or is outside `values`) is
+    reported instead of the help, the earliest first, as the conversion
+    would report it, and so is a bare word before it that no positional
+    accepts, or that its positional rejects, when the command has no list
+    positional; the words after the help request are not read;
+  - `switchesRefuseFalse`: every switch refuses a false value, as
+    `refuseFalse = true` does for one;
+  - `lenientSwitchValues`: a switch's explicit value is read as Nim's
+    `parseBool` reads it (`y`, `yes`, `true`, `1`, `on`, and `n`, `no`,
+    `false`, `0`, `off`, ignoring ASCII case and `_`), and `--flag=` is
+    true.
+
+On a flag:
+
+- `acceptsNextWord = true`, with `optionalValue`: written bare as a word of
+  its own (or last in a cluster), the flag takes the next word as its value
+  when that word does not start with `-` and is a valid value: it converts
+  to the parameter's type (its `parseCliValue`) and is in its `values`.
+  Anything else stays where it is and the flag takes its `optionalValue`.
+  (The generated `load` supplies the check; the parser called without one
+  accepts only words in the closed value set.)
+- `refuseFalse = true`, on a switch: `--flag=false` (`off`, `no`, `0`) is
+  the usage error `cekSwitchFalseValue`, carrying the spelling and the value
+  so a program can word it itself; `--flag=true` and bare `--flag` set it.
+  It applies to the command line; `negatable` contradicts it.
+- `alsoSets = [<param> = "<text>", ...]`: each occurrence of the flag (of a
+  switch, one that sets it to true) also supplies `<text>`, as it would be
+  written on the command line, to each named parameter of the same command,
+  as a command-line candidate at the flag's own argv index (with `setBy`
+  naming the flag). The ordinary merge then decides: the last occurrence of
+  a scalar wins, so `--legacy --attach=late` and `--attach=late --legacy`
+  differ; a list collects in command-line order. A parameter that only
+  another flag sets is declared with `sources = {}`.
+
+The help side is `valueName`, `longHelp`, `help` as a constant expression
+and `CliHelpLayout` (see [Help](#help)).
+
+What still differs from that loader: `--name:value`, and `--name= value`
+(a value after a trailing `=`), are not read as its `getopt` read them; an
+unknown letter in a cluster of short flags is reported as the whole word
+(`-coop`), not the letter; errors decided once the whole command line is
+read (a value its type rejects, a bare word no positional accepts) come
+after the ones the tokenizer finds (an unknown flag, a refused false
+switch) rather than strictly in argv order, except before a help request
+under `valueErrorsBeforeHelp`; and an enum value is matched ignoring case
+and `_` in every letter, where the loader's `parseEnum` compares the first
+letter exactly (a program that needs that declares its own
+`parseCliValue`).
+
+```nim
+import std/options
+import clispec
+
+const Paragraph = "A second paragraph."
+
+cliProgram(Rec, "rec"):
+  flagMatching ignoreStyle
+  parsing shortEquals, helpWithAnyValue, valueErrorsBeforeHelp,
+    switchesRefuseFalse
+  flag output is Option[string], short = 'o', valueName = "path",
+    help = "Output file"
+  flag attach is Option[string], values = ["early", "late"],
+    valueName = "early|late", help = "Attach mode", longHelp = Paragraph
+  boolFlag legacy is bool, alsoSets = [attach = "early"],
+    help = "The same as --attach=early"
+  flag trace is Option[string], values = ["fast", "full"],
+    optionalValue = some("fast"), acceptsNextWord = true,
+    help = "Trace depth (bare = fast)"
+  boolFlag split is bool, help = "Split the output"
+
+assert Rec.load(@["-O=t.out"]).output == some("t.out")
+assert Rec.load(@["--legacy", "--attach=late"]).attach == some("late")
+assert Rec.load(@["--attach=late", "--legacy"]).attach == some("early")
+assert Rec.load(@["--trace", "full"]).trace == some("full")
+try:
+  discard Rec.load(@["--split=off"])
+  assert false
+except CliUsageError as e:
+  assert e.kind == cekSwitchFalseValue and e.value == "off"
+assert Rec.optionsTable(layout = CliHelpLayout(column: 26, width: 60,
+  helpFlag: "Show this help")) == """
+  -o, --output <path>     Output file
+  --attach <early|late>   Attach mode
+                          A second paragraph.
+  --legacy                The same as --attach=early
+  --trace[=<fast|full>]   Trace depth (bare = fast)
+  --split                 Split the output
+  -h, --help              Show this help
+"""
+```
 
 ### Errors
 
@@ -443,6 +586,7 @@ wording, and every wording names the command (`'tool build'`):
 | `cekInvalidValue`         | `invalid value 'many' for '--jobs' of 'tool build'; expected an integer`                                                                  |
 | `cekUnexpectedPositional` | `unexpected argument 'extra' for 'tool build'`                                                                                            |
 | `cekMissingRequired`      | `missing required parameter '<target>' of 'tool build'`                                                                                   |
+| `cekSwitchFalseValue`     | `switch '--split' of 'tool build' takes no false value (got '--split=off'); it is on when given and off when omitted`                   |
 | `cekConflictingSources`   | `conflicting values for '--jobs' of 'tool build': '4' from /etc/tool.toml:3 (layer 'system') and '8' from environment variable TOOL_JOBS` |
 
 The error also carries the offending argv index, the spelling, the value,
@@ -479,6 +623,24 @@ Options:
   -j, --jobs <int>    Parallel jobs [default: 4]
 ```
 
+`CliHelpLayout` lays the tables out: `indent` (2), the description
+`column` (0: two spaces after the widest left entry of at most `maxLeft`,
+32, characters), the `width` descriptions are word-wrapped to (0: not
+wrapped; words are joined by one space and a word longer than the line is
+kept whole), `helpFlag` (when not empty, the options table ends with a
+`-h, --help` row with this text), `listMarker` (`...` after a list's
+placeholder), `canonicalFirst` (`--name` before a long `alias`) and `notes`
+(`[required]`, `[default: x]`, `[env: X]`). Every default is the layout
+above, so `CliHelpLayout()` changes nothing. `cliHelpText(g, command,
+program, layout)` and `Tool.helpText(layout = ...)` take one, and
+`cliOptionsTable(g, command, layout)` (`Tool.optionsTable`) renders just the
+rows of the options table, for a program that writes the rest of its help
+screen itself. With a fixed `column` a left entry that leaves less than two
+spaces before it puts its description on the next line, which with
+`CliHelpLayout(column: 30, width: 92, listMarker: false, canonicalFirst:
+true, notes: false, helpFlag: "Show this help")` gives exactly the table
+confutils' `renderOptionsTable(flags, 2, 30, 92)` renders.
+
 `hidden` items are never listed. An `internal` parameter, wherever it is
 declared, is listed in no help screen; it is still accepted and fills its
 field. An `internal` subcommand is listed only in the help of the command that
@@ -491,7 +653,9 @@ name `clispec-help/1`, meant for completion and editor hints:
 
 ```text
 {"schema": "clispec-help/1", "program": "tool", "command": COMMAND,
- "conventions": {"cli": CONVENTION, "file": CONVENTION, SOURCE: CONVENTION, ...}}
+ "conventions": {"cli": CONVENTION, "file": CONVENTION, SOURCE: CONVENTION, ...},
+ "parsing": {"flagMatching": "exact" | "ignoreCase" | "ignoreStyle",
+             "rules": [RULE, ...]}}
 COMMAND   = {"name", "path", "aliases", "help", "visibility", "usage",
              "parameters": [PARAMETER, ...], "commands": [COMMAND, ...]}
 PARAMETER = {"name", "kind": "flag" | "positional", "spellings",
@@ -501,12 +665,18 @@ PARAMETER = {"name", "kind": "flag" | "positional", "spellings",
              "counted", "required", "default": string | null, "env", "help",
              "group": string | null, "visibility", "position" (positionals),
              "declaredIn", "dynamicCompletion", "completer": string | null,
-             "configKeys": {"file": KEY, SOURCE: KEY, ...}}
+             "configKeys": {"file": KEY, SOURCE: KEY, ...}, "longHelp",
+             "placeholder", "acceptsNextWord", "refuseFalse",
+             "alsoSets": [{"param", "value"}, ...]}
 ```
 
 `value` says whether a flag takes a value and `format` how (see
 [Accepted forms](#accepted-forms)); `choices` is the closed value set, empty
-when the set is open; `completer` is the `complete` expression as written.
+when the set is open; `valueName` is the value's type name and
+`placeholder` what help shows between `<` and `>` (the declared
+`valueName`, else the choices joined with `|`, else the type name);
+`refuseFalse` whether a switch refuses a false value (its own or under
+`switchesRefuseFalse`); `parsing` names the opt-in rules below; `completer` is the `complete` expression as written.
 `spellings` and `negation` are spelt in the command line's convention;
 `configKeys` gives the parameter's key in every file source (`{}` when no file
 may supply it), and `conventions` the convention of every source.

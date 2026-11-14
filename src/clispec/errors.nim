@@ -36,6 +36,10 @@ type
       ## A bare word that no positional parameter accepts.
     cekMissingRequired = "missing required parameter"
       ## A required parameter was supplied by no source.
+    cekSwitchFalseValue = "false value for a switch"
+      ## A switch that refuses a false value (``refuseFalse``,
+      ## ``switchesRefuseFalse``) was given one on the command line
+      ## (``--split=false``); ``value`` is the value as written.
     cekConflictingSources = "conflicting sources"
       ## Two sources supplied different values to a parameter whose merge
       ## rule is ``errorOnConflict`` (``detail`` names both), or a combine
@@ -62,7 +66,8 @@ type
     expected*: string
       ## What would have been accepted: ``an integer``,
       ## ``one of: red, green``, ``no value``, or for a subcommand error the
-      ## list of subcommand words.
+      ## list of subcommand words. For a missing value, the flag's declared
+      ## ``valueName`` (``path``), or empty when it declares none.
     detail*: string
       ## The sources in conflict (``cekConflictingSources``).
     source*: string
@@ -120,6 +125,10 @@ func cliErrorMessage*(kind: CliErrorKind; program: string;
     "unexpected argument '" & spelling & "' for " & command
   of cekMissingRequired:
     "missing required parameter '" & spelling & "' of " & command
+  of cekSwitchFalseValue:
+    "switch '" & spelling & "' of " & command & " takes no false value " &
+      "(got '" & spelling & "=" & value & "'); it is on when given and " &
+      "off when omitted"
   of cekConflictingSources:
     "conflicting values for '" & spelling & "' of " & command & ": " & detail
 

@@ -26,7 +26,10 @@
 ##
 ## Some named arguments take a Nim expression rather than a literal:
 ## ``default``, ``optionalValue``, the entries of ``values``, the values of
-## ``implies``, the ``complete`` completer and a ``merge`` combine proc. The
+## ``implies``, the ``complete`` completer, a ``merge`` combine proc, and a
+## ``help`` or ``longHelp`` that is a constant expression rather than a
+## literal (``helpExpr``, ``longHelpExpr``; its text is written with
+## parentheses so that it reads back on one line). The
 ## model is a plain value (it is built inside a macro and turned into a
 ## constant with ``newLit``), and a ``NimNode`` cannot live in a constant, so
 ## each expression is kept as a ``CliExpr``: its source text exactly as the
@@ -230,6 +233,63 @@ type
     value*: CliExpr
       ## The value it takes unless a source supplies one explicitly.
 
+  CliAlsoSet* = object
+    ## One ``<param> = "<text>"`` entry of ``alsoSets``.
+    param*: string
+      ## The parameter that also receives a value.
+    text*: string
+      ## The value, as it would be written on the command line.
+
+  CliFlagMatching* = enum
+    ## How a word on the command line is compared with a flag's spellings
+    ## (``flagMatching <mode>`` under ``cli:``). A spelling that matches
+    ## exactly always wins; the other modes are tried only when none does.
+    cfmExact = "exact"
+      ## Byte for byte (the default).
+    cfmIgnoreCase = "ignoreCase"
+      ## ASCII letters compare without regard to case: ``--OUTPUT`` and
+      ## ``-O`` are ``--output`` and ``-o``.
+    cfmIgnoreStyle = "ignoreStyle"
+      ## As Nim's ``cmpIgnoreStyle`` compares: ASCII case and every ``_``
+      ## are ignored, every other character must match (``--Out_put`` is
+      ## ``--output``, but ``--checkpoint_interval`` is not
+      ## ``--checkpoint-interval``, because ``-`` is not ignored). This is
+      ## how confutils' type-based command lines match option names.
+
+  CliParseRule* = enum
+    ## An opt-in command-line rule (``parsing <rule>, ...`` under ``cli:``).
+    ## Each one changes what some command lines mean, so none is on unless
+    ## the description names it.
+    cprShortEquals = "shortEquals"
+      ## ``-o=value`` gives a short option the value ``value`` (without the
+      ## rule the attached value is ``=value``, as ``getopt`` reads it), and
+      ## ``-s=value`` gives a short switch an explicit value.
+    cprHelpWithAnyValue = "helpWithAnyValue"
+      ## ``--help=<anything>`` asks for help (``--help=json`` still asks for
+      ## the machine-readable form); without the rule only ``json`` and
+      ## ``text`` are accepted values.
+    cprHelpInCluster = "helpInCluster"
+      ## ``h`` inside a cluster of short flags (``-help``, ``-vh``) asks for
+      ## help when no flag of the command claims ``-h``: the letters before
+      ## it are read as usual and the rest of the word is not looked at.
+    cprValueErrorsBeforeHelp = "valueErrorsBeforeHelp"
+      ## A value written before the help request that its flag rejects
+      ## (it does not convert to the flag's type, or is outside its
+      ## ``values``) is reported instead of the help, the earliest first;
+      ## so is a bare word before it that no positional accepts, or that its
+      ## positional rejects, when the command has no list positional (with
+      ## one, which positional a word fills depends on the words after the
+      ## help request). Needs the value check the generated ``load``
+      ## supplies (``CliOptions.valueCheck``).
+    cprSwitchesRefuseFalse = "switchesRefuseFalse"
+      ## Every switch refuses a false value, as ``refuseFalse = true`` does
+      ## for one.
+    cprLenientSwitchValues = "lenientSwitchValues"
+      ## A switch's explicit value is read as Nim's ``parseBool`` reads it
+      ## (``y``, ``yes``, ``true``, ``1``, ``on`` and ``n``, ``no``,
+      ## ``false``, ``0``, ``off``, ignoring ASCII case and ``_``), and an
+      ## empty one (``--flag=``) means true.
+
   CliGroup* = object
     ## A ``group "<title>":`` section: parameters listed together in help.
     name*: string
@@ -264,7 +324,21 @@ type
       ## optional unless ``required = true``.
     help*: string
       ## ``help = "<text>"``: the description help output and completion
-      ## show.
+      ## show. A constant expression that is not a literal (or ``&`` of
+      ## literals) is kept in ``helpExpr`` and this is empty until a
+      ## generator evaluates it (``cliModelValue``).
+    helpExpr*: CliExpr
+      ## ``help = <constant string expression>``: the expression, when
+      ## ``help`` was not a literal.
+    longHelp*: string
+      ## ``longHelp = "<text>"``: further paragraphs of description, one per
+      ## line, shown after ``help``.
+    longHelpExpr*: CliExpr
+      ## ``longHelp = <constant string expression>``, as ``helpExpr``.
+    valueName*: string
+      ## ``valueName = "<text>"``: the placeholder help shows for the value
+      ## (``--output <path>``), instead of the type's name or the closed
+      ## value set. Empty when not given.
     default*: CliExpr
       ## ``default = <expr>``: the value when no source supplies one. Never
       ## given together with ``required = true``. A positional with a
@@ -303,6 +377,9 @@ type
       ## ``sources = {cli, env, file}``: which sources may supply the value.
       ## The parser sets all three when the argument is not given (a model
       ## built by hand must set it too: Nim's zero value is the empty set).
+      ## ``sources = {}`` declares a parameter no source supplies directly:
+      ## it has no spelling and no key, and gets its value only from another
+      ## flag's ``alsoSets``, an ``implies`` or its ``default``.
     merge*: CliMergeRule
       ## ``merge = replace | append | errorOnConflict | <combine proc>``.
     combine*: CliExpr
@@ -316,6 +393,22 @@ type
       ## ``negatable = true``: ``--no-<name>`` sets the bool to false.
     counted*: bool
       ## ``counted = true``: the value is the number of occurrences.
+    acceptsNextWord*: bool
+      ## ``acceptsNextWord = true`` (with ``optionalValue``): written bare
+      ## as a word of its own, the flag also takes the next word as its
+      ## value when that word does not start with ``-`` and is a valid
+      ## value (it converts to the type and is in ``values``).
+    refuseFalse*: bool
+      ## ``refuseFalse = true`` (a switch): an explicit false value on the
+      ## command line (``--flag=false``, ``off``, ``no``, ``0``) is an
+      ## error (``cekSwitchFalseValue``); ``--flag=true`` is the switch.
+    alsoSets*: seq[CliAlsoSet]
+      ## ``alsoSets = [<param> = "<text>", ...]``: each occurrence of the
+      ## flag on the command line also supplies ``<text>`` to each named
+      ## parameter, as a command-line value at the flag's own position, so
+      ## the ordinary merge orders it with that parameter's own
+      ## occurrences (the last wins; a list collects them in order). A
+      ## switch does so only when it is set to true.
     implies*: seq[CliImplication]
       ## ``implies = [<param> = <value>, ...]``: setting this parameter sets
       ## the others unless they are given explicitly.
@@ -391,6 +484,12 @@ type
     fileSources*: seq[CliSourceConvention]
       ## Every named file source, ``convention "<name>" = <c>``, in
       ## declaration order.
+    flagMatching*: CliFlagMatching
+      ## ``flagMatching <mode>`` under ``cli:``: how words are compared with
+      ## flag spellings.
+    parseRules*: set[CliParseRule]
+      ## ``parsing <rule>, ...`` under ``cli:``: the opt-in command-line
+      ## rules.
     configSchema*: string
       ## ``configSchema "<id>"`` under ``cli:``: the identifier a
       ## configuration file must carry in its top-level ``schema`` string

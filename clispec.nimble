@@ -26,6 +26,8 @@ task test, "Run the test suite":
             "test_cs_m5_engine_completes_every_level",
             "test_cs_m5_internal_parameters_work_unlisted",
             "test_cs_m9_clispec_has_no_serialization_dependency",
+            "test_cs_m10_help_layout", "test_cs_m10_parse_compat_rules",
+            "test_cs_m10_confutils_compat_record",
             "test_suite_lists_agree"]:
     exec "nim c -r --hints:off tests/" & t & ".nim"
 
