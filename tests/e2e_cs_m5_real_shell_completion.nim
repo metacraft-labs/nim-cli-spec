@@ -243,6 +243,9 @@ when not defined(windows):
       if slave < 0:
         exitnow(126)
       discard ioctlArg(slave, TIOCSCTTY, 0)
+      # On macOS the size set on the master before any slave is open does
+      # not stick, so the shell would see a 0x0 window; set it here too.
+      discard ioctlArg(slave, TIOCSWINSZ, addr size)
       discard dup2(slave, 0)
       discard dup2(slave, 1)
       discard dup2(slave, 2)
