@@ -15,15 +15,19 @@
 ## fails. The second suite checks the protocol answer the shell scripts
 ## read (``completionReply``): its per-shell line format, bash's reading of
 ## the raw command line and its quoting, PowerShell's encoded words and
-## quoting, and the request raised from ``load``.
+## quoting, and the request raised from ``load``. The third checks, on any
+## OS, the command line the end-to-end test runs PowerShell with
+## (``tests/powershell_driver.nim``): no script file, so no execution
+## policy can refuse it on Windows.
 ##
 ## The engine runs on the grammar the real ``cliProgram`` macro generated
 ## from a real description; the completers are ordinary procs of this file.
 ## Nothing is mocked.
 
-import std/[base64, strutils, unittest]
+import std/[base64, strutils, unicode, unittest]
 
 import clispec
+import ./powershell_driver
 
 type
   Mode = enum
@@ -354,3 +358,48 @@ suite "test_cs_m5_engine_completes_every_level: the protocol":
     for shell in CliShell:
       check "completion for a rm -rf b, generated" in
         cliCompletionScript(shell, "a\nrm -rf b")
+
+func fromUtf16le(bytes: string): string =
+  ## The inverse of ``utf16le``, written independently of it.
+  var i = 0
+  while i + 1 < bytes.len:
+    var unit = ord(bytes[i]) or (ord(bytes[i + 1]) shl 8)
+    i += 2
+    if unit in 0xD800 .. 0xDBFF and i + 1 < bytes.len:
+      let low = ord(bytes[i]) or (ord(bytes[i + 1]) shl 8)
+      i += 2
+      unit = 0x10000 + ((unit - 0xD800) shl 10) + (low - 0xDC00)
+    result.add($Rune(unit))
+
+suite "the end-to-end PowerShell driver":
+
+  test "it runs no script file, so no execution policy refuses it":
+    # Windows' default client policy (Restricted) refuses every script
+    # file, a -File driver and a dot-sourced .ps1 included; a command
+    # (-EncodedCommand, Invoke-Expression) is not a script file.
+    let lines = ["shx ", "shx build --note \u00FC", "shx build --note 'my",
+      "x \u{1F600}"]
+    let program = tabExpansionProgram("C:\\it's\\shx.exe", lines)
+    let args = powerShellDriverArgs(program)
+    check args.len == 4
+    check args[0 .. 2] == @["-NoProfile", "-NonInteractive",
+      "-EncodedCommand"]
+    for a in args:
+      check a.toLowerAscii notin ["-file", "-f", "-executionpolicy"]
+    check fromUtf16le(decode(args[3])) == program
+    check "& 'C:\\it''s\\shx.exe' completion powershell | Out-String | " &
+      "Invoke-Expression\n" in program
+    check ".ps1" notin program
+    check "\n. " notin program
+    check "TabExpansion2 -inputScript 'shx build --note ''my' " &
+      "-cursorColumn 20\n" in program
+    check "-inputScript 'shx build --note \u00FC' -cursorColumn 18\n" in
+      program
+    # A character outside the BMP is two UTF-16 code units.
+    check "-inputScript 'x \u{1F600}' -cursorColumn 4\n" in program
+    check program.endsWith("'DONE'\n")
+
+  test "a program too long for a Windows command line is refused":
+    expect ValueError:
+      discard powerShellDriverArgs(repeat('x', maxCommandLine))
+    check powerShellDriverArgs(repeat('x', 10_000))[3].len < maxCommandLine

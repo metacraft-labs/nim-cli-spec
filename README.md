@@ -592,6 +592,37 @@ and the user installs it:
 | Fish       | save it as `~/.config/fish/completions/tool.fish`                                                                |
 | PowerShell | `tool completion powershell \| Out-String \| Invoke-Expression` in `$PROFILE`                                    |
 
+**PowerShell and the execution policy.** On Windows, PowerShell's
+[execution policy](https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_execution_policies)
+decides which script files may run, and `$PROFILE` is a script file. The
+clispec script itself is not: `Invoke-Expression` runs the text the program
+printed as commands, which no policy blocks, so the script never needs
+signing and is never written to disk. What the policy governs is whether
+PowerShell loads `$PROFILE` at all:
+
+- `Restricted` runs no script files, the profile included. It is Windows
+  PowerShell 5.1's default on a Windows client (Windows 10 and 11), and the
+  effective policy of any PowerShell on a Windows client when no scope sets
+  one. Under it PowerShell refuses the profile at startup ("running scripts
+  is disabled on this system") and the line above never runs.
+- `RemoteSigned` (Windows PowerShell's default on Windows Server, and the
+  default PowerShell 7 documents for Windows) loads a profile written on the
+  machine; a profile downloaded from the internet must be signed or
+  unblocked with `Unblock-File`.
+- `AllSigned` loads the profile only when it is signed; the clispec text it
+  evaluates needs no signature of its own.
+- `Unrestricted` and `Bypass` load it. On Linux and macOS the policy is
+  always `Unrestricted` and is not enforced.
+
+`Get-ExecutionPolicy -List` shows the effective policy and which scope sets
+it. To let your own profile load without administrator rights, set
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, unless Group Policy
+fixes the policy, in which case it overrides that setting. Without a profile,
+run `tool completion powershell | Out-String | Invoke-Expression` in the
+session: completion then works until the session ends, under any policy.
+Saving the script as a `.ps1` file and dot-sourcing it instead makes it a
+script file subject to the policy, so prefer `Invoke-Expression`.
+
 **The protocol.** A script runs `tool __complete <shell> <arguments...>`
 and prints what the program writes. `load` answers it by raising
 `CliCompletionRequest`, a `CliHelpRequest` whose `text` is the answer, so a

@@ -19,6 +19,13 @@
 ##    for the full candidate list (``complete -C``, ``TabExpansion2``) and
 ##    compares it exactly.
 ##
+## PowerShell loads the script as the README installs it
+## (``shx completion powershell | Out-String | Invoke-Expression``), and its
+## ``TabExpansion2`` driver is passed as ``-EncodedCommand``: no script file
+## is run, so the leg works under any execution policy, including the
+## ``Restricted`` default of a Windows client, without changing it (see
+## ``tests/powershell_driver.nim``).
+##
 ## Cases: a subcommand (``shx bui``), a nested one (``shx remote a``), a flag
 ## (``--jo``), an enum value after a flag (``--mode rel``), a value written
 ## ``--mode=d``, and a dynamic value that contains a space (``--note my``,
@@ -39,7 +46,9 @@
 ## the shells, their completion systems and the fixture are real.
 
 import std/[base64, os, osproc, streams, strtabs, strutils, tempfiles, times,
-  unicode, unittest]
+  unittest]
+
+import ./powershell_driver
 
 when not defined(windows):
   import std/posix
@@ -134,30 +143,17 @@ proc writeScript(shell, file: string) =
 proc tabExpansion(pwsh: string; lines: openArray[string]):
     tuple[lists: seq[seq[string]], output: string, exitCode: int] =
   ## For each line, the ``CompletionText`` of every match ``TabExpansion2``
-  ## returns with the cursor at the end of the line.
-  let script = scratch / "shx.ps1"
-  writeScript("powershell", script)
-  var program = ". '" & script.replace("'", "''") & "'\n"
-  for line in lines:
-    program.add("'CASE'\n$r = TabExpansion2 -inputScript '" &
-      line.replace("'", "''") & "' -cursorColumn " &
-      # PowerShell counts UTF-16 code units; every test line is in the BMP.
-      $line.runeLen & "\n" &
-      # Each candidate as base64 of its UTF-8 bytes: Windows PowerShell
-      # writes redirected output in the console's code page, which cannot
-      # carry every character.
-      "foreach ($m in $r.CompletionMatches) { 'CAND:' + " &
-      "[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(" &
-      "$m.CompletionText)) }\n")
-  program.add("'DONE'\n")
-  let file = scratch / "tabexpansion.ps1"
-  # With a byte-order mark, so Windows PowerShell 5.1 reads it as UTF-8.
-  writeFile(file, "\xEF\xBB\xBF" & program)
+  ## returns with the cursor at the end of the line. The program is passed
+  ## as ``-EncodedCommand`` and loads the script through
+  ## ``Invoke-Expression``, so no execution policy can refuse it (see
+  ## ``powershell_driver``).
+  let program = tabExpansionProgram(binDir / addFileExt("shx", ExeExt),
+    lines)
   var env = newStringTable(modeCaseSensitive)
   for (k, v) in shellEnv():
     env[k] = v
   let p = startProcess(pwsh, workingDir = scratch / "work",
-    args = ["-NoProfile", "-NonInteractive", "-File", file], env = env,
+    args = powerShellDriverArgs(program), env = env,
     options = {poStdErrToStdOut})
   # The read ends when PowerShell exits; a hung PowerShell is killed by
   # its own pid after two minutes.
@@ -542,12 +538,14 @@ suite "e2e_cs_m5_real_shell_completion":
     else:
       tabExpansionLeg(pwsh)
       when not defined(windows):
-        # The interactive leg: PSReadLine's Tab in a pseudo-terminal.
-        let script = scratch / "shx.ps1"
+        # The interactive leg: PSReadLine's Tab in a pseudo-terminal, with
+        # the script loaded as the README installs it.
         var s = spawn("pwsh", pwsh, ["-NoProfile", "-NoLogo"], shellEnv(),
           scratch / "work")
         try:
-          s.checkOutcomes(s.runShell(". " & quoteShell(script),
+          s.checkOutcomes(s.runShell("& " &
+            powerShellLiteral(binDir / addFileExt("shx", ExeExt)) &
+            " completion powershell | Out-String | Invoke-Expression",
             "function prompt { 'CLISPEC_PROMPT> ' }; " &
             "Write-Output ('CLISPEC_' + 'READY')", 60_000,
             spaceAfterTab = true))
