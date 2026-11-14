@@ -1,5 +1,7 @@
-import std/[strutils]
-version       = readFile("version.txt").strip()
+import std/[os, strutils]
+# Nimble evaluates this file from its own working directory, not the
+# package's, so the version file is located relative to this file.
+version       = readFile(thisDir() / "version.txt").strip()
 author        = "Metacraft Labs"
 description   = "Declarative command-line descriptions for Nim: a typed CLI model, the cli: language that builds it, and the typed configuration object, parser and help generated from it."
 license       = "Apache-2.0"
