@@ -511,7 +511,13 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
         let next = if terminated: -1 else: cliChildNamed(g, node, word)
         if next >= 0:
           enter(next)
-        elif cmd.callChild >= 0:
+        elif cmd.callChild >= 0 and
+            (terminated or cliPositionals(g, cmd.callChild).len > 0):
+          # The word is one of the call:'s positionals. A call: that takes
+          # no word from the command line (it holds only flags) cannot
+          # accept it, so an unterminated word there is a mistyped
+          # subcommand and is reported as one, naming the subcommands,
+          # rather than as a stray argument of the call:.
           enter(cmd.callChild)
           positionals.add((word, i))
         elif terminated:
