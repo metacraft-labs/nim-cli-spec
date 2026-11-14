@@ -23,6 +23,15 @@
 ## * **Fish**: the script saved as ``~/.config/fish/completions/tool.fish``.
 ## * **PowerShell**: ``tool completion powershell | Out-String |
 ##   Invoke-Expression`` in ``$PROFILE``.
+##
+## The PowerShell script is meant to be evaluated with ``Invoke-Expression``,
+## not saved and dot-sourced: on Windows the execution policy governs script
+## files (the profile among them) but not commands, so the generated text
+## needs no signature under any policy; only ``$PROFILE`` itself must be
+## allowed to load (``Restricted``, the effective policy on a Windows client
+## when no scope sets one, refuses it), see
+## https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_execution_policies.
+## The library itself never writes a script file.
 
 import std/strutils
 
