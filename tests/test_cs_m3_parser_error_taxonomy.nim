@@ -38,6 +38,23 @@ cliProgram(Tx, "tx"):
   subcmd "secret", visibility = hidden:
     pos x is string
 
+# A root whose call: holds only flags, beside its subcommands (a tool whose
+# bare invocation takes ``--version`` and nothing else), and one whose call:
+# takes a word.
+cliProgram(Ty, "ty"):
+  subcmd "build":
+    pos target is string
+  subcmd "clean":
+    boolFlag all is bool
+  call:
+    boolFlag version is bool, short = 'V'
+
+cliProgram(Tz, "tz"):
+  subcmd "build":
+    pos target is string
+  call:
+    pos script is string
+
 type
   Case = object
     argv: seq[string]
@@ -160,6 +177,48 @@ suite "test_cs_m3_parser_error_taxonomy":
     check n.kind == cekInvalidValue
     check n.msg == "invalid value '1' for '--no-dry' of 'tx build'; " &
       "expected no value"
+
+  test "a word beside a call: that takes no word is an unknown subcommand":
+    # The call: accepts flags only, so ``biuld`` is a mistyped subcommand,
+    # not a stray argument of the call:.
+    proc tyError(argv: seq[string]): ref CliUsageError =
+      try:
+        discard Ty.load(argv)
+      except CliUsageError as e:
+        return e
+      except CliHelpRequest:
+        discard
+      nil
+    let e = tyError(@["biuld"])
+    check not e.isNil
+    if not e.isNil:
+      check e.kind == cekUnknownSubcommand
+      check e.msg == "unknown subcommand 'biuld' for 'ty'; expected one " &
+        "of: build, clean"
+      check e.commandPath.len == 0
+      check e.argvIndex == 0
+    # The word is reported before a flag after it that nothing declares.
+    let f = tyError(@["biuld", "--once"])
+    check not f.isNil
+    if not f.isNil:
+      check f.kind == cekUnknownSubcommand
+    # The call: still runs for its own flags and for no words at all.
+    check Ty.load(@["-V"]).call.version
+    check Ty.load(@[]).command == TyCommand.call
+    # After the call:'s flag the command is chosen, so a word is a stray
+    # argument of it; after ``--`` a word is never a subcommand.
+    let g = tyError(@["-V", "biuld"])
+    check not g.isNil
+    if not g.isNil:
+      check g.kind == cekUnexpectedPositional
+    let t = tyError(@["--", "build"])
+    check not t.isNil
+    if not t.isNil:
+      check t.kind == cekUnexpectedPositional
+      check t.msg == "unexpected argument 'build' for 'ty'"
+    # A call: that takes a word still takes one that names no subcommand.
+    check Tz.load(@["x.sh"]).call.script == "x.sh"
+    check Tz.load(@["build", "app"]).build.target == "app"
 
   test "an equals-only flag does not take the next word":
     let e = usageError(@["build", "--config", "a", "app"])

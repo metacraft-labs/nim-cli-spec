@@ -419,7 +419,10 @@ with `cliProgramCode(model, typeName, program, exported)`.
 - `--` ends the flags. The first bare word after a command with subcommands
   names one (or one of its `aliases`); when the command also has a `call:`,
   any other word, or a flag (or a cluster of short flags) that only the
-  `call:` declares, runs the `call:`.
+  `call:` declares, runs the `call:`. A word runs the `call:` only when the
+  `call:` declares a positional (or the word follows `--`); beside a `call:`
+  that holds only flags, a word that names no subcommand is
+  `cekUnknownSubcommand`.
 - Positionals fill in `position` order; a list positional takes every word
   that the positionals after it do not need. A command with subcommands
   declares its positionals in its `call:` (the word after it is a
