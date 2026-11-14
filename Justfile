@@ -5,6 +5,10 @@
 ##   * `test` runs the test suite (`tests/test_*.nim`), the same files
 ##     `nimble test` runs and `repro.nim` builds and runs
 ##     (`tests/test_suite_lists_agree.nim` keeps the three lists equal).
+##   * `e2e` runs the end-to-end tests (`tests/e2e_*.nim`): real shells
+##     (bash, zsh, fish, PowerShell) driven in a pseudo-terminal, which the
+##     dev shell provides. They are kept out of `test` so that suite needs
+##     nothing but the compiler; `build` and `lint` cover them too.
 ##   * `lint` is `nim check` over the umbrella module and every test module.
 ##   * `format` runs `nimpretty` when it is available.
 ##
@@ -27,7 +31,8 @@ alias fmt := format
 src-paths := "--path:src"
 nim-flags := "--skipParentCfg --skipUserCfg --hints:off"
 nimcache := ".nimcache"
-tests := "test_dsl_model test_extension test_cs_m2_model_round_trip test_cs_m2_invalid_declarations_fail_to_compile test_cs_m3_parser_accepts_declared_forms test_cs_m3_parser_error_taxonomy test_cs_m3_help_matches_model test_readme_examples test_cs_m4_precedence_and_origins test_cs_m4_merge_rules test_cs_m4_enforced_value_explained test_cs_m4_default_never_overrides_file test_cs_m4_unknown_key_rejected test_cs_m4b_convention_conversion test_cs_m4b_per_source_convention test_cs_m4b_override_precedence test_suite_lists_agree"
+tests := "test_dsl_model test_extension test_cs_m2_model_round_trip test_cs_m2_invalid_declarations_fail_to_compile test_cs_m3_parser_accepts_declared_forms test_cs_m3_parser_error_taxonomy test_cs_m3_help_matches_model test_readme_examples test_cs_m4_precedence_and_origins test_cs_m4_merge_rules test_cs_m4_enforced_value_explained test_cs_m4_default_never_overrides_file test_cs_m4_unknown_key_rejected test_cs_m4b_convention_conversion test_cs_m4b_per_source_convention test_cs_m4b_override_precedence test_cs_m5_engine_completes_every_level test_cs_m5_internal_parameters_work_unlisted test_suite_lists_agree"
+e2e-tests := "e2e_cs_m5_real_shell_completion"
 
 # Compile every test module without running it.
 build:
@@ -35,7 +40,7 @@ build:
     set -euo pipefail
     mkdir -p test-logs
     : > test-logs/build.log
-    for t in {{tests}}; do
+    for t in {{tests}} {{e2e-tests}}; do
       nim c {{nim-flags}} --nimcache:{{nimcache}}/tests/${t}_d {{src-paths}} \
         ${CLISPEC_FORMAT_PATHS:-} -o:test-logs/${t} tests/${t}.nim 2>&1 | tee -a test-logs/build.log
     done
@@ -51,6 +56,17 @@ test:
         ${CLISPEC_FORMAT_PATHS:-} -o:test-logs/${t} tests/${t}.nim 2>&1 | tee -a test-logs/test.log
     done
 
+# Run the end-to-end tests (real shells in a pseudo-terminal).
+e2e:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p test-logs
+    : > test-logs/e2e.log
+    for t in {{e2e-tests}}; do
+      nim c -r {{nim-flags}} --nimcache:{{nimcache}}/tests/${t}_d {{src-paths}} \
+        ${CLISPEC_FORMAT_PATHS:-} -o:test-logs/${t} tests/${t}.nim 2>&1 | tee -a test-logs/e2e.log
+    done
+
 # `nim check` over the umbrella and every test module.
 lint:
     #!/usr/bin/env bash
@@ -60,7 +76,7 @@ lint:
       src/clispec.nim 2>&1 | tee test-logs/lint.log
     nim check {{nim-flags}} --nimcache:{{nimcache}}/src/clispec/toml_source_check {{src-paths}} \
       ${CLISPEC_FORMAT_PATHS:-} src/clispec/toml_source.nim 2>&1 | tee -a test-logs/lint.log
-    for t in {{tests}}; do
+    for t in {{tests}} {{e2e-tests}}; do
       nim check {{nim-flags}} --nimcache:{{nimcache}}/tests/${t}_check {{src-paths}} \
         ${CLISPEC_FORMAT_PATHS:-} tests/${t}.nim 2>&1 | tee -a test-logs/lint.log
     done

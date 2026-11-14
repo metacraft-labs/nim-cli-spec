@@ -89,9 +89,10 @@
 
 import std/[macros, os, strutils]
 
-import ./[model, dsl, grammar, parser, help, sources, origins]
+import ./[model, dsl, grammar, parser, help, sources, origins, completion,
+  completion_scripts]
 
-export parser, help, grammar, sources, origins
+export parser, help, grammar, sources, origins, completion, completion_scripts
 
 proc cliCommandLineParams*(): seq[string] =
   ## The process's own arguments, without the program name.
@@ -503,6 +504,24 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
     if hasObject(g, k):
       result.add(builderProc(ctx, k, decls))
       result.add(originsBuilderProc(ctx, k))
+  # The completers, by parameter id: built on demand (a completer may be a
+  # call that returns one), so a program pays for them only when it is
+  # asked to complete.
+  let completersName = ident("cliCompletersOf" & typeName)
+  var completersBody = newStmtList(newAssignment(ident("result"),
+    newCall(nnkBracketExpr.newTree(ident("newSeq"), ident("CliCompleter")),
+      newLit(g.params.len))))
+  for id, decl in decls:
+    if decl.complete.isSet:
+      let e = genSym(nskLet, "e")
+      completersBody.add(nnkTryStmt.newTree(
+        newStmtList(newAssignment(nnkBracketExpr.newTree(ident("result"),
+          newLit(id)), parseExpr(decl.complete.code))),
+        nnkExceptBranch.newTree(infix(ident("CatchableError"), "as", e),
+          newStmtList(nnkDiscardStmt.newTree(e)))))
+  result.add(newProc(completersName,
+    params = [nnkBracketExpr.newTree(ident("seq"), ident("CliCompleter"))],
+    body = completersBody))
   let T = ident(typeName)
   let O = ident(originsName(ctx, 0))
   let gc = ctx.grammarConst
@@ -516,6 +535,9 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
   let grammarName = exportedName("cliGrammar", exported)
   let prog = newLit(program)
   let modelName = exportedName("cliModel", exported)
+  let completeName = exportedName("complete", exported)
+  let completionReplyName = exportedName("completionReply", exported)
+  let completionScriptName = exportedName("completionScript", exported)
   let modelConst = genSym(nskConst, typeName & "Model")
   result.add(nnkConstSection.newTree(nnkConstDef.newTree(modelConst,
     newEmptyNode(), newLit(model))))
@@ -533,7 +555,10 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
         raises: [CliUsageError, CliHelpRequest].} =
       ## Parses ``argv`` (without the program name) into a configuration
       ## object. Raises ``CliUsageError`` for a command line it rejects and
-      ## ``CliHelpRequest`` when help is asked for.
+      ## ``CliHelpRequest`` when help is asked for (and its subtype
+      ## ``CliCompletionRequest`` when a completion script asks).
+      if cliIsCompletionRequest(argv, options):
+        cliCompletionCheck(`gc`, `completersName`(), argv, options)
       var r = cliResolve(`gc`, argv, options)
       `rootBuilder`(`gc`, r)
 
@@ -549,6 +574,8 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
       ## environment of ``sources`` and from ``argv``, merged as each
       ## parameter declares. Raises ``CliConfigError`` for a configuration
       ## file that does not fit the program's schema.
+      if cliIsCompletionRequest(argv, options):
+        cliCompletionCheck(`gc`, `completersName`(), argv, options)
       var r = cliResolve(`gc`, argv, sources, options)
       `rootBuilder`(`gc`, r)
 
@@ -565,6 +592,8 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
         raises: [CliUsageError, CliHelpRequest, CliConfigError].} =
       ## ``load``, and the origin object: for every field, where its value
       ## came from and every other value that was considered.
+      if cliIsCompletionRequest(argv, options):
+        cliCompletionCheck(`gc`, `completersName`(), argv, options)
       var r = cliResolve(`gc`, argv, sources, options)
       (`rootBuilder`(`gc`, r), `rootOrigins`(`gc`, r))
 
@@ -586,6 +615,29 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
       ## The human-readable help of the command reached by the subcommand
       ## words ``path``.
       cliHelpText(`gc`, cliHelpCommand(`gc`, path, program), program)
+
+    proc `completeName`(t: typedesc[`T`]; words: openArray[string];
+                        cursor = -1; options = CliOptions()):
+        seq[CliCompletion] =
+      ## The completion candidates for ``words[cursor]`` (the last word
+      ## when ``cursor`` is -1; an empty word when it is ``words.len``),
+      ## ``words`` being the command line without the program name.
+      let at = if cursor < 0: max(0, words.len - 1) else: cursor
+      cliComplete(`gc`, `completersName`(), words, at, options)
+
+    proc `completionReplyName`(t: typedesc[`T`]; args: openArray[string];
+                               options = CliOptions()): string =
+      ## The answer to ``<program> __complete <args...>`` (``args`` starts
+      ## with the shell's name), which ``load`` also gives through
+      ## ``CliCompletionRequest``.
+      cliCompletionReply(`gc`, `completersName`(), args, options)
+
+    proc `completionScriptName`(t: typedesc[`T`]; shell: CliShell;
+                                program = `prog`; command = "";
+                                options = CliOptions()): string =
+      ## The completion script of ``shell`` for this program (see
+      ## ``clispec/completion_scripts``).
+      cliCompletionScript(shell, program, command, options)
 
     proc `helpJsonName`(t: typedesc[`T`]; path: openArray[string] = [];
                         program = `prog`): string {.

@@ -17,7 +17,9 @@
 ##   compiling ``build/test-bin/<stem>`` and an EXECUTE edge
 ##   (``edge.testBinary.run``) running it. The BUILD halves collect into
 ##   ``test-builds`` and the EXECUTE halves into ``test``, so
-##   ``repro build test`` is the same suite as ``just test``.
+##   ``repro build test`` is the same suite as ``just test``. The
+##   end-to-end tests (``realShells``) collect into ``e2e`` instead, the
+##   suite of ``just e2e``.
 ##   ``tests/test_suite_lists_agree.nim`` fails when this list, the
 ##   Justfile's and the nimble task's stop naming the same files.
 ## * The TOML adapter's five dependency libraries are third-party source
@@ -57,9 +59,14 @@ type
     ## so its edges need the format sources. ``runsCompiler``: it runs the
     ## Nim compiler (and through ``nim c``, the C compiler) while it
     ## executes, so its EXECUTE edge declares those tools too.
+    ## ``realShells``: an end-to-end test (``tests/e2e_*.nim``) that drives
+    ## the real shells in a pseudo-terminal; its EXECUTE edge declares them
+    ## and collects into ``e2e`` rather than ``test``, as the Justfile's
+    ## ``e2e`` recipe is kept apart from ``test``.
     source: string
     needsToml: bool
     runsCompiler: bool
+    realShells: bool
 
 const clispecTests = [
   ClispecTest(source: "tests/test_dsl_model.nim"),
@@ -86,7 +93,11 @@ const clispecTests = [
     needsToml: true),
   ClispecTest(source: "tests/test_cs_m4b_override_precedence.nim",
     needsToml: true),
+  ClispecTest(source: "tests/test_cs_m5_engine_completes_every_level.nim"),
+  ClispecTest(source: "tests/test_cs_m5_internal_parameters_work_unlisted.nim"),
   ClispecTest(source: "tests/test_suite_lists_agree.nim"),
+  ClispecTest(source: "tests/e2e_cs_m5_real_shell_completion.nim",
+    runsCompiler: true, realShells: true),
 ]
 
 const
@@ -151,6 +162,12 @@ package clispec:
     "gzip"
     "mv"
     "rm"
+    # The shells the end-to-end completion test drives (``e2e``); the dev
+    # shell provides them. Windows runs only that test's PowerShell leg.
+    when not defined(windows):
+      "zsh"
+      "fish"
+      "pwsh"
 
   library clispec
 
@@ -165,6 +182,7 @@ package clispec:
   build:
     var testBuildActions: seq[BuildActionDef] = @[]
     var testExecuteActions: seq[BuildActionDef] = @[]
+    var e2eExecuteActions: seq[BuildActionDef] = @[]
 
     proc stemOf(source: string): string =
       var start = 0
@@ -205,6 +223,12 @@ package clispec:
         # the dev shell's ``CLISPEC_FORMAT_PATHS``. The other TOML tests
         # never read the variable, so their EXECUTE edges do not carry it.
         executeEnv.add(("CLISPEC_FORMAT_PATHS", formatPathFlags))
+      if spec.realShells:
+        # As in the dev shell: every shell this edge declares must run, so
+        # a shell missing from the action's PATH fails the test instead of
+        # being reported as skipped.
+        when not defined(windows):
+          executeEnv.add(("CLISPEC_E2E_REQUIRE", "bash,zsh,fish,pwsh"))
       let edge = buildNimUnittest.build(
         source = spec.source,
         binary = "build/test-bin/" & stem,
@@ -222,7 +246,14 @@ package clispec:
         extraEnv = executeEnv)
       if spec.runsCompiler:
         appendRegisteredActionToolIdentityRefs(run.id, @["nim", cTool])
-      testExecuteActions.add(run)
+      if spec.realShells:
+        when not defined(windows):
+          appendRegisteredActionToolIdentityRefs(run.id,
+            @["bash", "zsh", "fish", "pwsh"])
+        e2eExecuteActions.add(run)
+      else:
+        testExecuteActions.add(run)
 
     discard collect("test", testExecuteActions)
+    discard collect("e2e", e2eExecuteActions)
     discard collect("test-builds", testBuildActions)

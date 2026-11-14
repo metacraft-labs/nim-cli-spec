@@ -10,13 +10,18 @@
 ## the command that holds it. Visibility decides the rest:
 ##
 ## * ``shown`` items are listed wherever they apply;
-## * ``hidden`` items are never listed (they are still accepted);
-## * ``internal`` items are listed only in the help of the command that holds
-##   them — a subcommand in its parent's, a parameter in its declaring
-##   command's, not in the commands that inherit it — and never in the help
-##   of the root command, which is the program's primary help. An internal
-##   command's own help is complete, so ``tool internal --help`` documents
-##   the namespace that ``tool --help`` leaves out.
+## * ``hidden`` items are never listed (they are still accepted), in either
+##   form;
+## * an ``internal`` parameter, wherever it is declared, is listed in no
+##   human-readable help. It is still accepted and fills its field of the
+##   configuration object. The machine-readable form lists it wherever it
+##   applies, marked ``"visibility": "internal"``, so tools that know about
+##   it can find it;
+## * an ``internal`` subcommand is listed only in the help of the command
+##   that holds it, and never in the help of the root command, which is the
+##   program's primary help. So ``tool internal --help`` documents the
+##   namespace that ``tool --help`` leaves out (its internal parameters
+##   excepted).
 ##
 ## Human-readable layout
 ## =====================
@@ -74,7 +79,9 @@
 ## ``concat`` alias is followed directly by the value, ``-DX``).
 ## ``choices`` is the closed value set (empty when open); ``completer`` is
 ## the ``complete`` expression as written, for a completion engine that
-## calls it. The listing rules above decide which items appear. Within ``clispec-help/1`` keys are only ever added, never renamed
+## calls it. The listing rules above decide which items appear; unlike the
+## human-readable help, the machine-readable form includes ``internal``
+## parameters. Within ``clispec-help/1`` keys are only ever added, never renamed
 ## or removed, and their meaning does not change; anything else is a new
 ## schema name.
 
@@ -93,23 +100,25 @@ func cliListsCommand*(g: CliGrammar; holder, child: int): bool =
   of cvHidden: false
   of cvInternal: holder != 0
 
-func cliListsParam*(g: CliGrammar; holder, id: int): bool =
-  ## Whether the help of ``holder`` lists parameter ``id``. A parameter
-  ## whose ``sources`` exclude the command line is not part of it and is
-  ## never listed.
+func cliListsParam*(g: CliGrammar; holder, id: int;
+                    machineReadable = false): bool =
+  ## Whether the help of ``holder`` lists parameter ``id``: a ``shown`` one
+  ## always, an ``internal`` one only in the machine-readable form, a
+  ## ``hidden`` one never. A parameter whose ``sources`` exclude the command
+  ## line is not part of it and is never listed.
   let p = g.params[id]
   if csCli notin p.sources:
     return false
   case p.visibility
   of cvShown: true
   of cvHidden: false
-  of cvInternal:
-    holder != 0 and (p.declaredBy == holder or
-      p.declaredBy == g.commands[holder].callChild)
+  of cvInternal: machineReadable
 
-func cliHelpParams*(g: CliGrammar; command: int): seq[int] =
+func cliHelpParams*(g: CliGrammar; command: int;
+                    machineReadable = false): seq[int] =
   ## The parameters the help of ``command`` lists, in declaration order: its
-  ## own (inherited ones included), then its call:'s.
+  ## own (inherited ones included), then its call:'s. ``machineReadable``
+  ## selects the JSON form's listing, which includes ``internal`` ones.
   let holder = helpHolder(g, command)
   var all = g.commands[holder].params
   let call = g.commands[holder].callChild
@@ -117,7 +126,7 @@ func cliHelpParams*(g: CliGrammar; command: int): seq[int] =
     for id in g.commands[call].ownParams:
       all.add(id)
   for id in all:
-    if cliListsParam(g, holder, id):
+    if cliListsParam(g, holder, id, machineReadable):
       result.add(id)
 
 func cliHelpCommands*(g: CliGrammar; command: int): seq[int] =
@@ -328,7 +337,7 @@ proc commandJson(g: CliGrammar; command: int; program: string): JsonNode =
   result["visibility"] = %($cmd.visibility)
   result["usage"] = %cliUsageLine(g, holder, program)
   var params = newJArray()
-  for id in cliHelpParams(g, holder):
+  for id in cliHelpParams(g, holder, machineReadable = true):
     params.add(paramJson(g.params[id]))
   result["parameters"] = params
   var children = newJArray()

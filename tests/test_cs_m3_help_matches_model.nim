@@ -5,12 +5,14 @@
 ## The expected sets are derived here from the model the description was
 ## parsed into (``Hx.cliModel``), by the listing rules the library documents:
 ## a command's help lists the parameters it accepts and those of its
-## ``call:``; ``hidden`` items never; ``internal`` items only in the help of
-## the command that declares or holds them, and never in the root's (primary)
-## help. The derivation reads the model's own fields (``declaredIn``,
-## ``visibility``, ``anonymous``), not the grammar the renderer uses, and the
-## comparison runs both ways: nothing expected is missing and nothing else is
-## listed. Two goldens fix the human-readable layout and the
+## ``call:``; ``hidden`` items never; an ``internal`` parameter in no
+## human-readable help at any level, but in the machine-readable help
+## wherever it applies (marked ``internal``); an ``internal`` subcommand only
+## in the help of the command that holds it, and never in the root's
+## (primary) help. The derivation reads the model's own fields
+## (``visibility``, ``anonymous``, ``depth``), not the grammar the renderer
+## uses, and the comparison runs both ways: nothing expected is missing and
+## nothing else is listed. Two goldens fix the human-readable layout and the
 ## machine-readable form. Nothing is mocked.
 
 import std/[json, sets, strutils, unittest]
@@ -21,9 +23,9 @@ type
   Shade = enum
     light, dark
 
-proc completeRemoteUrls(prefix: string): seq[string] =
+proc completeRemoteUrls(ctx: CliCompletionContext): seq[CliCompletion] =
   ## A completer: the description names it, the help JSON reports it.
-  @[prefix]
+  @[CliCompletion(value: ctx.prefix)]
 
 cliProgram(Hx, "hx"):
   help "A help fixture"
@@ -79,7 +81,8 @@ proc callOf(cmd: PlainCliCommand): seq[PlainCliCommand] =
         other.depth == cmd.depth + 1:
       result.add(other)
 
-proc expectedParams(cmd: PlainCliCommand): seq[PlainCliParam] =
+proc expectedParams(cmd: PlainCliCommand;
+                    machineReadable: bool): seq[PlainCliParam] =
   ## The listing rules, applied to the model.
   var candidates = cmd.params
   for call in callOf(cmd):
@@ -90,7 +93,6 @@ proc expectedParams(cmd: PlainCliCommand): seq[PlainCliParam] =
           known = true
       if not known:
         candidates.add(p)
-  let isRoot = cmd.depth == 0
   for p in candidates:
     case p.visibility
     of cvShown:
@@ -98,7 +100,7 @@ proc expectedParams(cmd: PlainCliCommand): seq[PlainCliParam] =
     of cvHidden:
       discard
     of cvInternal:
-      if not isRoot and p.declaredIn == cmd.path:
+      if machineReadable:
         result.add(p)
 
 proc expectedCommands(cmd: PlainCliCommand): seq[PlainCliCommand] =
@@ -124,15 +126,19 @@ suite "test_cs_m3_help_matches_model":
       checkpoint(label)
       let text = Hx.helpText(cmd.path)
       let doc = parseJson(Hx.helpJson(cmd.path))
-      let expected = expectedParams(cmd)
+      let expected = expectedParams(cmd, machineReadable = false)
       var expectedNames = initHashSet[string]()
       for p in expected:
         expectedNames.incl(p.name)
-      # Machine-readable: the same set, both ways.
+      # Machine-readable: the shown ones and the internal ones, both ways,
+      # each with its visibility.
+      var expectedJson = initHashSet[string]()
+      for p in expectedParams(cmd, machineReadable = true):
+        expectedJson.incl(p.name & ":" & $p.visibility)
       var listed = initHashSet[string]()
       for p in doc["command"]["parameters"]:
-        listed.incl(p["name"].getStr)
-      check listed == expectedNames
+        listed.incl(p["name"].getStr & ":" & p["visibility"].getStr)
+      check listed == expectedJson
       # Human-readable: every expected parameter with its help text; no
       # other parameter of the whole model appears.
       for p in expected:
@@ -170,12 +176,13 @@ suite "test_cs_m3_help_matches_model":
         check ("  " & c.name) in text
         check c.help in text
 
-  test "internal items appear only in their namespace's help":
+  test "internal subcommands only in their namespace's help, internal parameters in none":
     check "--trace" notin Hx.helpText()
     check "internal" notin Hx.helpText()
-    check "--graph" in Hx.helpText(["build"])
-    check "--depth" in Hx.helpText(["remote"])
+    check "--graph" notin Hx.helpText(["build"])
+    check "--depth" notin Hx.helpText(["remote"])
     check "--depth" notin Hx.helpText(["remote", "add"])
+    check "--trace" notin Hx.helpText(["internal", "probe"])
     check "dump" in Hx.helpText(["internal"])
     check "probe" in Hx.helpText(["internal"])
     check "prune" in Hx.helpText(["remote"])
@@ -217,7 +224,6 @@ Options:
   -j, --jobs <int>       Parallel jobs [default: 4]
   --shade <light|dark>   Theme [default: dark]
   --tags <string>[,...]  Tags
-  --graph <string>       Dump the graph
   -l<string>..., --libs=<string>...
                          Libraries
 
@@ -266,6 +272,33 @@ Output:
         "completer": null,
         "configKeys": {
           "file": "verbose"
+        }
+      },
+      {
+        "name": "trace",
+        "kind": "flag",
+        "spellings": [
+          "--trace"
+        ],
+        "negation": null,
+        "value": "required",
+        "format": "separate",
+        "valueName": "string",
+        "choices": [],
+        "list": false,
+        "separator": null,
+        "counted": false,
+        "required": false,
+        "default": null,
+        "env": [],
+        "help": "Trace to a file",
+        "group": null,
+        "visibility": "internal",
+        "declaredIn": [],
+        "dynamicCompletion": false,
+        "completer": null,
+        "configKeys": {
+          "file": "trace"
         }
       },
       {
@@ -427,6 +460,33 @@ Output:
             }
           },
           {
+            "name": "trace",
+            "kind": "flag",
+            "spellings": [
+              "--trace"
+            ],
+            "negation": null,
+            "value": "required",
+            "format": "separate",
+            "valueName": "string",
+            "choices": [],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": null,
+            "env": [],
+            "help": "Trace to a file",
+            "group": null,
+            "visibility": "internal",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "trace"
+            }
+          },
+          {
             "name": "report",
             "kind": "flag",
             "spellings": [
@@ -482,6 +542,35 @@ Output:
             "completer": "completeRemoteUrls",
             "configKeys": {
               "file": "remote.url"
+            }
+          },
+          {
+            "name": "depth",
+            "kind": "flag",
+            "spellings": [
+              "--depth"
+            ],
+            "negation": null,
+            "value": "required",
+            "format": "separate",
+            "valueName": "int",
+            "choices": [],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": null,
+            "env": [],
+            "help": "Fetch depth",
+            "group": null,
+            "visibility": "internal",
+            "declaredIn": [
+              "remote"
+            ],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "remote.depth"
             }
           },
           {
@@ -556,6 +645,33 @@ Output:
             }
           },
           {
+            "name": "trace",
+            "kind": "flag",
+            "spellings": [
+              "--trace"
+            ],
+            "negation": null,
+            "value": "required",
+            "format": "separate",
+            "valueName": "string",
+            "choices": [],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": null,
+            "env": [],
+            "help": "Trace to a file",
+            "group": null,
+            "visibility": "internal",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "trace"
+            }
+          },
+          {
             "name": "report",
             "kind": "flag",
             "spellings": [
@@ -611,6 +727,35 @@ Output:
             "completer": "completeRemoteUrls",
             "configKeys": {
               "file": "remote.url"
+            }
+          },
+          {
+            "name": "depth",
+            "kind": "flag",
+            "spellings": [
+              "--depth"
+            ],
+            "negation": null,
+            "value": "required",
+            "format": "separate",
+            "valueName": "int",
+            "choices": [],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": null,
+            "env": [],
+            "help": "Fetch depth",
+            "group": null,
+            "visibility": "internal",
+            "declaredIn": [
+              "remote"
+            ],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "remote.depth"
             }
           },
           {

@@ -74,6 +74,13 @@ type
       ## when zero).
     disableHelpFlag*: bool
       ## Do not treat ``--help`` / ``-h`` as a request for help.
+    completionEntry*: string
+      ## The hidden first word through which a shell's completion script
+      ## asks the program for candidates (``clispec/completion``);
+      ## ``DefaultCompletionEntry`` (``__complete``) when empty.
+    disableCompletionEntry*: bool
+      ## Do not treat that word as a completion request: the program
+      ## answers completion requests itself, or not at all.
 
   CliTokens* = object
     ## What ``cliTokenize`` read from argv.
@@ -123,13 +130,19 @@ func effectiveExitCode(options: CliOptions): int =
 func subcommandWords(g: CliGrammar; command: int): string =
   cliSubcommandWords(g, command).join(", ")
 
+const DefaultCompletionEntry* = "__complete"
+  ## The word ``CliOptions.completionEntry`` defaults to.
+
 type
-  FlagMatch = object
-    found: bool
-    id: int
-    spelling: string
-    negated: bool
-    attached: Option[string]
+  FlagMatch* = object
+    ## A word read as one flag (``cliMatchFlagWord``).
+    found*: bool
+    id*: int
+      ## The parameter id.
+    spelling*: string
+      ## The spelling the word used (``--jobs``, ``-j``, ``--no-color``).
+    negated*: bool
+    attached*: Option[string]
       ## A value written in the same word (``--x=v``, ``-ov``).
 
 func findFlag(g: CliGrammar; scope: seq[int];
@@ -204,6 +217,15 @@ func matchSingleDash(g: CliGrammar; scope: seq[int];
     let alias = g.params[best].alias
     return FlagMatch(found: true, id: best, spelling: alias,
       attached: some(word[alias.len .. ^1]))
+
+func cliMatchFlagWord*(g: CliGrammar; scope: seq[int];
+                       word: string): FlagMatch =
+  ## Reads ``word`` (which starts with ``-``) as one flag of the parameters
+  ## ``scope``, as the parser does: an exact spelling, ``--flag=value``,
+  ## ``--no-<name>``, or a ``concat`` spelling followed by its value. A
+  ## cluster of short flags is not read here.
+  if word.startsWith("--"): matchLong(g, scope, word)
+  else: matchSingleDash(g, scope, word)
 
 func takesNoValue(p: CliGrammarParam): bool =
   p.isSwitch or p.counted

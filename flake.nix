@@ -89,7 +89,17 @@
               editorconfig-checker
               nixfmt
               prettier
+              # The shells the real-shell completion test
+              # (`tests/e2e_cs_m5_real_shell_completion.nim`, `just e2e`)
+              # drives in a pseudo-terminal. bash comes with mkShell's stdenv.
+              bashInteractive
+              zsh
+              fish
+              powershell
             ];
+            # Every shell above is provisioned, so the real-shell test fails
+            # rather than skips when one of them cannot be found.
+            CLISPEC_E2E_REQUIRE = "bash,zsh,fish,pwsh";
           };
 
           # The library is source: consumers put `src/` on their Nim path.

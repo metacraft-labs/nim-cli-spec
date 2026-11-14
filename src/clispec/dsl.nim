@@ -104,7 +104,9 @@
 ## reject ``merge = append`` on a parameter that is neither a ``seq`` nor
 ## counted, and a combine proc that cannot be called as
 ## ``proc (candidates: openArray[CliSourcedValue[T]]): T`` for the
-## parameter's type ``T``.
+## parameter's type ``T``, and a ``complete`` expression that is not a
+## ``CliCompleter`` (``proc (ctx: CliCompletionContext):
+## seq[CliCompletion]``, ``clispec/completers``).
 ##
 ## Extensions
 ## ==========
@@ -136,9 +138,9 @@
 
 import std/[macros, options, strutils, tables]
 
-import ./[model, origins]
+import ./[model, origins, completers]
 
-export model
+export model, completers
 
 type
   CliNaming* = object
@@ -1301,8 +1303,9 @@ proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
   ## Code that checks, where it is placed, what the parser cannot check from
   ## spellings alone: that ``default``, ``optionalValue``, ``values`` entries
   ## and ``implies`` values are values of their parameter's type, that a
-  ## ``counted`` parameter is an integer and that a ``negatable`` one is a
-  ## ``bool``. Each failing check is a compile error naming the parameter,
+  ## ``counted`` parameter is an integer, that a ``negatable`` one is a
+  ## ``bool``, that a combine proc and a ``complete`` completer have the
+  ## signatures they need. Each failing check is a compile error naming the parameter,
   ## reported where the offending argument was written. A macro that builds
   ## a model places these checks in its output, in the scope where the
   ## description's types are visible (``plainCliModel`` does). The checks
@@ -1364,6 +1367,13 @@ proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
         result.add(failWhenNot(infix(typeNode, "is", ident("seq")),
           prefix & "merge = append concatenates lists; " & param.nimType &
           " is not a seq", param.sourceFile, param.sourceLine, 0))
+      if param.complete.isSet:
+        let c = param.complete
+        result.add(failWhenNot(newCall(bindSym("cliCompleterFits"),
+          parseExpr(c.code)), prefix & "complete = `" & c.code & "` is " &
+          "not a completer; it must be a CliCompleter: proc (ctx: " &
+          "CliCompletionContext): seq[CliCompletion]", c.sourceFile,
+          c.sourceLine, c.sourceColumn))
       if param.merge == cmrCombine:
         let c = param.combine
         result.add(failWhenNot(newCall(bindSym("cliCombineFits"), typeNode,

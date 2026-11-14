@@ -29,5 +29,12 @@ task test, "Run the test suite":
             "test_cs_m4_unknown_key_rejected",
             "test_cs_m4b_convention_conversion",
             "test_cs_m4b_per_source_convention",
-            "test_cs_m4b_override_precedence", "test_suite_lists_agree"]:
+            "test_cs_m4b_override_precedence",
+            "test_cs_m5_engine_completes_every_level",
+            "test_cs_m5_internal_parameters_work_unlisted",
+            "test_suite_lists_agree"]:
+    exec "nim c -r --hints:off tests/" & t & ".nim"
+
+task e2e, "Run the end-to-end tests (real shells in a pseudo-terminal)":
+  for t in ["e2e_cs_m5_real_shell_completion"]:
     exec "nim c -r --hints:off tests/" & t & ".nim"

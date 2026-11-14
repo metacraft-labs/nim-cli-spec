@@ -3,14 +3,23 @@
 Clispec: a typed model of a command line (`src/clispec/model.nim`), the
 `cli:` description language that builds it at compile time
 (`src/clispec/dsl.nim`), and `cliProgram` (`src/clispec/program.nim`), which
-generates a program's typed configuration object, argv parser and help from
-it. `README.md` describes all of it and the extension mechanism; read it
+generates a program's typed configuration object, argv parser, help and
+shell completion from it. `README.md` describes all of it and the extension mechanism; read it
 first.
 
 ## Commands
 
 - Dev shell: `nix develop` (nim, just and the pre-commit tools).
 - Test: `just test` (also `nimble test`).
+- End-to-end: `just e2e` (also `nimble e2e`): real bash, zsh, fish and
+  pwsh, which the dev shell provides, driven in a pseudo-terminal. Kept out
+  of `just test`; run it whenever completion, the scripts or help change.
+  On Windows, where there is no Nix and no pseudo-terminal, it runs the
+  PowerShell legs only (`TabExpansion2` in pwsh 7 and in Windows PowerShell
+  5.1) and needs nothing but `nim` on `PATH`. From the checkout root in
+  PowerShell, set `$env:CLISPEC_E2E_REQUIRE = 'pwsh,powershell'` and run
+  `nimble e2e`, or without nimble
+  `nim c -r --hints:off tests/e2e_cs_m5_real_shell_completion.nim`.
 - Lint: `just lint` (`nim check` over the umbrella and every test).
 - Build without running: `just build`.
 
@@ -32,6 +41,17 @@ first.
 - `src/clispec/errors.nim`: the usage-error taxonomy (`CliErrorKind`, one
   wording per kind in `cliErrorMessage`) and `CliHelpRequest`.
 - `src/clispec/help.nim`: human-readable help and the `clispec-help/1` JSON.
+- `src/clispec/completers.nim`: the completer type (`CliCompleter`,
+  `CliCompletionContext`, `CliCompletion`), the check `cliModelTypeChecks`
+  generates for `complete =`, and the path completers. Depends on nothing
+  else in the library, so `dsl.nim` can import it.
+- `src/clispec/completion.nim`: the completion engine (`cliComplete`, which
+  walks the words with the parser's flag matching, `cliMatchFlagWord`), the
+  `__complete` protocol (`cliCompletionReply`, `CliCompletionRequest`), the
+  bash command-line reader and per-shell quoting.
+- `src/clispec/completion_scripts.nim`: the Bash, Zsh, Fish and PowerShell
+  scripts (`cliCompletionScript`). They stay thin: no knowledge of any
+  command line, and nothing the program prints is evaluated.
 - `src/clispec/origins.nim`: candidates (one value a source supplied) and
   origins (`CliOrigin`: the winner and every loser with its fate).
 - `src/clispec/sources.nim`: configuration layers, the environment, the
@@ -59,10 +79,17 @@ first.
   precedence and origins, merge rules, enforcement, defaults after the merge
   and schema validation. The `test_cs_m4b_*` tests cover naming conventions:
   the conversion table, each source in its own convention (TOML layers and
-  the command line), and the precedence of the overrides.
+  the command line), and the precedence of the overrides. The `test_cs_m5_*`
+  tests cover completion: the engine's exact candidates at every word
+  position and the protocol answer per shell, and `internal` parameters
+  (accepted, in no help screen, never completed, marked in the JSON).
+  `tests/e2e_cs_m5_real_shell_completion.nim` (`just e2e`) types into real
+  shells on a pseudo-terminal it opens and reads what the fixture
+  `tests/fixtures/cs_m5_shell/shx.nim` received.
 - `tests/test_suite_lists_agree.nim` keeps the three lists of test modules
   equal: the Justfile's `tests`, the nimble `test` task and `repro.nim`'s
-  `clispecTests`. It also keeps the TOML dependencies' revisions equal across
+  `clispecTests` (and for `tests/e2e_*.nim`: the Justfile's `e2e-tests`,
+  the nimble `e2e` task and the `realShells: true` entries). It also keeps the TOML dependencies' revisions equal across
   `flake.nix`, `clispec.nimble` and `repro.nim`. A new test module goes into
   all three lists, and a revision bump into all three files (`repro.nim`
   also records the SHA-256 of the GitHub archive of the revision).
@@ -95,6 +122,13 @@ first.
   new `CliErrorKind` with its wording in `cliErrorMessage` and a case in
   the golden table of `test_cs_m3_parser_error_taxonomy`. The parser and
   generated code raise or return; nothing ends the process.
+- **Tests kill only what they started.** A test that runs processes (the
+  e2e shells) stops them by the pid it got when it started them, never by
+  name or pattern (`pkill`, `killall`), and every read it makes has a
+  deadline.
+- **The completion protocol is a contract too.** An installed script can be
+  older than the program it calls, so within a shell name the arguments and
+  the answer only change compatibly.
 - **The help JSON is a contract.** Within `clispec-help/1` keys are only
   added, never renamed or removed; anything else is a new schema name.
 - **Configuration-file errors have one wording per kind too**

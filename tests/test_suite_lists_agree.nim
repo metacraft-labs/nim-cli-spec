@@ -10,6 +10,14 @@
 ## runner. This test reads the files as text and requires every list to name
 ## exactly the ``tests/test_*.nim`` modules on disk.
 ##
+## The end-to-end tests (``tests/e2e_*.nim``, real shells in a
+## pseudo-terminal) are a separate suite run the same three ways: the
+## Justfile's ``e2e-tests`` (``just e2e``), the nimble ``e2e`` task and the
+## ``clispecTests`` entries of ``repro.nim`` marked ``realShells: true``
+## (collected into ``e2e``). Those three must name exactly the
+## ``tests/e2e_*.nim`` modules on disk, and no other entry may be marked
+## ``realShells``.
+##
 ## It also checks the two facts ``repro.nim`` records per test that the other
 ## runners do not need:
 ##
@@ -81,25 +89,38 @@ proc testsOnDisk(): seq[string] =
     result.add(path.extractFilename.changeFileExt(""))
   result.sort()
 
-proc justfileTests(): seq[string] =
-  ## The ``tests := "..."`` variable of the Justfile.
+proc e2eOnDisk(): seq[string] =
+  for path in walkFiles(testsDir / "e2e_*.nim"):
+    result.add(path.extractFilename.changeFileExt(""))
+  result.sort()
+
+proc justfileList(variable: string): seq[string] =
+  ## The ``<variable> := "..."`` variable of the Justfile.
   for line in readFile(repoDir / "Justfile").splitLines():
-    if line.startsWith("tests :="):
+    if line.startsWith(variable & " :="):
       let literals = quotedStrings(line)
       if literals.len == 1:
         return literals[0].splitWhitespace()
 
-proc nimbleTests(): seq[string] =
-  ## The array the nimble ``test`` task loops over.
-  let body = between(readFile(repoDir / "clispec.nimble"), "task test,", "exec")
+proc justfileTests(): seq[string] =
+  justfileList("tests")
+
+proc nimbleList(task, prefix: string): seq[string] =
+  ## The array the nimble task ``task`` loops over.
+  let body = between(readFile(repoDir / "clispec.nimble"),
+    "task " & task & ",", "exec")
   for literal in quotedStrings(body):
-    if literal.startsWith("test_"):
+    if literal.startsWith(prefix):
       result.add(literal)
+
+proc nimbleTests(): seq[string] =
+  nimbleList("test", "test_")
 
 type ReproTest = object
   stem: string
   needsToml: bool
   runsCompiler: bool
+  realShells: bool
 
 proc reproTests(): seq[ReproTest] =
   ## The ``clispecTests`` list of repro.nim: one ``ClispecTest(...)`` per
@@ -113,7 +134,8 @@ proc reproTests(): seq[ReproTest] =
     result.add(ReproTest(
       stem: literals[0].extractFilename.changeFileExt(""),
       needsToml: "needsToml: true" in entry,
-      runsCompiler: "runsCompiler: true" in entry))
+      runsCompiler: "runsCompiler: true" in entry,
+      realShells: "realShells: true" in entry))
 
 proc codeLines(text: string): seq[string] =
   ## The lines of ``text`` that are not comments, stripped.
@@ -147,7 +169,8 @@ proc tomlHelpers(): seq[string] =
   ## adapter; a test that imports one needs it too.
   for path in walkFiles(testsDir / "*.nim"):
     let stem = path.extractFilename.changeFileExt("")
-    if not stem.startsWith("test_") and usesTomlAdapter(readFile(path)):
+    if not stem.startsWith("test_") and not stem.startsWith("e2e_") and
+        usesTomlAdapter(readFile(path)):
       result.add(stem)
 
 proc joinConcatenations(text: string): string =
@@ -232,10 +255,27 @@ suite "test_suite_lists_agree":
   test "repro.nim builds and runs every test module and nothing else":
     var listed: seq[string] = @[]
     for t in reproTests():
-      listed.add(t.stem)
+      if not t.realShells:
+        listed.add(t.stem)
     check listed.len > 0
     check duplicates(listed).len == 0
     check sortedList(listed) == onDisk
+
+  test "the end-to-end suite is the same in all three runners":
+    let e2e = e2eOnDisk()
+    check e2e.len > 0
+    let just = justfileList("e2e-tests")
+    check duplicates(just).len == 0
+    check sortedList(just) == e2e
+    let nimble = nimbleList("e2e", "e2e_")
+    check duplicates(nimble).len == 0
+    check sortedList(nimble) == e2e
+    var repro: seq[string] = @[]
+    for t in reproTests():
+      if t.realShells:
+        repro.add(t.stem)
+    check duplicates(repro).len == 0
+    check sortedList(repro) == e2e
 
   test "repro.nim gives the TOML sources to exactly the tests that use them":
     let helpers = tomlHelpers()

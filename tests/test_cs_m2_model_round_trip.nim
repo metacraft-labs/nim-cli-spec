@@ -22,9 +22,10 @@ type
   Color = enum
     red, green, blue
 
-proc completeRepos(prefix: string): seq[string] =
-  ## A completer, only referenced by the description.
-  @[prefix]
+proc completeRepos(ctx: CliCompletionContext): seq[CliCompletion] =
+  ## A completer (the signature ``cliModelTypeChecks`` requires), only
+  ## referenced by the description.
+  @[CliCompletion(value: ctx.prefix)]
 
 proc strictest(candidates: openArray[CliSourcedValue[int]]): int =
   ## A combine proc (the signature ``cliModelTypeChecks`` requires), only

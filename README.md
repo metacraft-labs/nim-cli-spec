@@ -24,8 +24,13 @@ and deriving everything else from that description. This release provides:
   Configuration files are read through a small format interface; TOML is
   provided by the optional `clispec/toml_source`, the only module that needs
   a serialization library.
+- **Shell completion** for Bash, Zsh, Fish and PowerShell: one completion
+  engine generated from the description (`clispec/completion`), which the
+  program runs itself, and a thin script per shell that asks it
+  (`clispec/completion_scripts`). Completers (`clispec/completers`) supply
+  values that are known only at run time.
 
-The layer planned next is shell completion. Clispec is meant to replace
+Clispec is meant to replace
 [confutils](https://github.com/status-im/nim-confutils) for programs that
 describe their own command line. It also describes the command lines of
 external tools that a program runs.
@@ -78,7 +83,8 @@ whose `groups` lists the `group` sections.
 import clispec
 
 type Color = enum red, green, blue
-proc repoNames(prefix: string): seq[string] = @[]
+proc repoNames(ctx: CliCompletionContext): seq[CliCompletion] =
+  cliCompletions(["app", "lib"])
 
 const app = plainCliModel:
   help "Builds and checks projects"
@@ -108,13 +114,13 @@ Every parameter accepts:
 | `default = <expr>`                                               | the value when no source supplies one; not together with `required = true`. A positional with a default is optional                                                                                                                                                              |
 | `env = ["NAME", ...]`                                            | the environment variables that supply the value, first match wins (one name may be written without brackets)                                                                                                                                                                     |
 | `values = [a, b, c]`                                             | the closed set of accepted values (elements, for a list); an enum type is a closed set by itself                                                                                                                                                                                 |
-| `complete = <completer>`                                         | a proc that completes the value dynamically                                                                                                                                                                                                                                      |
+| `complete = <completer>`                                         | a `CliCompleter` that completes the value dynamically (see [Shell completion](#shell-completion))                                                                                                                                                                                |
 | `key = "section.name"`                                           | the configuration-file key, replacing the derived one                                                                                                                                                                                                                            |
 | `sources = {cli, env, file}`                                     | which sources may supply the value (default: all three)                                                                                                                                                                                                                          |
 | `merge = replace \| append \| errorOnConflict \| <combine proc>` | how values from several sources combine: the highest source wins (a list repeated within one source collects); lists are concatenated lowest source first; two different values are an error; or a proc of yours receives every source's value (see [Merge rules](#merge-rules)) |
 | `separator = ","`                                                | a list may be given as one delimited value                                                                                                                                                                                                                                       |
 | `implies = [<param> = <value>, ...]`                             | setting this parameter sets the others unless they are given explicitly                                                                                                                                                                                                          |
-| `visibility = shown \| internal \| hidden`                       | `internal`: left out of the primary help and completion, listed by the help of the command that holds it; `hidden`: accepted and listed nowhere                                                                                                                                  |
+| `visibility = shown \| internal \| hidden`                       | `internal`: a parameter is accepted but shown in no help screen and never offered by completion; a command is left out of the primary help and completion and listed by the command that holds it. `hidden`: accepted and listed nowhere                                         |
 
 A flag also accepts `short = 'x'` (a one-letter spelling, `-x`, beside
 `--<name>`), `optionalValue = <expr>` (the flag may appear bare, taking this
@@ -240,8 +246,9 @@ a `perConvention` entry for `declared` or for one convention twice, a
 when `sources` exclude `cli`, or for a file source when they exclude `file`,
 and two parameters of one command whose long flags or keys in one source
 come out the same once converted and overridden. The generated checks also reject
-`merge = append` on a parameter that is neither a `seq` nor counted, and a
-combine proc that does not have the signature below. In a `cliProgram` that
+`merge = append` on a parameter that is neither a `seq` nor counted, a
+combine proc that does not have the signature below, and a `complete`
+expression that is not a `CliCompleter`. In a `cliProgram` that
 declares a `configSchema`, a configuration key that is `schema` or lies
 under `extensions` is an error too: both belong to the file itself.
 
@@ -362,10 +369,14 @@ Generated for `Tool` (exported when written
 | `Tool.loadWithOrigins(argv, sources = CliSources(), options)`   | the same, and the origin object: `tuple[config: Tool, origins: ToolOrigins]` |
 | `Tool.configSchema`                                             | the configuration-file schema: its identifier and every key with its type    |
 | `Tool.helpText(path = [])` / `Tool.helpJson(path = [])`         | the help of the command reached by the subcommand words `path`               |
+| `Tool.complete(words, cursor = -1)`                             | the completion candidates for `words[cursor]` (the last word by default)     |
+| `Tool.completionScript(shell)` / `Tool.completionReply(args)`   | a shell's completion script; the answer to a script's request                |
 | `Tool.cliGrammar` / `Tool.cliModel`                             | the parser's tables and the model, both constants                            |
 
 `CliOptions` sets the program name used in messages, the exit code of usage
-errors (`usageExitCode`, 2 when not set) and `disableHelpFlag`. A consumer
+errors (`usageExitCode`, 2 when not set), `disableHelpFlag`, and the word
+through which completion scripts ask for candidates (`completionEntry`,
+`__complete` when not set; `disableCompletionEntry` turns it off). A consumer
 whose model carries an extension generates the same code from its own macro
 with `cliProgramCode(model, typeName, program, exported)`.
 
@@ -447,11 +458,12 @@ Options:
   -j, --jobs <int>    Parallel jobs [default: 4]
 ```
 
-`hidden` items are never listed. `internal` items are listed only in the help
-of the command that holds them (a subcommand in its parent's, a parameter in
-its declaring command's) and never in the root command's help, which is the
-program's primary help; an internal command's own help is complete, so
-`tool internal --help` documents what `tool --help` leaves out.
+`hidden` items are never listed. An `internal` parameter, wherever it is
+declared, is listed in no help screen; it is still accepted and fills its
+field. An `internal` subcommand is listed only in the help of the command that
+holds it, never in the root command's help, which is the program's primary
+help; so `tool internal --help` documents the namespace that `tool --help`
+leaves out (its internal parameters excepted).
 
 The machine-readable form, `helpJson`, is a JSON document with the schema
 name `clispec-help/1`, meant for completion and editor hints:
@@ -479,9 +491,124 @@ when the set is open; `completer` is the `complete` expression as written.
 may supply it), and `conventions` the convention of every source.
 
 `commands` nests the listed subcommands recursively, and the listing rules
-above decide what appears. Keys are always emitted in this order. Within
+above decide what appears, with one difference: the machine-readable form
+also lists `internal` parameters, wherever they apply, with `"visibility":
+"internal"`, so tools that know about them can still find them. `hidden`
+items are left out of it too. Keys are always emitted in this order. Within
 `clispec-help/1` keys are only ever added, never renamed or removed, and
 their meaning does not change; anything else gets a new schema name.
+
+### Shell completion
+
+The completion engine is generated with the rest of the program, from the same
+description, and runs inside the program; the shell scripts only pass it the
+words being completed and print what it returns. So completion always matches
+the installed binary, and a script never needs regenerating when the command
+line changes.
+
+```nim
+import clispec
+
+type Mode = enum debug, release
+
+proc remotes(ctx: CliCompletionContext): seq[CliCompletion] =
+  # A completer: values known only at run time. It may list everything;
+  # only those that start with `ctx.prefix` are offered.
+  @[CliCompletion(value: "origin", description: "the default remote"),
+    CliCompletion(value: "upstream")]
+
+cliProgram(Tool, "tool"):
+  boolFlag verbose is bool, short = 'v', help = "Talk more"
+  subcmd "build", help = "Build a project", aliases = ["b"]:
+    flag mode is Mode, help = "Build mode"
+    flag remote is string, complete = remotes
+    flag log is string, complete = cliCompleteFiles
+  subcmd "internal", visibility = internal:
+    subcmd "dump":
+      boolFlag deep is bool
+
+proc values(cs: seq[CliCompletion]): seq[string] =
+  for c in cs: result.add c.value
+
+assert values(Tool.complete(@[""])) == @["build"]
+assert values(Tool.complete(@["build", "--m"])) == @["--mode"]
+assert values(Tool.complete(@["build", "--mode", ""])) == @["debug", "release"]
+assert values(Tool.complete(@["b", "--remote=u"])) == @["--remote=upstream"]
+assert values(Tool.complete(@["internal", ""])) == @["dump"]
+
+# In `main`: a completion request is a CliHelpRequest whose text is printed.
+proc main(argv: seq[string]): int =
+  if argv.len == 2 and argv[0] == "completion":
+    var shell: CliShell
+    if not cliParseShell(argv[1], shell):
+      return 2
+    stdout.write Tool.completionScript(shell)
+    return 0
+  try:
+    discard Tool.load(argv)
+  except CliHelpRequest as e:   # --help, and completion requests
+    stdout.write e.text
+  except CliUsageError as e:
+    return e.exitCode
+
+assert main(@["__complete", "fish", "build", "--mode", "r"]) == 0
+```
+
+What is offered where:
+
+- A word starting with `-` gets every spelling of the command's flags that
+  starts with it (`--name`, `--no-name` for a negatable flag, the `alias`,
+  `-x`), then `--help` and `-h`. A flag that only takes `--flag=value`
+  (`format = equals`) is offered as `--flag=`.
+- After a flag that takes the next word as its value, and in
+  `--flag=<partial>`, the flag's values: its closed set (`values`, or an
+  enum's values), else its completer's, else `true`/`false` for a switch
+  written `--flag=`. In a list with a `separator`, the element after the last
+  separator.
+- Any other word: the subcommands (a name, or an alias when the name does not
+  match what was typed), then the values of the positional the word fills.
+  After `--`, positionals only.
+- `hidden` items and `internal` parameters are never offered; an `internal`
+  subcommand only inside the command that holds it, never at the root.
+
+A completer is a `CliCompleter`, `proc (ctx: CliCompletionContext):
+seq[CliCompletion]` (a plain proc of that signature, or any expression of that
+type, such as a call that returns a closure). The context names the program,
+the command path, the parameter, the words before the one being completed and
+the typed `prefix`. A completer that raises offers nothing; a `complete`
+expression of another type is a compile error naming the parameter.
+`cliCompleteFiles` and `cliCompleteDirectories` complete paths.
+
+**The scripts.** `Tool.completionScript(shell)` (or
+`cliCompletionScript(shell, program)`) returns the script for `cshBash`,
+`cshZsh`, `cshFish` or `cshPowerShell`, with the program name filled in. A
+program typically prints it from a `completion <shell>` command of its own,
+and the user installs it:
+
+| Shell      | Install                                                                                                          |
+| ---------- | ---------------------------------------------------------------------------------------------------------------- |
+| Bash       | `source <(tool completion bash)` in `~/.bashrc`, or save it as `~/.local/share/bash-completion/completions/tool` |
+| Zsh        | save it as `_tool` in a directory of `$fpath`, or `source <(tool completion zsh)` after `compinit`               |
+| Fish       | save it as `~/.config/fish/completions/tool.fish`                                                                |
+| PowerShell | `tool completion powershell \| Out-String \| Invoke-Expression` in `$PROFILE`                                    |
+
+**The protocol.** A script runs `tool __complete <shell> <arguments...>`
+and prints what the program writes. `load` answers it by raising
+`CliCompletionRequest`, a `CliHelpRequest` whose `text` is the answer, so a
+program that prints help requests and exits 0 answers completion too. Zsh and
+Fish pass the words after the program name (the last is the one being
+completed) and read `value<TAB>description` lines. Bash passes
+`$COMP_WORDBREAKS` and the command line up to the cursor, which the program
+reads with the shell's quoting rules, and reads back the quoted text that
+replaces the word Bash completes. PowerShell passes each word as `:` plus the
+base64 of its UTF-8 bytes (some versions drop empty arguments and mangle
+quotes when they run a native program) and reads `completion text<TAB>list
+text<TAB>tooltip` lines. Nothing the program prints is evaluated by the
+scripts. A program that dispatches some words itself before parsing (a thin
+front end that hands everything else to another executable, say) forwards
+`__complete ...` unchanged to the executable that holds the description;
+`CliOptions.completionEntry` changes the word, and `Tool.completionReply`
+computes the answer without `load`.
 
 ### How parsing is layered
 
@@ -727,12 +854,14 @@ reach a hook, so an extension's vocabulary must avoid those words.
 ## Development
 
 ```sh
-nix develop          # nim, just and the hook tools
+nix develop          # nim, just, the hook tools and the shells e2e drives
 just test            # the test suite
+just e2e             # real bash, zsh, fish and pwsh completing in a pseudo-terminal
 just lint            # nim check over the library and the tests
 ```
 
-Without Nix, any Nim 2.x will do: `nimble test`.
+Without Nix, any Nim 2.x will do: `nimble test` (and `nimble e2e`, which
+skips, loudly, each shell that is not on `PATH`).
 
 ## License
 
