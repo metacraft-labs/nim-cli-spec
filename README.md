@@ -156,7 +156,8 @@ takes the next word as its value when that word is a valid value),
 parameter a value, in command-line order).
 
 A command takes `help`, `aliases` and `visibility` in its head
-(`subcmd "build", help = "...", aliases = ["b"]:`, `call(help = "..."):`), or
+(`subcmd "build", help = "...", aliases = ["b"]:`, `call(help = "..."):`),
+and a subcommand `shadowedByWord = true` (see `helpWord` below), or
 its help as a `help "<text>"` statement in its body, which is also how the
 root command gets one. `group "<title>"[, help = "<text>"]:` lists the
 parameters declared inside it under one heading in help; it opens no command
@@ -274,7 +275,9 @@ giving a value that is not a string literal, `acceptsNextWord` without
 expression, an unknown `parsing` rule, `flagMatching` or `commandMatching` mode, an argument given twice, two
 subcommands of one command answering to the same word (compared under
 `commandMatching`), a subcommand answering to `help` under `parsing
-helpWord` or to `version` under `versionWord`, `rest` on a flag, on a type
+helpWord` or to `version` under `versionWord` without `shadowedByWord =
+true`, `shadowedByWord` on a subcommand that answers to neither (or on
+`call:`), `rest` on a flag, on a type
 that is not a `seq` or together with `repeated`, `aliases` on `call:`,
 a `help` statement inside a `group` section (the section's help goes in
 its head), `keyStyle`, `convention`, `configSchema`, `flagMatching`,
@@ -525,13 +528,30 @@ Directly under `cli:`:
     is the help of `remote`). It is compared under `commandMatching`, and
     `CliOptions(disableHelpFlag: true)` turns it off with the flags. Where
     no subcommand word is expected it is an ordinary word. A subcommand
-    answering to `help` is a declaration error;
+    answering to `help` is a declaration error, unless it is declared
+    `shadowedByWord = true` (below);
   - `versionWord`: the same for the word `version`, which asks for the
     version (below) when the program gives a version text;
   - `longHelpOnly`: only `--help` asks for help; `-h`, alone or in a
     cluster (whatever `helpInCluster` says), is an unknown flag unless a
     flag declares it. The help row of `CliHelpLayout.helpFlag` and
     completion then show `--help` alone.
+
+  `subcmd "help", shadowedByWord = true:` keeps a subcommand that answers
+  (by its name or an alias, under `commandMatching`) to `help` under
+  `helpWord` or `version` under `versionWord`, as confutils' type-based
+  loader has a command named `help` that its help lists but the word
+  `help` never reaches. The rule wins: where it applies, the word asks
+  for help (or the version) exactly as without the subcommand (`tool help
+  build` is the top-level help), and completion walks the words after it
+  as if no subcommand answered to it. Where it does not apply
+  (`disableHelpFlag`; no `versionText`), the word reaches the subcommand,
+  and the subcommand's other aliases always do. Otherwise the subcommand
+  is an ordinary one: it is in the model and the grammar, help lists it,
+  completion offers its word, `helpText(["help"])` renders its own help
+  (the path names it), and the JSON marks it `"shadowedByWord": true`. The
+  mark on a subcommand that answers to no reserved word is a declaration
+  error.
 
   Neither `colonValues` nor `equalsTakesNext` looks inside a word that is
   the value of the flag before it: `-o --x:y` gives `-o` the value
@@ -665,6 +685,7 @@ assert Rec.optionsTable(layout = CliHelpLayout(column: 26, width: 60,
 The subcommand-word rules, a rest positional and the version:
 
 ```nim
+import std/strutils
 import clispec
 
 cliProgram(Dbg, "dbg"):
@@ -679,6 +700,9 @@ cliProgram(Dbg, "dbg"):
   subcmd "run":
     pos program is string
     pos args is seq[string], rest = true, required = false
+  subcmd "help", shadowedByWord = true, aliases = ["topics"],
+      help = "Help topics":
+    discard
 
 assert Dbg.load(@["LIST"]).command == DbgCommand.list
 assert Dbg.load(@["StartBackend", "db"]).startBackend.kind == "db"
@@ -697,6 +721,8 @@ try:
   assert false
 except CliHelpRequest as e:
   assert e.commandPath.len == 0 and e.text == Dbg.helpText()
+assert "Help topics" in Dbg.helpText()
+assert Dbg.load(@["topics"]).command == DbgCommand.help
 try:
   discard Dbg.load(@["-h"])
   assert false
@@ -799,7 +825,8 @@ name `clispec-help/1`, meant for completion and editor hints:
  "parsing": {"flagMatching": "exact" | "ignoreCase" | "ignoreStyle",
              "rules": [RULE, ...],
              "commandMatching": "ignoreCase" | "ignoreStyle" (when set)}}
-COMMAND   = {"name", "path", "aliases", "help", "visibility", "usage",
+COMMAND   = {"name", "path", "aliases", "help", "visibility",
+             "shadowedByWord": true (a shadowedByWord subcommand only), "usage",
              "parameters": [PARAMETER, ...], "commands": [COMMAND, ...]}
 PARAMETER = {"name", "kind": "flag" | "positional", "spellings",
              "negation": string | null, "value": "none" | "required" | "optional",

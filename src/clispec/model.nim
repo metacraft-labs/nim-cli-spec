@@ -319,14 +319,15 @@ type
       ## that command, as ``--help`` there would; the words after it are
       ## not read. It is compared under ``commandMatching`` (``HELP``,
       ## ``he_lp`` under ``ignoreStyle``). A subcommand answering to the
-      ## word is then a declaration error.
+      ## word is then a declaration error, unless it is declared
+      ## ``shadowedByWord = true`` (``CliCommand.shadowedByWord``).
     cprVersionWord = "versionWord"
       ## The bare word ``version`` where a subcommand word is expected asks
       ## for the version (``CliVersionRequest``), as ``--version`` does,
       ## when the program gives a version text (``CliOptions.versionText``);
       ## without one it is an ordinary word. Compared under
       ## ``commandMatching``; a subcommand answering to the word is a
-      ## declaration error.
+      ## declaration error unless it is declared ``shadowedByWord = true``.
     cprLongHelpOnly = "longHelpOnly"
       ## Only ``--help`` asks for help: ``-h``, alone or inside a cluster of
       ## short flags (``helpInCluster``), is an ordinary spelling, unknown
@@ -497,6 +498,19 @@ type
       ## spellings of the subcommand word.
     visibility*: CliVisibility
       ## ``subcmd "<name>", visibility = internal:``.
+    shadowedByWord*: bool
+      ## ``subcmd "help", shadowedByWord = true:``: the subcommand answers
+      ## (by its name or an alias, compared under ``commandMatching``) to a
+      ## word a ``parsing`` rule reserves, ``help`` under ``helpWord`` or
+      ## ``version`` under ``versionWord``, and the rule wins: where the
+      ## rule applies, the word asks for help (or the version) and never
+      ## reaches the subcommand. Where the rule does not apply
+      ## (``CliOptions.disableHelpFlag``, no ``CliOptions.versionText``)
+      ## the word reaches it, and so do its other words at all times. It
+      ## stays in the model, the grammar, help, the machine-readable help
+      ## and completion like any subcommand. Without the mark such a
+      ## subcommand is a declaration error, and the mark on a subcommand
+      ## that answers to no reserved word is one too.
     anonymous*: bool
       ## The scope is a ``call:``: the command run when no subcommand word
       ## follows its enclosing scope. It shares that scope's ``path``, so this

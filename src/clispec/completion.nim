@@ -35,7 +35,10 @@
 ##   ignoreStyle`` what was typed is compared with a subcommand word in
 ##   that mode (``LI`` offers ``list``), and the word offered is the
 ##   declared one; a shell that filters candidates by what was typed may
-##   drop it.
+##   drop it. A subcommand declared ``shadowedByWord = true`` is offered
+##   like any other (help lists it too); the words after the reserved word
+##   are not walked into it where the rule makes the word a request, as the
+##   parser never reaches it there.
 ## * once a ``rest`` positional has taken a word, or would take the word
 ##   under the cursor, every word is that positional's: nothing is offered
 ##   but its own values (its ``values`` or completer; none when it has
@@ -294,7 +297,11 @@ proc walk(g: CliGrammar; words: openArray[string];
     if result.terminated or word.len < 2 or word[0] != '-':
       let cmd = g.commands[result.node]
       if cmd.children.len > 0:
-        if not result.terminated:
+        # A word that asks for help or the version (``helpWord``,
+        # ``versionWord``) never reaches a ``shadowedByWord`` subcommand:
+        # the words after it are walked as if no subcommand answered to it.
+        if not result.terminated and not cliIsHelpWord(g, word, options) and
+            not cliIsVersionWord(g, word, options):
           let child = cliChildNamed(g, result.node, word)
           if child >= 0:
             enter(g, result, child)

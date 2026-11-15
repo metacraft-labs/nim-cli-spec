@@ -57,6 +57,12 @@
 ## * ``--help`` and ``-h`` request help (``--help=json`` the machine-readable
 ##   form) unless the program turns them off or declares those spellings
 ##   itself.
+## * Under ``parsing helpWord`` / ``versionWord``, the bare word ``help`` /
+##   ``version`` where a subcommand word is expected is a request, checked
+##   before the subcommands: a subcommand declared ``shadowedByWord = true``
+##   that answers to the word is reached by it only where the rule does not
+##   apply (``disableHelpFlag``; no ``versionText``), and by its other words
+##   always.
 ## * ``--version`` requests the version (``CliVersionRequest``) when the
 ##   program gives a version text (``CliOptions.versionText``) and declares
 ##   no ``--version`` flag of its own; it is compared under ``flagMatching``
@@ -324,6 +330,23 @@ func cliMatchFlagWord*(g: CliGrammar; scope: seq[int];
 func takesNoValue(p: CliGrammarParam): bool =
   p.isSwitch or p.counted
 
+func cliIsHelpWord*(g: CliGrammar; word: string; options: CliOptions): bool =
+  ## Whether ``word``, where a subcommand word is expected, asks for help
+  ## under ``parsing helpWord`` (compared under ``commandMatching``; never
+  ## with ``disableHelpFlag``). It does even when a subcommand declared
+  ## ``shadowedByWord = true`` answers to it.
+  cprHelpWord in g.parseRules and not options.disableHelpFlag and
+    cliSameSpelling(g.commandMatching, word, "help")
+
+func cliIsVersionWord*(g: CliGrammar; word: string; options: CliOptions):
+    bool =
+  ## Whether ``word``, where a subcommand word is expected, asks for the
+  ## version under ``parsing versionWord``: only when the program gives a
+  ## ``versionText``. It does even when a subcommand declared
+  ## ``shadowedByWord = true`` answers to it.
+  cprVersionWord in g.parseRules and options.versionText.len > 0 and
+    cliSameSpelling(g.commandMatching, word, "version")
+
 func isHelpSpelling(g: CliGrammar; scope: seq[int]; word: string;
                     options: CliOptions): tuple[help, json: bool] =
   ## ``--help``, ``--help=json`` or ``-h``, unless turned off or declared
@@ -575,13 +598,11 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
     if not isFlagWord:
       let cmd = g.commands[node]
       if cmd.children.len > 0:
-        if not terminated and cprHelpWord in g.parseRules and
-            not options.disableHelpFlag and
-            cliSameSpelling(g.commandMatching, word, "help"):
+        # Before the subcommands: a subcommand declared ``shadowedByWord``
+        # that answers to the word is not reached through it.
+        if not terminated and cliIsHelpWord(g, word, options):
           requestHelp(false)
-        if not terminated and cprVersionWord in g.parseRules and
-            options.versionText.len > 0 and
-            cliSameSpelling(g.commandMatching, word, "version"):
+        if not terminated and cliIsVersionWord(g, word, options):
           requestVersion()
         let next = if terminated: -1 else: cliChildNamed(g, node, word)
         if next >= 0:

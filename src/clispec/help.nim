@@ -85,6 +85,8 @@
 ## ``parsing`` rules; ``"commandMatching"`` follows when the description
 ## sets a mode other than ``exact``). A positional declared ``rest = true``
 ## has ``"rest": true`` after its ``position`` (the key is absent
+## otherwise), and a command declared ``shadowedByWord = true`` has
+## ``"shadowedByWord": true`` after its ``visibility`` (likewise absent
 ## otherwise). ``placeholder`` is what help shows between ``<`` and
 ## ``>`` (``valueName`` stays the type's name). ``conventions`` names the
 ## naming convention of the command line (``cli``), of every configuration
@@ -516,6 +518,8 @@ proc commandJson(g: CliGrammar; command: int; program: string): JsonNode =
     help = g.commands[cmd.callChild].help
   result["help"] = %help
   result["visibility"] = %($cmd.visibility)
+  if cmd.shadowedByWord:
+    result["shadowedByWord"] = %true
   result["usage"] = %cliUsageLine(g, holder, program)
   var params = newJArray()
   for id in cliHelpParams(g, holder, machineReadable = true):

@@ -60,7 +60,8 @@
 ## * ``call:`` opens the anonymous command, ``subcmd "<name>":`` a named one;
 ##   both nest. A nested scope sees the parameters its enclosing scopes
 ##   declared before it opened. The head takes ``help``, ``visibility`` and
-##   (``subcmd`` only) ``aliases = ["<word>", ...]``:
+##   (``subcmd`` only) ``aliases = ["<word>", ...]`` and ``shadowedByWord =
+##   true|false`` (``CliCommand.shadowedByWord``):
 ##   ``subcmd "build", help = "...", aliases = ["b"]:``,
 ##   ``call(help = "..."):``.
 ## * ``help "<text>"`` as a statement gives the scope's command its help
@@ -111,11 +112,13 @@
 ## the library's arguments given twice; two subcommands of one command answering
 ## to the same word (compared under ``commandMatching``), or one answering
 ## to ``help`` under ``parsing helpWord`` or to ``version`` under
-## ``versionWord``; ``rest`` on a flag, on a type that is not a ``seq``, or
-## together with ``repeated``; ``aliases`` on ``call:``; a ``help`` statement
-## inside a ``group`` section; ``keyStyle``, ``convention``,
-## ``configSchema``, ``flagMatching``, ``commandMatching`` or ``parsing``
-## anywhere but directly under ``cli:``; an unknown
+## ``versionWord`` without ``shadowedByWord = true``, or ``shadowedByWord``
+## on one that answers to neither (or on ``call:``); ``rest`` on a flag, on
+## a type that is not a ``seq``, or together with ``repeated``; ``aliases``
+## on ``call:``; a ``help`` statement inside a ``group`` section;
+## ``keyStyle``, ``convention``, ``configSchema``, ``flagMatching``,
+## ``commandMatching`` or ``parsing`` anywhere but directly under ``cli:``;
+## an unknown
 ## convention, or one source's convention given twice; a ``perConvention``
 ## entry for ``declared`` or one convention given twice; a ``perSource``
 ## entry naming a file source the description does not declare, ``file``
@@ -1024,6 +1027,10 @@ type
     aliases: seq[string]
     visibility: CliVisibility
     anonymous: bool
+    shadowedByWord: bool
+    shadowedNode: NimNode
+      ## The ``shadowedByWord`` argument, for its diagnostics; nil when not
+      ## given.
 
 proc flagSpellings(param: CliParam): seq[string] =
   ## The spellings a flag answers to, for collision checks: its canonical
@@ -1105,7 +1112,7 @@ proc parseCommandHeader(stmt: NimNode; isCall: bool;
     if arg.kind != nnkExprEqExpr:
       continue
     let key = cliIdentText(arg[0]).normalize
-    if key in ["help", "aliases", "visibility"]:
+    if key in ["help", "aliases", "visibility", "shadowedbyword"]:
       if key in given:
         error("clispec: " & label & ": `" & cliIdentText(arg[0]) &
           "` is given twice", arg)
@@ -1134,6 +1141,16 @@ proc parseCommandHeader(stmt: NimNode; isCall: bool;
         result.aliases.add(item.strVal)
     of "visibility":
       result.visibility = cliVisibilityLit(arg[1], label)
+    of "shadowedbyword":
+      if isCall:
+        error("clispec: " & label & ": the anonymous `call:` command has " &
+          "no command word, so no word can shadow it", arg)
+      let v = arg[1]
+      if v.kind != nnkIdent or ($v).normalize notin ["true", "false"]:
+        error("clispec: " & label & ": shadowedByWord must be true or " &
+          "false, got: " & v.repr, v)
+      result.shadowedByWord = ($v).normalize == "true"
+      result.shadowedNode = arg
     else:
       discard
 
@@ -1226,6 +1243,7 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
       let childHeader = parseCommandHeader(stmt, isCall, childPath)
       if not isCall:
         let mode = ctx.naming.commandMatching
+        var shadowed = false
         for word in @[childName] & childHeader.aliases:
           for seen in childWords:
             if seen.word == word:
@@ -1241,11 +1259,20 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
                                    (cprVersionWord, "version")]:
             if rule in ctx.naming.parseRules and
                 cliSameSpelling(mode, word, reserved):
-              error("clispec: " & cliCommandLabel(childPath) &
-                ": the word '" & word & "' asks for the " & reserved &
-                " under parsing " & $rule & ", so no subcommand can " &
-                "answer to it", stmt)
+              if not childHeader.shadowedByWord:
+                error("clispec: " & cliCommandLabel(childPath) &
+                  ": the word '" & word & "' asks for the " & reserved &
+                  " under parsing " & $rule & ", so no subcommand can " &
+                  "answer to it (unless it is declared shadowedByWord = " &
+                  "true)", stmt)
+              shadowed = true
           childWords.add((word, childName))
+        if childHeader.shadowedByWord and not shadowed:
+          error("clispec: " & cliCommandLabel(childPath) &
+            ": shadowedByWord applies to a subcommand that answers to " &
+            "the word help under parsing helpWord or version under " &
+            "parsing versionWord, and this one answers to neither",
+            childHeader.shadowedNode)
       discard parseScopeImpl[C, P](stmt[^1], childPath, false, cmd,
         ctx.wholeBody, childHeader, commands, groups, ctx.naming)
     of "group":
@@ -1311,6 +1338,7 @@ proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
   result.aliases = header.aliases
   result.visibility = header.visibility
   result.anonymous = header.anonymous
+  result.shadowedByWord = header.shadowedByWord
   result.depth = if isRoot: 0 else: parent.depth + 1
   let inherited = parent.params.len
   var helpGiven = false

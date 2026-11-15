@@ -5,7 +5,8 @@
 ## matched (``commandMatching``), a positional that takes the rest of the
 ## command line (``rest = true``), the bare words ``help`` and ``version``
 ## (``parsing helpWord, versionWord``), ``--version``
-## (``CliOptions.versionText``) and a help request without ``-h``
+## (``CliOptions.versionText``), a subcommand those words shadow
+## (``shadowedByWord = true``) and a help request without ``-h``
 ## (``parsing longHelpOnly``).
 ##
 ## Every fixture is a real ``cliProgram`` description driven through the
@@ -13,7 +14,7 @@
 ## ``Plain`` is the same command tree with none of the features, and pins
 ## today's answers to exactly the command lines the features change.
 
-import std/[json, options, strutils, unittest]
+import std/[json, options, sequtils, strutils, unittest]
 
 import clispec
 
@@ -101,6 +102,24 @@ cliProgram(LongOnly, "longonly"):
 cliProgram(ClusterHelp, "clusterhelp"):
   parsing helpInCluster
   boolFlag edit is bool, short = 'e'
+
+cliProgram(Shadow, "shadow"):
+  commandMatching ignoreStyle
+  parsing helpWord, versionWord
+  boolFlag verbose is bool, short = 'v', help = "Talk more"
+  subcmd "build":
+    pos target is string, required = false
+  subcmd "help", shadowedByWord = true, aliases = ["topics"],
+      help = "Help topics":
+    flag depth is int, default = 1
+    pos topic is string, required = false
+  subcmd "show", shadowedByWord = true, aliases = ["version"]:
+    boolFlag full is bool
+  subcmd "arb":
+    subcmd "explorer":
+      discard
+    subcmd "HELP", shadowedByWord = true:
+      discard
 
 const version = "words 1.2.3"
 
@@ -508,3 +527,110 @@ suite "test_cs_m10_command_word_rules":
       check e.kind == cekUnknownFlag
       check e.spelling == argv[0]
     check helpRequest(proc () = discard ClusterHelp.load(@["-eh"])) != nil
+
+  test "shadowedByWord: the word still asks for help, other words reach it":
+    for argv in [@["help"], @["HELP"], @["he_lp"], @["help", "build"],
+                 @["help", "--depth", "3"], @["help", "--help"],
+                 @["help", "topics"], @["-v", "help", "x"]]:
+      checkpoint(argv.join(" "))
+      let h = helpRequest(proc () = discard Shadow.load(argv))
+      check h.commandPath.len == 0
+      check h.text == Shadow.helpText()
+      check not h.json
+    # One level down, the same: ``arb HELP`` is the help of ``arb``.
+    let arb = helpRequest(proc () = discard Shadow.load(@["arb", "help"]))
+    check arb.commandPath == @["arb"]
+    check arb.text == Shadow.helpText(["arb"])
+    # An alias that is not the reserved word reaches the subcommand.
+    let t = Shadow.load(@["topics", "--depth", "3", "x"])
+    check t.command == ShadowCommand.help
+    check t.help.topic == "x"
+    check t.help.depth == 3
+    check Shadow.load(@["TOPICS"]).command == ShadowCommand.help
+    check Shadow.load(@["arb", "explorer"]).arb.command ==
+      ShadowArbCommand.explorer
+    # Where the rule does not apply, the word reaches it.
+    let off = Shadow.load(@["help", "x"], CliOptions(disableHelpFlag: true))
+    check off.command == ShadowCommand.help
+    check off.help.topic == "x"
+    check Shadow.load(@["arb", "help"], CliOptions(disableHelpFlag: true)).
+      arb.command == ShadowArbCommand.HELP
+    # The flags still ask for help in it when they are on.
+    let flagHelp = helpRequest(proc () = discard Shadow.load(@["topics",
+      "--help"]))
+    check flagHelp.commandPath == @["help"]
+    check flagHelp.text == Shadow.helpText(["help"])
+
+  test "shadowedByWord: the word version, with and without a version text":
+    for argv in [@["version"], @["VERSION"], @["version", "--full"]]:
+      checkpoint(argv.join(" "))
+      check versionRequest(proc () = discard Shadow.load(argv,
+        withVersion)).text == version
+    check Shadow.load(@["show", "--full"], withVersion).show.full
+    # Without a version text the word is the subcommand's alias.
+    let v = Shadow.load(@["version", "--full"])
+    check v.command == ShadowCommand.show
+    check v.show.full
+    check Shadow.load(@["show"]).command == ShadowCommand.show
+
+  test "shadowedByWord: help, the JSON and the model keep the subcommand":
+    let top = Shadow.helpText()
+    check "  help, topics   Help topics\n" in top
+    check "  show, version\n" in top
+    # The help path names the subcommand: its own help.
+    let own = Shadow.helpText(["help"])
+    check own.startsWith("Usage: shadow help [options] [<topic>]\n")
+    check "--depth <int>" in own
+    check Shadow.helpText(["topics"]) == own
+    check Shadow.helpText(["HELP"]) == own
+    check Shadow.helpText(["arb", "help"]).startsWith("Usage: shadow arb HELP")
+    let j = parseJson(Shadow.helpJson())
+    var marked: seq[string] = @[]
+    for c in j["command"]["commands"]:
+      if c.hasKey("shadowedByWord"):
+        check c["shadowedByWord"].getBool
+        marked.add(c["name"].getStr)
+      for k in c["commands"]:
+        if k.hasKey("shadowedByWord"):
+          marked.add(k["path"].getElems().mapIt(it.getStr).join(" "))
+    check marked == @["help", "show", "arb HELP"]
+    let own2 = parseJson(Shadow.helpJson(["help"]))["command"]
+    check own2["shadowedByWord"].getBool
+    check own2["aliases"] == %*["topics"]
+    # Without the mark (and in Words, which has no such subcommand) the key
+    # is absent.
+    for c in parseJson(Words.helpJson())["command"]["commands"]:
+      check not c.hasKey("shadowedByWord")
+    var inModel: seq[string] = @[]
+    for c in Shadow.cliModel.commands:
+      if c.shadowedByWord:
+        inModel.add(c.path.join(" "))
+    check inModel == @["help", "show", "arb HELP"]
+    var inGrammar = 0
+    for c in Shadow.cliGrammar.commands:
+      if c.shadowedByWord:
+        inc inGrammar
+    check inGrammar == 3
+    # Usage errors name it among the subcommands.
+    check usageError(proc () = discard Shadow.load(@["bogus"])).expected ==
+      "build, help, show, arb"
+
+  test "shadowedByWord: completion offers it and does not walk into it":
+    check values(Shadow.complete(@[""])) == @["build", "help", "show", "arb"]
+    check values(Shadow.complete(@["he"])) == @["help"]
+    check values(Shadow.complete(@["to"])) == @["topics"]
+    check values(Shadow.complete(@["ver"])) == @["version"]
+    check values(Shadow.complete(@["arb", "H"])) == @["HELP"]
+    # After the reserved word nothing of the subcommand is offered: the
+    # parser reads no word after it.
+    check values(Shadow.complete(@["help", "--"])) == @["--verbose", "--help"]
+    check values(Shadow.complete(@["HELP", "--"])) == @["--verbose", "--help"]
+    # Through its alias, or where the rule does not apply, it is walked.
+    check values(Shadow.complete(@["topics", "--"])) == @["--verbose",
+      "--depth", "--help"]
+    check values(Shadow.complete(@["help", "--"],
+      options = CliOptions(disableHelpFlag: true))) == @["--verbose",
+      "--depth"]
+    check values(Shadow.complete(@["version", "--f"])) == @["--full"]
+    check values(Shadow.complete(@["version", "--f"],
+      options = withVersion)).len == 0

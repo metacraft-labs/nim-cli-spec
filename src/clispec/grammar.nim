@@ -132,6 +132,9 @@ type
     aliases*: seq[string]
     help*: string
     visibility*: CliVisibility
+    shadowedByWord*: bool
+      ## ``CliCommand.shadowedByWord``: a word a ``parsing`` rule reserves
+      ## answers to it, and the rule wins.
     isCall*: bool
     parent*: int
       ## The enclosing command, -1 for the root.
@@ -315,7 +318,8 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
         g.commands[parent].children.add(index)
     g.commands.add(CliGrammarCommand(name: cmd.name, path: cmd.path,
       aliases: cmd.aliases, help: cmd.help, visibility: cmd.visibility,
-      isCall: cmd.anonymous, parent: parent, callChild: -1,
+      shadowedByWord: cmd.shadowedByWord, isCall: cmd.anonymous,
+      parent: parent, callChild: -1,
       sourceFile: cmd.sourceFile, sourceLine: cmd.sourceLine))
     scopes.add(cmd)
     for kid in kids[slot]:
@@ -431,7 +435,10 @@ func cliChildNamed*(g: CliGrammar; command: int; word: string): int =
   ## The subcommand of ``command`` that answers to ``word`` (its name or one
   ## of its aliases), or -1. A word that matches exactly wins; under a
   ## ``commandMatching`` other than ``exact``, one that matches in that mode
-  ## is accepted when none does.
+  ## is accepted when none does. A subcommand declared ``shadowedByWord``
+  ## is found by every word it answers to: the help path lookup
+  ## (``cliCommandAt``) reaches it by its name; only the parser and
+  ## completion put the reserved word's request first.
   for child in g.commands[command].children:
     let c = g.commands[child]
     if c.name == word or word in c.aliases:
