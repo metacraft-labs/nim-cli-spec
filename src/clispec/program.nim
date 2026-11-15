@@ -67,7 +67,8 @@
 ##   ``CliVersionRequest`` when the version is); it never ends the process.
 ## * ``Tool.helpText(path)`` and ``Tool.helpJson(path)`` render the help of
 ##   the command reached by the subcommand words ``path`` (see
-##   ``clispec/help``); an unknown word is a ``CliUsageError``.
+##   ``clispec/help``; ``helpText(path, long = true)`` is the long page
+##   ``--help`` prints); an unknown word is a ``CliUsageError``.
 ## * ``Tool.complete``, ``Tool.completionReply`` and
 ##   ``Tool.completionScript`` are the shell completion of
 ##   ``clispec/completion`` and ``clispec/completion_scripts``.
@@ -706,20 +707,23 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
       `loadName`(t, cliCommandLineParams(), options)
 
     proc `helpTextName`(t: typedesc[`T`]; path: openArray[string] = [];
-                        program = `prog`; layout = CliHelpLayout()): string {.
+                        program = `prog`; layout = cliDefaultHelpLayout;
+                        long = false): string {.
         raises: [CliUsageError].} =
       ## The human-readable help of the command reached by the subcommand
-      ## words ``path``, laid out by ``layout``.
+      ## words ``path``, laid out by ``layout``: the short page (``-h``),
+      ## or with ``long`` the long one (``--help``).
       cliHelpText(`gc`, cliHelpCommand(`gc`, path, program), program,
-        layout)
+        layout, long)
 
     proc `optionsTableName`(t: typedesc[`T`]; path: openArray[string] = [];
-                            layout = CliHelpLayout(); group = ""): string {.
+                            layout = cliDefaultHelpLayout; group = "";
+                            long = false): string {.
         raises: [CliUsageError].} =
       ## The rows of the options table of the command reached by the
       ## subcommand words ``path`` (``cliOptionsTable``).
       cliOptionsTable(`gc`, cliHelpCommand(`gc`, path, `prog`), layout,
-        group)
+        group, long)
 
     proc `completeName`(t: typedesc[`T`]; words: openArray[string];
                         cursor = -1; options = CliOptions()):

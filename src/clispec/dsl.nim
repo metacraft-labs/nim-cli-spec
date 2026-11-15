@@ -60,13 +60,21 @@
 ##   command-line rules ``clispec/model`` documents.
 ## * ``call:`` opens the anonymous command, ``subcmd "<name>":`` a named one;
 ##   both nest. A nested scope sees the parameters its enclosing scopes
-##   declared before it opened. The head takes ``help``, ``visibility`` and
+##   declared before it opened. The head takes ``help``, ``longHelp``,
+##   ``visibility`` and
 ##   (``subcmd`` only) ``aliases = ["<word>", ...]`` and ``shadowedByWord =
 ##   true|false`` (``CliCommand.shadowedByWord``):
 ##   ``subcmd "build", help = "...", aliases = ["b"]:``,
 ##   ``call(help = "..."):``.
 ## * ``help "<text>"`` as a statement gives the scope's command its help
-##   (the only way to give the root command one).
+##   (the only way to give the root command one); ``longHelp "<text>"``
+##   its long description (``CliCommand.longHelp``), and each ``example
+##   "<command line>", help = "<text>"`` one of its examples
+##   (``CliCommand.examples``). Their texts are string literals or ``&`` of
+##   literals. These two statements came after the extension hooks, so a
+##   statement named ``example`` or ``longHelp`` is offered to the
+##   consumer's extension first and read by the library only when the
+##   extension does not claim it.
 ## * ``group "<title>"[, help = "<text>"]:`` lists the declarations inside it
 ##   under one help heading; it opens no command and changes no scoping.
 ## * A flag declared directly under ``cli:`` is placed before the subcommand
@@ -87,7 +95,7 @@
 ## Anything else — an unknown statement, or a named argument the parameter
 ## kind does not take — is offered to the consumer's extension (below) and
 ## ignored when no extension claims it. The library's own words above never
-## reach the extension.
+## reach the extension, except the ``example`` and ``longHelp`` statements.
 ##
 ## Invalid declarations
 ## ====================
@@ -117,7 +125,10 @@
 ## ``versionWord`` without ``shadowedByWord = true``, or ``shadowedByWord``
 ## on one that answers to neither (or on ``call:``); ``rest`` on a flag, on
 ## a type that is not a ``seq``, or together with ``repeated``; ``aliases``
-## on ``call:``; a ``help`` statement inside a ``group`` section;
+## on ``call:``; a ``help`` statement inside a ``group`` section; a
+## command's ``longHelp`` given twice; an ``example`` without its ``help``,
+## with an empty command line, with a text that is not a string literal
+## (or ``&`` of literals), or with another argument;
 ## ``keyStyle``, ``convention``, ``configSchema``, ``flagMatching``,
 ## ``commandMatching`` or ``parsing`` anywhere but directly under ``cli:``;
 ## an unknown
@@ -469,6 +480,14 @@ proc foldStrLit(n: NimNode; folded: var string): bool =
       false
   else:
     false
+
+proc cliFoldedStr(node: NimNode; what: string): string =
+  ## A text the parser keeps as written: a string literal or ``&`` of
+  ## literals (folded), or a compile error naming ``what``.
+  if node.isNil or not foldStrLit(node, result):
+    error(what & " must be a string literal (or & of string literals): " &
+      "it is used at compile time and the macro cannot evaluate an " &
+      "expression here", node)
 
 proc cliConstStr*(node: NimNode; text: var string; expr: var CliExpr) =
   ## A text argument that may be a constant string expression (``help``,
@@ -1026,6 +1045,7 @@ type
   CliCommandHeader = object
     ## What a ``subcmd`` / ``call`` head says about the command it opens.
     help: string
+    longHelp: string
     aliases: seq[string]
     visibility: CliVisibility
     anonymous: bool
@@ -1114,7 +1134,8 @@ proc parseCommandHeader(stmt: NimNode; isCall: bool;
     if arg.kind != nnkExprEqExpr:
       continue
     let key = cliIdentText(arg[0]).normalize
-    if key in ["help", "aliases", "visibility", "shadowedbyword"]:
+    if key in ["help", "longhelp", "aliases", "visibility",
+               "shadowedbyword"]:
       if key in given:
         error("clispec: " & label & ": `" & cliIdentText(arg[0]) &
           "` is given twice", arg)
@@ -1122,6 +1143,9 @@ proc parseCommandHeader(stmt: NimNode; isCall: bool;
     case key
     of "help":
       result.help = cliStrLit(arg[1], "help")
+    of "longhelp":
+      result.longHelp = cliFoldedStr(arg[1], "clispec: " & label &
+        ": longHelp")
     of "aliases":
       if isCall:
         error("clispec: " & label & ": the anonymous `call:` command has " &
@@ -1155,6 +1179,32 @@ proc parseCommandHeader(stmt: NimNode; isCall: bool;
       result.shadowedNode = arg
     else:
       discard
+
+proc parseExample(stmt: NimNode; label: string): CliExample =
+  ## ``example "<command line>", help = "<text>"``.
+  const shape = "example is written example \"<command line>\", " &
+    "help = \"<text>\""
+  if stmt.kind notin {nnkCommand, nnkCall} or stmt.len < 2:
+    error("clispec: " & label & ": " & shape, stmt)
+  result.command = cliFoldedStr(stmt[1], "clispec: " & label &
+    ": an example's command line")
+  if result.command.strip().len == 0:
+    error("clispec: " & label & ": an example's command line is empty",
+      stmt[1])
+  var helpGiven = false
+  for i in 2 ..< stmt.len:
+    let arg = stmt[i]
+    if arg.kind != nnkExprEqExpr or cliIdentText(arg[0]).normalize != "help":
+      error("clispec: " & label & ": " & shape & " (unexpected " &
+        arg.repr & ")", arg)
+    if helpGiven:
+      error("clispec: " & label & ": an example's help is given twice", arg)
+    result.help = cliFoldedStr(arg[1], "clispec: " & label &
+      ": an example's help")
+    helpGiven = true
+  if not helpGiven or result.help.strip().len == 0:
+    error("clispec: " & label & ": an example needs its help, " & shape,
+      stmt)
 
 proc nodeAt(file: string; line: int): NimNode =
   ## A node that carries only a source position, for a diagnostic about a
@@ -1223,6 +1273,7 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
                      group: string; ctx: ScopeContext;
                      commands: var seq[CliCommand[C, P]];
                      groups: var seq[CliGroup]; helpGiven: var bool;
+                     longHelpGiven: var bool;
                      childWords: var seq[tuple[word, owner: string]]) =
   ## Reads the statements of a scope (or of a ``group`` inside it) in
   ## source order.
@@ -1294,7 +1345,7 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
           groupHelp = cliStrLit(helpValue, "group help")
       noteGroup(groups, title, groupHelp, stmt)
       walkScope[C, P](cmd, stmt[^1], title, ctx, commands, groups, helpGiven,
-        childWords)
+        longHelpGiven, childWords)
     of "keystyle", "configschema", "convention", "flagmatching",
         "commandmatching", "parsing":
       # Read by ``parseCliModel`` before the scope is walked; valid only
@@ -1318,6 +1369,25 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
           "twice", stmt)
       cmd.help = cliStrLit(stmt[1], "help")
       helpGiven = true
+    of "example", "longhelp":
+      # Library words that came after the extension hooks: a statement of
+      # either name is offered to the consumer's extension first, so one
+      # that already had such a statement keeps it.
+      let scope = CliScope(isRoot: ctx.isRoot, path: ctx.path,
+        wholeBody: ctx.wholeBody)
+      if parseCliCommandExtension(cmd, stmt, scope):
+        continue
+      let label = cliCommandLabel(ctx.path, ctx.isRoot)
+      if head == "longhelp":
+        if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2:
+          error("clispec: longHelp is written longHelp \"<text>\"", stmt)
+        if cmd.longHelp.len > 0 or longHelpGiven:
+          error("clispec: " & label & " is given longHelp twice", stmt)
+        cmd.longHelp = cliFoldedStr(stmt[1], "clispec: " & label &
+          ": longHelp")
+        longHelpGiven = true
+      else:
+        cmd.examples.add(parseExample(stmt, label))
     else:
       discard parseCliCommandExtension(cmd, stmt,
         CliScope(isRoot: ctx.isRoot, path: ctx.path,
@@ -1337,6 +1407,7 @@ proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
   result.params = parent.params
   result.ext = parent.ext
   result.help = header.help
+  result.longHelp = header.longHelp
   result.aliases = header.aliases
   result.visibility = header.visibility
   result.anonymous = header.anonymous
@@ -1344,13 +1415,14 @@ proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
   result.depth = if isRoot: 0 else: parent.depth + 1
   let inherited = parent.params.len
   var helpGiven = false
+  var longHelpGiven = false
   # The subcommand words opened in this scope (names and aliases), each with
   # the subcommand that owns it, for the collision check.
   var childWords: seq[tuple[word, owner: string]] = @[]
   walkScope[C, P](result, body, "",
     ScopeContext(isRoot: isRoot, path: path, wholeBody: wholeBody,
       naming: naming),
-    commands, groups, helpGiven, childWords)
+    commands, groups, helpGiven, longHelpGiven, childWords)
 
   # ``implies`` may name any parameter the implying one's command sees once
   # its scope is complete, but not itself.

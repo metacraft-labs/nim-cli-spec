@@ -155,11 +155,12 @@ takes the next word as its value when that word is a valid value),
 `alsoSets = [<param> = "<text>", ...]` (each occurrence also gives another
 parameter a value, in command-line order).
 
-A command takes `help`, `aliases` and `visibility` in its head
+A command takes `help`, `longHelp`, `aliases` and `visibility` in its head
 (`subcmd "build", help = "...", aliases = ["b"]:`, `call(help = "..."):`),
 and a subcommand `shadowedByWord = true` (see `helpWord` below), or
 its help as a `help "<text>"` statement in its body, which is also how the
-root command gets one. `group "<title>"[, help = "<text>"]:` lists the
+root command gets one; likewise `longHelp "<text>"`, and any number of
+`example "<command line>", help = "<text>"` statements (see [Help](#help)). `group "<title>"[, help = "<text>"]:` lists the
 parameters declared inside it under one heading in help; it opens no command
 and changes no scoping, and may be reopened (in another command, say) to add
 more parameters to the same heading.
@@ -280,7 +281,9 @@ true`, `shadowedByWord` on a subcommand that answers to neither (or on
 `call:`), `rest` on a flag, on a type
 that is not a `seq` or together with `repeated`, `aliases` on `call:`,
 a `help` statement inside a `group` section (the section's help goes in
-its head), `keyStyle`, `convention`, `configSchema`, `flagMatching`,
+its head), a command's `longHelp` given twice, an `example` without its
+`help`, with an empty command line, with a text that is not a string
+literal (or `&` of literals) or with another argument, `keyStyle`, `convention`, `configSchema`, `flagMatching`,
 `commandMatching` or `parsing` anywhere but directly under `cli:`, an unknown convention or one source's convention given twice,
 a `perConvention` entry for `declared` or for one convention twice, a
 `perSource` entry for a file source the description does not declare, for
@@ -409,8 +412,8 @@ Generated for `Tool` (exported when written
 | --------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `Tool.load(argv, options = CliOptions())`                       | parses `argv` (without the program name)                                     |
 | `Tool.load(options = CliOptions())`                             | parses the process's own arguments                                           |
-| `Tool.helpText(path = [])` / `Tool.helpJson(path = [])`         | the help of the command reached by the subcommand words `path`               |
-| `Tool.optionsTable(path = [], layout, group = "")`              | just the rows of that command's options table (see [Help](#help))            |
+| `Tool.helpText(path = [], layout, long)` / `Tool.helpJson(path = [])` | the help of the command reached by the subcommand words `path` (`long`: the `--help` page) |
+| `Tool.optionsTable(path = [], layout, group = "", long)`        | just the rows of that command's options table (see [Help](#help))            |
 | `Tool.complete(words, cursor = -1)`                             | the completion candidates for `words[cursor]` (the last word by default)     |
 | `Tool.completionScript(shell)` / `Tool.completionReply(args)`   | a shell's completion script; the answer to a script's request                |
 | `Tool.cliGrammar` / `Tool.cliModel`                             | the parser's tables and the model, both constants                            |
@@ -419,7 +422,8 @@ Generated for `Tool` (exported when written
 errors (`usageExitCode`, 2 when not set), `disableHelpFlag`, the word
 through which completion scripts ask for candidates (`completionEntry`,
 `__complete` when not set; `disableCompletionEntry` turns it off), the
-layout of the help a `CliHelpRequest` carries (`helpLayout`), and
+layout of the help a `CliHelpRequest` carries (`helpLayout`,
+`cliDefaultHelpLayout` unless set; see [Help](#help)), and
 `valueCheck`, which says whether a text is a valid value of a parameter and
 which the generated `load` fills in (a library that calls the parser itself
 passes `cliWithValueCheck(options, <the generated check>)`, as confutils
@@ -593,9 +597,11 @@ In `CliOptions`:
   request's text and exits 0 handles it unchanged; so does the word
   `version` under `versionWord`. A flag the description spells
   `--version` keeps that spelling. Without a version text neither means
-  anything. `--version` is not listed in help unless
-  `CliHelpLayout(versionFlag: "<text>")` asks for its row, and completion
-  does not offer it.
+  anything. The help `load` raises in the standard layout lists a
+  `--version` row (`Print version`) when there is a version text; a
+  page rendered with `helpText`, or in the classic layout, lists it only
+  when `CliHelpLayout(versionFlag: "<text>")` asks for its row.
+  Completion does not offer it.
 
 On a positional:
 
@@ -830,10 +836,135 @@ program turns this off with `CliOptions(disableHelpFlag: true)`, and a flag
 the program itself spells `--help` or `-h` takes precedence. Under `parsing
 longHelpOnly` `-h` is not help, and under `parsing helpWord` the word
 `help` is (see
-[Command lines from confutils' type-based loader](#command-lines-from-confutils-type-based-loader)). The help of a
-command lists its subcommands, its positionals and every flag it accepts,
-ungrouped flags under `Options:` and then each `group` section. For a
-smaller program than the one above, it looks like this:
+[Command lines from confutils' type-based loader](#command-lines-from-confutils-type-based-loader)).
+`-h` gives the short page and `--help` (and the word `help`) the long one;
+`CliHelpRequest.long` says which was asked for. The help of a command lists
+its subcommands, its positionals and every flag it accepts (the example
+below shows a whole page).
+
+The page has, each only when it has entries and one blank line between
+them: the command's `help` line (on the long page followed by its
+`longHelp`, one paragraph per non-blank line); `Usage:`; `Aliases:`;
+`Commands:` (`name, alias` and the help of each listed subcommand);
+`Arguments:`; `Options:` (the command's own flags in no group, then
+`-h, --help`, then `--version` when the program has a version text); one
+section per `group`, in declaration order, with its help under the
+heading; `Global Options:` (flags inherited from enclosing commands; an
+inherited flag in a group stays in that group's section); `Examples:`;
+and, on a command with subcommands, `Run '<path> <command> --help' for
+more on a command.` Rows keep declaration order.
+
+A row is indented two spaces. Long spellings are aligned: four spaces
+stand for a missing short spelling when another row of the section has
+one. The placeholder is the `valueName`, else the closed value set joined
+with `|`, else the type's name; a list adds `...` (`<NAME>...`), a counted
+flag `...` after its spelling (`-v, --verbose...`), an optional value is
+`--report[=<PATH>]`, a negatable switch `--[no-]name`, and a long alias
+follows the canonical spelling. The description is the `help` and then
+the notes, in this order: `[required]`, `[default: x]` (not for switches
+and counted flags; a text default is quoted only when it is empty or
+holds white space, `[default: ""]`), `[possible values: a, b]` when the
+placeholder does not list the set, and `[env: NAME, ...]`. The long page
+adds each parameter's `longHelp` paragraphs under its row, and the short
+page's help row reads `Print help (see more with '--help')` when the long
+page shows more (otherwise both say `Print help`).
+
+Descriptions wrap at the page width with continuation lines under the
+description column, which is two spaces after the section's widest left
+entry of at most 32 characters; a wider entry puts its description on the
+next line. When fewer than 40 columns would remain, the section uses the
+next-line layout: every description under its row, indented 12. A note is
+not broken unless it is wider than the line; the usage line, example
+command lines and words longer than the line are never broken. The width
+is the layout's `width` (80 when 0), at most 100.
+
+A command declares its long description and its examples in its body:
+
+```nim
+import std/strutils
+import clispec
+
+cliProgram(Pkg, "pkg"):
+  help "Manage packages"
+  boolFlag verbose is bool, short = 'v', help = "Talk more"
+  subcmd "install", help = "Install packages", aliases = ["i"]:
+    longHelp "Installs the named packages and what they depend on."
+    flag prefix is string, default = "/usr/local", valueName = "DIR",
+      help = "Where to install"
+    pos names is seq[string], repeated = true, help = "Packages"
+    example "pkg install --prefix ~/.local jq",
+      help = "Install jq for the current user"
+
+assert Pkg.helpText(["install"]) == """Install packages
+
+Usage: pkg install [options] <names>...
+
+Aliases: i
+
+Arguments:
+  <names>...  Packages
+
+Options:
+      --prefix <DIR>  Where to install [default: /usr/local]
+  -h, --help          Print help (see more with '--help')
+
+Global Options:
+  -v, --verbose  Talk more
+
+Examples:
+  Install jq for the current user
+    pkg install --prefix ~/.local jq
+"""
+let long = Pkg.helpText(["install"], long = true)
+assert long.startsWith("Install packages\n\n" &
+  "Installs the named packages and what they depend on.\n\nUsage:")
+assert "  -h, --help          Print help\n" in long
+try:
+  discard Pkg.load(@["i", "--help"])
+  assert false
+except CliHelpRequest as e:
+  assert e.long and e.text == long
+```
+
+`example "<command line>", help = "<text>"` may be written any number of
+times in a command's body (the root's included); help lists the examples
+in declaration order, on both pages, and they are not inherited.
+`longHelp "<text>"` in the body, or `longHelp = "<text>"` in the head
+(`subcmd "build", longHelp = "...":`), gives a command its long
+description. Both take string literals or `&` of literals. A consumer
+whose extension already claims statements named `example` or `longHelp`
+keeps them: those two statements are offered to the extension first.
+
+`CliHelpLayout` chooses and lays out the page. Its `style` is
+`chsStandard`, the page above, or `chsClassic`, the layout clispec printed
+before it, which is the type's default: `CliHelpLayout()`, and any layout
+built field by field without `style`, renders exactly the classic text.
+Two presets name them: `cliDefaultHelpLayout` (the standard page at 80
+columns, the default argument of `cliHelpText`, `cliOptionsTable`, the
+generated `helpText` and `optionsTable`, and of `CliOptions.helpLayout`, so
+it is also the help `load` raises) and `cliClassicHelpLayout`. A program
+that must keep the classic layout for its users opts into it with
+`CliOptions(helpLayout: cliClassicHelpLayout)` and
+`Tool.helpText(layout = cliClassicHelpLayout)`. `cliHelpText(g, command,
+program, layout, long)` and `Tool.helpText(path, layout = ..., long =
+...)` render a page; `cliOptionsTable(g, command, layout, group, long)`
+(`Tool.optionsTable`) renders just the rows of the options table (in the
+standard style, the command's own flags and the help rows), for a program
+that writes the rest of its help screen itself.
+
+The fields: `indent` (2), the description `column` (classic only; 0: two
+spaces after the widest left entry of at most `maxLeft`, 32, characters),
+the `width` (classic: descriptions are word-wrapped to it, 0 not wrapped;
+standard: the page width), `helpFlag` (when not empty, the options table
+ends with a `-h, --help` row with this text, `--help` alone under
+`longHelpOnly`; `Print help` in `cliDefaultHelpLayout`), `versionFlag`
+(when not empty, a `--version` row with this text after it; in the
+standard style the help `load` raises words it `Print version` when
+`CliOptions.versionText` is set), `listMarker` (`...` after a list's
+placeholder), `canonicalFirst` (`--name` before a long `alias`; set in
+`cliDefaultHelpLayout`) and `notes`. The classic layout prints `Usage:`
+first, every flag under `Options:` or its group, each `longHelp` line
+below its row on every page, and nothing wrapped unless `width` is set:
 
 ```text
 Usage: tool build [options] <target>
@@ -850,22 +981,8 @@ Options:
   -j, --jobs <int>    Parallel jobs [default: 4]
 ```
 
-`CliHelpLayout` lays the tables out: `indent` (2), the description
-`column` (0: two spaces after the widest left entry of at most `maxLeft`,
-32, characters), the `width` descriptions are word-wrapped to (0: not
-wrapped; words are joined by one space and a word longer than the line is
-kept whole), `helpFlag` (when not empty, the options table ends with a
-`-h, --help` row with this text; `--help` alone under `longHelpOnly`),
-`versionFlag` (when not empty, a `--version` row with this text after it,
-for a program that sets `CliOptions.versionText`), `listMarker` (`...` after a list's
-placeholder), `canonicalFirst` (`--name` before a long `alias`) and `notes`
-(`[required]`, `[default: x]`, `[env: X]`). Every default is the layout
-above, so `CliHelpLayout()` changes nothing. `cliHelpText(g, command,
-program, layout)` and `Tool.helpText(layout = ...)` take one, and
-`cliOptionsTable(g, command, layout)` (`Tool.optionsTable`) renders just the
-rows of the options table, for a program that writes the rest of its help
-screen itself. With a fixed `column` a left entry that leaves less than two
-spaces before it puts its description on the next line, which with
+With a fixed `column` a left entry that leaves less than two spaces before
+it puts its description on the next line, which with
 `CliHelpLayout(column: 30, width: 92, listMarker: false, canonicalFirst:
 true, notes: false, helpFlag: "Show this help")` gives exactly the table
 confutils' `renderOptionsTable(flags, 2, 30, 92)` renders.
@@ -886,8 +1003,9 @@ name `clispec-help/1`, meant for completion and editor hints:
  "parsing": {"flagMatching": "exact" | "ignoreCase" | "ignoreStyle",
              "rules": [RULE, ...],
              "commandMatching": "ignoreCase" | "ignoreStyle" (when set)}}
-COMMAND   = {"name", "path", "aliases", "help", "visibility",
+COMMAND   = {"name", "path", "aliases", "help", "longHelp", "visibility",
              "shadowedByWord": true (a shadowedByWord subcommand only), "usage",
+             "examples": [{"command", "help"}, ...],
              "parameters": [PARAMETER, ...], "commands": [COMMAND, ...]}
 PARAMETER = {"name", "kind": "flag" | "positional", "spellings",
              "negation": string | null, "value": "none" | "required" | "optional",

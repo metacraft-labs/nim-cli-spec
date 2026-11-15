@@ -30,6 +30,7 @@ task test, "Run the test suite":
             "test_cs_m10_confutils_compat_record",
             "test_cs_m10_command_word_rules",
             "test_cs_m10_dash_and_letter_rules",
+            "test_cs_m5b_help_matches_design",
             "test_type_check_nodes_carry_written_position",
             "test_suite_lists_agree"]:
     exec "nim c -r --hints:off tests/" & t & ".nim"

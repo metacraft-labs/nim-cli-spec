@@ -12,8 +12,8 @@
 ## (primary) help. The derivation reads the model's own fields
 ## (``visibility``, ``anonymous``, ``depth``), not the grammar the renderer
 ## uses, and the comparison runs both ways: nothing expected is missing and
-## nothing else is listed. Two goldens fix the human-readable layout and the
-## machine-readable form. Nothing is mocked.
+## nothing else is listed. Goldens fix the human-readable layout (the
+## standard page and the classic one) and the machine-readable form. Nothing is mocked.
 
 import std/[json, sets, strutils, unittest]
 
@@ -118,13 +118,18 @@ proc expectedCommands(cmd: PlainCliCommand): seq[PlainCliCommand] =
 proc display(p: PlainCliParam): string =
   if p.kind == cpkFlag: "--" & p.name else: "<" & p.name & ">"
 
+proc pages(path: seq[string]): seq[string] =
+  ## Every human-readable form of a command's help: the standard short
+  ## (``-h``) and long (``--help``) pages and the classic layout.
+  @[Hx.helpText(path), Hx.helpText(path, long = true),
+    Hx.helpText(path, layout = cliClassicHelpLayout)]
+
 suite "test_cs_m3_help_matches_model":
 
   test "every command's help lists exactly its visible parameters":
     for cmd in namedCommands():
       let label = if cmd.path.len == 0: "root" else: cmd.path.join(" ")
       checkpoint(label)
-      let text = Hx.helpText(cmd.path)
       let doc = parseJson(Hx.helpJson(cmd.path))
       let expected = expectedParams(cmd, machineReadable = false)
       var expectedNames = initHashSet[string]()
@@ -140,11 +145,7 @@ suite "test_cs_m3_help_matches_model":
         listed.incl(p["name"].getStr & ":" & p["visibility"].getStr)
       check listed == expectedJson
       # Human-readable: every expected parameter with its help text; no
-      # other parameter of the whole model appears.
-      for p in expected:
-        check display(p) in text or ("--[no-]" & p.name) in text
-        if p.help.len > 0:
-          check p.help in text
+      # other parameter of the whole model appears (on every page form).
       var everyName = initHashSet[string]()
       for other in namedCommands():
         for p in other.params:
@@ -152,13 +153,18 @@ suite "test_cs_m3_help_matches_model":
       for call in model.commands:
         for p in call.params:
           everyName.incl(p.name)
-      for name in everyName:
-        if name notin expectedNames:
-          check ("--" & name & " ") notin text
-          check ("--" & name & "\n") notin text
-          check ("--" & name & "=") notin text
-          check ("--" & name & "[") notin text
-          check ("<" & name & ">") notin text
+      for text in pages(cmd.path):
+        for p in expected:
+          check display(p) in text or ("--[no-]" & p.name) in text
+          if p.help.len > 0:
+            check p.help in text
+        for name in everyName:
+          if name notin expectedNames:
+            check ("--" & name & " ") notin text
+            check ("--" & name & "\n") notin text
+            check ("--" & name & "=") notin text
+            check ("--" & name & "[") notin text
+            check ("<" & name & ">") notin text
 
   test "every command's help lists exactly its visible subcommands":
     for cmd in namedCommands():
@@ -171,30 +177,77 @@ suite "test_cs_m3_help_matches_model":
       for c in expectedCommands(cmd):
         expected.incl(c.name)
       check listed == expected
-      let text = Hx.helpText(cmd.path)
-      for c in expectedCommands(cmd):
-        check ("  " & c.name) in text
-        check c.help in text
+      for text in pages(cmd.path):
+        for c in expectedCommands(cmd):
+          check ("  " & c.name) in text
+          check c.help in text
 
   test "internal subcommands only in their namespace's help, internal parameters in none":
-    check "--trace" notin Hx.helpText()
-    check "internal" notin Hx.helpText()
-    check "--graph" notin Hx.helpText(["build"])
-    check "--depth" notin Hx.helpText(["remote"])
-    check "--depth" notin Hx.helpText(["remote", "add"])
-    check "--trace" notin Hx.helpText(["internal", "probe"])
-    check "dump" in Hx.helpText(["internal"])
-    check "probe" in Hx.helpText(["internal"])
-    check "prune" in Hx.helpText(["remote"])
+    for k in 0 ..< 3:
+      checkpoint("page form " & $k)
+      check "--trace" notin pages(@[])[k]
+      check "internal" notin pages(@[])[k]
+      check "--graph" notin pages(@["build"])[k]
+      check "--depth" notin pages(@["remote"])[k]
+      check "--depth" notin pages(@["remote", "add"])[k]
+      check "--trace" notin pages(@["internal", "probe"])[k]
+      check "dump" in pages(@["internal"])[k]
+      check "probe" in pages(@["internal"])[k]
+      check "prune" in pages(@["remote"])[k]
     for cmd in namedCommands():
-      let text = Hx.helpText(cmd.path)
-      check "--token" notin text
-      check "--key" notin text
-      if cmd.path != @["ghost"]:
-        check "ghost" notin text
+      for text in pages(cmd.path):
+        check "--token" notin text
+        check "--key" notin text
+        if cmd.path != @["ghost"]:
+          check "ghost" notin text
 
   test "human-readable layout (golden)":
-    check Hx.helpText() == """Usage: hx [options] <command>
+    check Hx.helpText() == """A help fixture
+
+Usage: hx [options] <command>
+
+Commands:
+  build, b  Build a project
+  remote    Remotes
+
+Options:
+  -v, --[no-]verbose  Talk more
+  -h, --help          Print help
+
+Output:
+  Where results go
+  --report[=<string>]  Write a report [env: HX_REPORT]
+
+Run 'hx <command> --help' for more on a command.
+"""
+    check Hx.helpText(["build"]) == """Build a project
+
+Usage: hx build [options] <target> [<more>...]
+
+Aliases: b
+
+Arguments:
+  <target>     What to build
+  [<more>...]  More targets
+
+Options:
+  -j, --jobs <int>           Parallel jobs [default: 4]
+      --shade <light|dark>   Theme [default: dark]
+      --tags <string>[,...]  Tags
+  -l<string>..., --libs=<string>...
+                             Libraries
+  -h, --help                 Print help
+
+Output:
+  Where results go
+  --report[=<string>]  Write a report [env: HX_REPORT]
+
+Global Options:
+  -v, --[no-]verbose  Talk more
+"""
+
+  test "human-readable classic layout (golden)":
+    check Hx.helpText(layout = cliClassicHelpLayout) == """Usage: hx [options] <command>
 
 A help fixture
 
@@ -209,7 +262,7 @@ Output:
   Where results go
   --report[=<string>]  Write a report [env: HX_REPORT]
 """
-    check Hx.helpText(["build"]) == """Usage: hx build [options] <target> [<more>...]
+    check Hx.helpText(["build"], layout = cliClassicHelpLayout) == """Usage: hx build [options] <target> [<more>...]
 
 Build a project
 
@@ -243,8 +296,10 @@ Output:
     ],
     "aliases": [],
     "help": "Remotes",
+    "longHelp": "",
     "visibility": "shown",
     "usage": "hx remote [options] [<command>]",
+    "examples": [],
     "parameters": [
       {
         "name": "verbose",
@@ -458,8 +513,10 @@ Output:
         ],
         "aliases": [],
         "help": "Add a remote",
+        "longHelp": "",
         "visibility": "shown",
         "usage": "hx remote add [options] <name>",
+        "examples": [],
         "parameters": [
           {
             "name": "verbose",
@@ -673,8 +730,10 @@ Output:
         ],
         "aliases": [],
         "help": "Prune remotes",
+        "longHelp": "",
         "visibility": "internal",
         "usage": "hx remote prune [options]",
+        "examples": [],
         "parameters": [
           {
             "name": "verbose",

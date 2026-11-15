@@ -92,6 +92,9 @@ type
     ## or JSON for ``--help=json``), and the program prints it.
     commandPath*: seq[string]
     json*: bool
+    long*: bool
+      ## The long page was asked for (``--help``, or the word ``help``
+      ## under ``parsing helpWord``) rather than the short one (``-h``).
     text*: string
 
   CliVersionRequest* = object of CliHelpRequest

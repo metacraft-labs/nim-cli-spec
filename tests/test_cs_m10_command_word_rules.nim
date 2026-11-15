@@ -398,9 +398,15 @@ suite "test_cs_m10_command_word_rules":
         check p["rest"].getBool
       else:
         check not p.hasKey("rest")
-    # Help text is unchanged by it.
+    # Help text is unchanged by it: in the classic layout byte for byte; in
+    # the standard one but for the help row, which under longHelpOnly is
+    # ``--help`` alone.
+    check Words.helpText(["run"], layout = cliClassicHelpLayout) ==
+      Plain.helpText(["run"], layout = cliClassicHelpLayout).replace(
+        "plain run", "words run")
     check Words.helpText(["run"]) ==
-      Plain.helpText(["run"]).replace("plain run", "words run")
+      Plain.helpText(["run"]).replace("plain run", "words run").replace(
+        "  -h, --help  Print help\n", "  --help  Print help\n")
 
   test "parsing helpWord: the word help asks for the help of its level":
     for argv in [@["help"], @["HELP"], @["he_lp"], @["help", "list"],
@@ -579,7 +585,10 @@ suite "test_cs_m10_command_word_rules":
     check "  show, version\n" in top
     # The help path names the subcommand: its own help.
     let own = Shadow.helpText(["help"])
-    check own.startsWith("Usage: shadow help [options] [<topic>]\n")
+    check own.startsWith(
+      "Help topics\n\nUsage: shadow help [options] [<topic>]\n")
+    check Shadow.helpText(["help"], layout = cliClassicHelpLayout).startsWith(
+      "Usage: shadow help [options] [<topic>]\n")
     check "--depth <int>" in own
     check Shadow.helpText(["topics"]) == own
     check Shadow.helpText(["HELP"]) == own

@@ -102,6 +102,12 @@ library.
   command whose parse results and options table are checked against what
   confutils' loader and `renderOptionsTable` produced for the equivalent
   type (`test_cs_m10_confutils_compat_record`).
+- `tests/test_cs_m5b_help_matches_design.nim` pins the standard help page
+  (the default): exact goldens of a fixture's short (`-h`) and long
+  (`--help`) pages at 80, 160 and 50 columns, the notes, examples and the
+  JSON's `examples` / `longHelp`, and checks that the classic layout
+  (`cliClassicHelpLayout`) does not give them. A test that expects the
+  classic text names `cliClassicHelpLayout`.
 - `tests/test_cs_m9_clispec_has_no_serialization_dependency.nim` fails when
   `clispec.nimble`, `flake.nix` or `repro.nim` declares a serialization
   library or a module under `src/` imports one.

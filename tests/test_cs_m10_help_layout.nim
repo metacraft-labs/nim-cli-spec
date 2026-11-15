@@ -3,10 +3,11 @@
 ## ``cliOptionsTable``), each rendered and compared in full.
 ##
 ## ``Hl`` is a real ``cliProgram`` description; the texts below are what its
-## generated ``helpText`` and ``optionsTable`` must produce. The default
-## layout is today's (the existing help tests pin it for descriptions that
-## use none of the new arguments); every field of the layout is exercised
-## against it.
+## generated ``helpText`` and ``optionsTable`` must produce in the classic
+## layout (``cliClassicHelpLayout``, the default of the ``CliHelpLayout``
+## type), which these calls name explicitly since the procedures' default
+## is the standard page (``test_cs_m5b_help_matches_design``); every field
+## of the layout is exercised against it.
 
 import std/[json, strutils, unittest]
 
@@ -114,10 +115,14 @@ Extra:
 
 suite "test_cs_m10_help_layout":
 
-  test "the default layout: placeholders and long help, nothing wrapped":
-    check Hl.helpText() == defaultText
+  test "the classic layout: placeholders and long help, nothing wrapped":
+    check Hl.helpText(layout = cliClassicHelpLayout) == defaultText
     check Hl.helpText(layout = CliHelpLayout()) == defaultText
-    check cliHelpText(Hl.cliGrammar, 0, "hl") == defaultText
+    check cliHelpText(Hl.cliGrammar, 0, "hl", cliClassicHelpLayout) ==
+      defaultText
+    # The classic layout has one page: ``long`` changes nothing.
+    check Hl.helpText(layout = cliClassicHelpLayout, long = true) ==
+      defaultText
 
   test "every layout field at once":
     check Hl.helpText(layout = everyFieldLayout) == everyFieldText
@@ -125,11 +130,12 @@ suite "test_cs_m10_help_layout":
   test "the options table alone, wrapped at a fixed column":
     check Hl.optionsTable(layout = CliHelpLayout(column: 24, width: 60)) ==
       wrappedTable
-    check Hl.optionsTable(group = "Extra") == "  --level <int>  A level\n"
-    check Hl.optionsTable(group = "None") == ""
+    check Hl.optionsTable(layout = cliClassicHelpLayout, group = "Extra") ==
+      "  --level <int>  A level\n"
+    check Hl.optionsTable(layout = cliClassicHelpLayout, group = "None") == ""
 
   test "each field changes only its own part":
-    let base = Hl.optionsTable()
+    let base = Hl.optionsTable(layout = cliClassicHelpLayout)
     check base == defaultText.split("Options:\n")[1].split("\nExtra:")[0]
     check Hl.optionsTable(layout = CliHelpLayout(listMarker: false)) ==
       base.replace("--tags <tag>...     ", "--tags <tag>        ")

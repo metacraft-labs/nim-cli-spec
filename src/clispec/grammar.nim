@@ -91,6 +91,9 @@ type
     hasDefault*: bool
     defaultText*: string
       ## The ``default`` as written, for help (a string literal unquoted).
+    defaultIsText*: bool
+      ## The ``default`` is a string literal (help quotes it when it is
+      ## empty or holds white space).
     hasCompleter*: bool
     completer*: string
       ## The ``complete`` expression as written (the completer's name or
@@ -131,6 +134,10 @@ type
     path*: seq[string]
     aliases*: seq[string]
     help*: string
+    longHelp*: string
+      ## ``CliCommand.longHelp``: the long help's further paragraphs.
+    examples*: seq[CliExample]
+      ## ``CliCommand.examples``, in declaration order.
     visibility*: CliVisibility
     shadowedByWord*: bool
       ## ``CliCommand.shadowedByWord``: a word a ``parsing`` rule reserves
@@ -220,6 +227,7 @@ func toGrammarParam[P](p: CliParam[P]; declaredBy: int): CliGrammarParam =
     configKey: p.configKey, sourceKeys: p.sourceKeys, sources: p.sources,
     merge: p.merge,
     hasDefault: p.default.isSet, defaultText: displayDefault(p.default),
+    defaultIsText: p.default.code.len >= 2 and p.default.code[0] == '"',
     hasCompleter: p.complete.isSet,
     completer: (if p.complete.isSet: p.complete.code else: ""),
     declaredIn: p.declaredIn,
@@ -317,7 +325,8 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
       else:
         g.commands[parent].children.add(index)
     g.commands.add(CliGrammarCommand(name: cmd.name, path: cmd.path,
-      aliases: cmd.aliases, help: cmd.help, visibility: cmd.visibility,
+      aliases: cmd.aliases, help: cmd.help, longHelp: cmd.longHelp,
+      examples: cmd.examples, visibility: cmd.visibility,
       shadowedByWord: cmd.shadowedByWord, isCall: cmd.anonymous,
       parent: parent, callChild: -1,
       sourceFile: cmd.sourceFile, sourceLine: cmd.sourceLine))

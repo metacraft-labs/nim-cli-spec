@@ -358,6 +358,13 @@ type
     sourceFile*: string
     sourceLine*: int
 
+  CliExample* = object
+    ## An ``example "<command line>", help = "<text>"`` statement of a
+    ## command: a command line help shows under ``Examples:``, with the
+    ## text that says what it does.
+    command*: string
+    help*: string
+
   NoCliExtension* = object
     ## The empty extension: a model that carries nothing beyond what the
     ## library itself knows.
@@ -510,6 +517,14 @@ type
     help*: string
       ## ``subcmd "<name>", help = "<text>":``, ``call(help = "<text>"):``,
       ## or a ``help "<text>"`` statement in the scope's body.
+    longHelp*: string
+      ## ``subcmd "<name>", longHelp = "<text>":`` or a ``longHelp
+      ## "<text>"`` statement in the scope's body: further paragraphs of
+      ## description (each non-blank line one), which the long help
+      ## (``--help``) shows after ``help``.
+    examples*: seq[CliExample]
+      ## The scope's ``example`` statements, in declaration order. Not
+      ## inherited.
     aliases*: seq[string]
       ## ``subcmd "<name>", aliases = ["<other>", ...]:``: further accepted
       ## spellings of the subcommand word.
