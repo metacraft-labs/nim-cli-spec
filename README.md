@@ -445,7 +445,8 @@ with `cliProgramCode(model, typeName, program, exported)`.
   `acceptsNextWord`, below).
 - A `seq` collects every occurrence, each split on its `separator` if it has
   one. Any other parameter given twice keeps its last value.
-- `--` ends the flags. The first bare word after a command with subcommands
+- `--` ends the flags (unless `parsing loneDashesAreFlags`, below, makes
+  it an unknown flag). The first bare word after a command with subcommands
   names one (or one of its `aliases`); when the command also has a `call:`,
   any other word, or a flag (or a cluster of short flags) that only the
   `call:` declares, runs the `call:`. A word runs the `call:` only when the
@@ -475,7 +476,8 @@ Directly under `cli:`:
 - `flagMatching ignoreCase | ignoreStyle | exact`: how a word is compared
   with flag spellings when no spelling matches it exactly (`exact`, the
   default, accepts only exact ones). `ignoreCase` ignores ASCII case, in
-  long spellings, short letters (`-O` for `-o`) and `--help`. `ignoreStyle`
+  long spellings, short letters (`-O` for `-o`, unless `parsing
+  exactOneLetterFlags` keeps them exact) and `--help`. `ignoreStyle`
   compares as Nim's `cmpIgnoreStyle` does, which is what the loader did:
   ASCII case and every `_` are ignored and every other character must
   match, so `--CHECKPOINT-INTERVAL` and `--check_point-interval` are
@@ -535,7 +537,31 @@ Directly under `cli:`:
   - `longHelpOnly`: only `--help` asks for help; `-h`, alone or in a
     cluster (whatever `helpInCluster` says), is an unknown flag unless a
     flag declares it. The help row of `CliHelpLayout.helpFlag` and
-    completion then show `--help` alone.
+    completion then show `--help` alone;
+  - `loneDashesAreFlags`: a lone `-` or `--` where a flag may stand is
+    read as a flag whose name is empty, as a `getopt` that reads every
+    word starting with `-` as an option reads it: the usage error
+    `cekUnknownFlag` with an empty `spelling` (and no value), at that
+    word's argv index, reported where it stands in argv order (a help
+    request before it wins, one after it is not read). So `--` never ends
+    the flags and `-` is never a positional or a subcommand word. A word
+    that is the value of the flag before it is that value (`-o -`,
+    `--output --`, `-vo -`; also `--output=-` and `-o-`), and once a
+    `rest = true` positional has started, `-` and `--` are its words like
+    any other. `equalsTakesNext` and `acceptsNextWord` never take a word
+    starting with `-`, so `--output= -` and `--mode -` leave the dash on
+    its own, where it is refused. (`--=v` was already an unknown flag
+    spelt `--`, carrying `v`.) Completion agrees: a `--` before the cursor
+    ends nothing, and a lone `-` fills no positional;
+  - `exactOneLetterFlags`: under `flagMatching ignoreCase` or
+    `ignoreStyle`, a spelling whose name (what follows its `-` or `--`)
+    is one character is compared exactly, on either side: `-T` is not
+    `-t`, `--T` is not an alias `--t` nor `--t_` (a word of two characters
+    against a one-letter name), and a letter in a cluster (`-vT`) is
+    compared exactly too. Longer names are still compared in the mode, so
+    `--Trace-Folder` is `--trace-folder` and `--HELP` asks for help. It
+    is a declaration error under `flagMatching exact`, where it would
+    change nothing.
 
   `subcmd "help", shadowedByWord = true:` keeps a subcommand that answers
   (by its name or an alias, under `commandMatching`) to `help` under
@@ -618,10 +644,12 @@ What still differs from that loader: its `getopt` skips the word after a
 short option with an empty attached value (`-o=` or `-o:` followed by
 `x`), where clispec reads that word as usual; it skips blanks inside a
 word around the `=` or `:` (`"--name= x"` and `"--name :x"`, each one
-word, give `x`), where clispec keeps them; `--` is an unknown option to
-it, not the end of the flags; an unknown letter in a cluster of short
-flags is reported as the whole word
-(`-coop`), not the letter; its rest-of-line field starts after as many
+word, give `x`), where clispec keeps them; it matches a one-letter
+abbreviation written as a long option (`--t` for `-t`) and a one-letter
+name written as a short one (`-x` for `--x`), which a description
+declares (`alias = "--t"`, `short = 'x'`); an unknown letter in a
+cluster of short flags is reported as the whole word (`-coop`, also
+`-vT` and `-T=x`), not the letter; its rest-of-line field starts after as many
 words as the command has fields before it, counting flags and the words
 before the subcommand word, so a flag between the subcommand word and the
 first positional (`run --verbose prog a`) shifts the words, where a
@@ -728,6 +756,39 @@ try:
   assert false
 except CliUsageError as e:
   assert e.kind == cekUnknownFlag and e.spelling == "-h"
+```
+
+A lone `-` or `--` as an unknown flag, and one-letter spellings compared
+exactly:
+
+```nim
+import std/options
+import clispec
+
+cliProgram(Fetch, "fetch"):
+  flagMatching ignoreStyle
+  parsing loneDashesAreFlags, exactOneLetterFlags
+  flag output is Option[string], short = 'o'
+  flag tag is Option[string], short = 'T'
+  subcmd "run":
+    pos program is string
+    pos args is seq[string], rest = true, required = false
+
+assert Fetch.load(@["-o", "-", "run", "p"]).output == some("-")
+assert Fetch.load(@["run", "prog", "--", "-"]).run.args == @["--", "-"]
+for argv in [@["-"], @["--", "run", "p"], @["run", "--", "prog"]]:
+  try:
+    discard Fetch.load(argv)
+    assert false
+  except CliUsageError as e:
+    assert e.kind == cekUnknownFlag and e.spelling == ""
+assert Fetch.load(@["--OUTPUT", "a", "run", "p"]).output == some("a")
+assert Fetch.load(@["-T", "v1", "run", "p"]).tag == some("v1")
+try:
+  discard Fetch.load(@["-O", "a", "run", "p"])
+  assert false
+except CliUsageError as e:
+  assert e.kind == cekUnknownFlag and e.spelling == "-O"
 ```
 
 ### Errors

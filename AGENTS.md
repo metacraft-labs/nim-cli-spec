@@ -96,7 +96,9 @@ library.
 - The `test_cs_m10_*` tests cover the opt-in features for command lines
   that come from confutils' type-based loader: the help layout, placeholders
   and long help (`test_cs_m10_help_layout`), each parsing rule and its
-  absence (`test_cs_m10_parse_compat_rules`), and a generic `record`-like
+  absence (`test_cs_m10_parse_compat_rules`; the lone-dash and one-letter
+  rules in `test_cs_m10_dash_and_letter_rules`, checked against what the
+  nim-confutils fork's getopt-based parser gave), and a generic `record`-like
   command whose parse results and options table are checked against what
   confutils' loader and `renderOptionsTable` produced for the equivalent
   type (`test_cs_m10_confutils_compat_record`).

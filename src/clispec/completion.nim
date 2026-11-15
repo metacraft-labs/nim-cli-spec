@@ -8,7 +8,9 @@
 ## against a ``CliGrammar``, the way the parser reads them, and returns the
 ## candidates for the word under the cursor:
 ##
-## * a word starting with ``-`` (outside a ``--``-terminated tail) is
+## * a word starting with ``-`` (outside a ``--``-terminated tail; under
+##   ``parsing loneDashesAreFlags`` a ``--`` before the cursor ends nothing
+##   and a lone ``-`` there fills no positional, as in the parser) is
 ##   completed as a flag: every spelling of every flag the command accepts
 ##   (``--<long name>``, ``--no-<long name>`` for a ``negatable`` flag, the
 ##   ``alias`` and ``-<short>``) that starts with the word, then ``--help``
@@ -290,6 +292,10 @@ proc walk(g: CliGrammar; words: openArray[string];
         continue
     result.rest = restStarts(g, result)
     if result.rest >= 0:
+      continue
+    if cliIsLoneDash(g, word):
+      # ``loneDashesAreFlags``: an unknown flag to the parser, which neither
+      # ends the flags nor fills a positional.
       continue
     if not result.terminated and word == "--":
       result.terminated = true

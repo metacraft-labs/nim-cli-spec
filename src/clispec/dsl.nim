@@ -55,7 +55,8 @@
 ##   (``shortEquals``, ``helpWithAnyValue``, ``helpInCluster``,
 ##   ``valueErrorsBeforeHelp``, ``switchesRefuseFalse``,
 ##   ``lenientSwitchValues``, ``colonValues``, ``equalsTakesNext``,
-##   ``helpWord``, ``versionWord``, ``longHelpOnly``) opt into the
+##   ``helpWord``, ``versionWord``, ``longHelpOnly``,
+##   ``loneDashesAreFlags``, ``exactOneLetterFlags``) opt into the
 ##   command-line rules ``clispec/model`` documents.
 ## * ``call:`` opens the anonymous command, ``subcmd "<name>":`` a named one;
 ##   both nest. A nested scope sees the parameters its enclosing scopes
@@ -108,7 +109,8 @@
 ## without ``optionalValue``; ``refuseFalse`` on a non-``bool`` or with
 ## ``negatable``; ``help`` or ``longHelp`` that is not a constant string
 ## expression; an unknown ``parsing`` rule, ``flagMatching`` or
-## ``commandMatching`` mode; one of
+## ``commandMatching`` mode; ``parsing exactOneLetterFlags`` under
+## ``flagMatching exact`` (the default); one of
 ## the library's arguments given twice; two subcommands of one command answering
 ## to the same word (compared under ``commandMatching``), or one answering
 ## to ``help`` under ``parsing helpWord`` or to ``version`` under
@@ -1426,6 +1428,7 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
   # The program-wide statements come first: the conventions decide every
   # key and long flag, so they must be known before any parameter is read.
   var fileSeen, cliSeen, matchingSeen, commandMatchingSeen = false
+  var exactLettersNode: NimNode = nil
   for stmt in body:
     case cliCalleeName(stmt).normalize
     of "keystyle":
@@ -1522,7 +1525,8 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
           "shortEquals, helpWithAnyValue, helpInCluster, " &
           "valueErrorsBeforeHelp, switchesRefuseFalse, " &
           "lenientSwitchValues, colonValues, equalsTakesNext, helpWord, " &
-          "versionWord, longHelpOnly)", stmt)
+          "versionWord, longHelpOnly, loneDashesAreFlags, " &
+          "exactOneLetterFlags)", stmt)
       for k in 1 ..< stmt.len:
         var found = false
         for r in CliParseRule:
@@ -1532,15 +1536,23 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
             if r in result.parseRules:
               error("clispec: parsing names " & $r & " twice", stmt[k])
             result.parseRules.incl(r)
+            if r == cprExactOneLetterFlags:
+              exactLettersNode = stmt[k]
             found = true
         if not found:
           error("clispec: unknown parsing rule " & stmt[k].repr &
             " (expected shortEquals, helpWithAnyValue, helpInCluster, " &
             "valueErrorsBeforeHelp, switchesRefuseFalse, " &
             "lenientSwitchValues, colonValues, equalsTakesNext, helpWord, " &
-            "versionWord or longHelpOnly)", stmt[k])
+            "versionWord, longHelpOnly, loneDashesAreFlags or " &
+            "exactOneLetterFlags)", stmt[k])
     else:
       discard
+  if exactLettersNode != nil and result.flagMatching == cfmExact:
+    error("clispec: parsing exactOneLetterFlags keeps one-letter flag " &
+      "spellings exact under flagMatching ignoreCase or ignoreStyle, and " &
+      "changes nothing under flagMatching exact; declare one of those " &
+      "modes or drop the rule", exactLettersNode)
   result.root = parseCliScope[C, P](body, @[], true, root, body,
     result.commands, result.groups, cliNamingOf(result))
 

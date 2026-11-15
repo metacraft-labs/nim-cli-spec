@@ -333,6 +333,23 @@ type
       ## short flags (``helpInCluster``), is an ordinary spelling, unknown
       ## unless a flag declares it. Help's own row (``CliHelpLayout.helpFlag``)
       ## and completion then show ``--help`` alone.
+    cprLoneDashesAreFlags = "loneDashesAreFlags"
+      ## A lone ``-`` or ``--`` where a flag may stand is read as a flag
+      ## whose name is empty, which no flag has: the usage error
+      ## ``cekUnknownFlag`` with an empty ``spelling``, as ``getopt``-style
+      ## parsers that read every word starting with ``-`` as an option
+      ## report it. ``--`` then never ends the flags, and ``-`` is never a
+      ## positional. A word that is the value of the flag before it
+      ## (``-o -``, ``--output --``) is that value, and the words a ``rest``
+      ## positional takes are its own, verbatim, as without the rule.
+    cprExactOneLetterFlags = "exactOneLetterFlags"
+      ## Under ``flagMatching ignoreCase`` or ``ignoreStyle``, a spelling
+      ## whose name (what follows its ``-`` or ``--``) is one character is
+      ## compared exactly: ``-T`` is not ``-t``, ``--T`` is not ``--t``, and
+      ## ``--t_`` is not ``--t``. Longer names are still compared in the
+      ## mode (``--Trace_Folder`` is ``--trace-folder`` under
+      ## ``ignoreStyle``). A declaration error under ``flagMatching
+      ## exact``, where it would change nothing.
 
   CliGroup* = object
     ## A ``group "<title>":`` section: parameters listed together in help.

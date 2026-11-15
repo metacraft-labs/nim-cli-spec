@@ -47,7 +47,9 @@
 ##   gives another. It never takes the next word.
 ## * A list parameter (a ``seq``) collects every occurrence, and with a
 ##   ``separator`` each occurrence is split on it.
-## * ``--`` ends the flags: every later word is a positional.
+## * ``--`` ends the flags: every later word is a positional (under
+##   ``parsing loneDashesAreFlags`` it is an unknown flag instead, as is a
+##   lone ``-``).
 ## * The first bare word after a command that has subcommands names one (or
 ##   one of its ``aliases``). When the command also has a ``call:``, a word
 ##   that names no subcommand, or a flag (or a cluster of short flags) only
@@ -80,8 +82,11 @@
 ## ``switchesRefuseFalse``, ``lenientSwitchValues``, ``colonValues``
 ## (``--name:value``, ``-o:value``), ``equalsTakesNext`` (``--name=
 ## value``), ``helpWord`` and ``versionWord`` (the bare words ``help`` and
-## ``version`` where a subcommand word is expected) and ``longHelpOnly``
-## (``-h`` is not help); ``commandMatching ignoreCase | ignoreStyle``
+## ``version`` where a subcommand word is expected), ``longHelpOnly``
+## (``-h`` is not help), ``loneDashesAreFlags`` (a lone ``-`` or ``--`` is
+## an unknown flag with an empty spelling, so ``--`` ends nothing) and
+## ``exactOneLetterFlags`` (``-T`` is not ``-t`` under ``flagMatching``);
+## ``commandMatching ignoreCase | ignoreStyle``
 ## compares subcommand words in that mode when none matches exactly. A
 ## positional declared ``rest = true`` takes, once the positionals before
 ## it have their words, every remaining word verbatim. On a flag,
@@ -219,6 +224,28 @@ func matchModes(g: CliGrammar): seq[CliFlagMatching] =
   if g.flagMatching == cfmExact: @[cfmExact]
   else: @[cfmExact, g.flagMatching]
 
+func dashlessLen(spelling: string): int =
+  ## The length of a spelling's name: what follows its ``-`` or ``--``.
+  var k = 0
+  while k < spelling.len and k < 2 and spelling[k] == '-':
+    inc k
+  spelling.len - k
+
+func sameFlagSpelling(g: CliGrammar; mode: CliFlagMatching;
+                      word, spelling: string): bool =
+  ## ``cliSameSpelling`` for flag spellings: under ``exactOneLetterFlags``,
+  ## a word or spelling whose name is one character is compared exactly.
+  if mode != cfmExact and cprExactOneLetterFlags in g.parseRules and
+      (dashlessLen(word) == 1 or dashlessLen(spelling) == 1):
+    word == spelling
+  else:
+    cliSameSpelling(mode, word, spelling)
+
+func cliIsLoneDash*(g: CliGrammar; word: string): bool =
+  ## Under ``parsing loneDashesAreFlags``, whether ``word`` is a lone ``-``
+  ## or ``--``, which is then an unknown flag wherever a flag may stand.
+  cprLoneDashesAreFlags in g.parseRules and word in ["-", "--"]
+
 func cliValueSeparator*(g: CliGrammar; word: string): int =
   ## Where the spelling of ``word``, a ``--`` word, ends and the value
   ## written in the same word begins: the index of its first ``=`` (under
@@ -240,8 +267,8 @@ func matchLong(g: CliGrammar; scope: seq[int]; word: string): FlagMatch =
   for listed in matchModes(g):
     let mode = listed
     let id = findFlag(g, scope, proc (p: CliGrammarParam): bool =
-      cliSameSpelling(mode, head, "--" & cliLongName(p)) or
-        (p.alias.len > 0 and cliSameSpelling(mode, head, p.alias)))
+      sameFlagSpelling(g, mode, head, "--" & cliLongName(p)) or
+        (p.alias.len > 0 and sameFlagSpelling(g, mode, head, p.alias)))
     if id >= 0:
       result = FlagMatch(found: true, id: id, spelling: head)
       if eq >= 0:
@@ -252,7 +279,7 @@ func matchLong(g: CliGrammar; scope: seq[int]; word: string): FlagMatch =
     if head.len > 5 and cliSameSpelling(mode, head[0 .. 4], "--no-"):
       let name = head[5 .. ^1]
       let neg = findFlag(g, scope, proc (p: CliGrammarParam): bool =
-        p.negatable and cliSameSpelling(mode, name, cliLongName(p)))
+        p.negatable and sameFlagSpelling(g, mode, name, cliLongName(p)))
       if neg >= 0:
         result = FlagMatch(found: true, id: neg, spelling: head,
           negated: true)
@@ -280,8 +307,8 @@ func matchSingleDash(g: CliGrammar; scope: seq[int];
   for listed in matchModes(g):
     let mode = listed
     let id = findFlag(g, scope, proc (p: CliGrammarParam): bool =
-      cliSameSpelling(mode, word, p.alias) or
-        (p.short != '\0' and cliSameSpelling(mode, word, "-" & p.short)))
+      sameFlagSpelling(g, mode, word, p.alias) or
+        (p.short != '\0' and sameFlagSpelling(g, mode, word, "-" & p.short)))
     if id >= 0:
       return FlagMatch(found: true, id: id, spelling: word)
   let eq = word.find('=')
@@ -290,7 +317,7 @@ func matchSingleDash(g: CliGrammar; scope: seq[int];
     for listed in matchModes(g):
       let mode = listed
       let eid = findFlag(g, scope, proc (p: CliGrammarParam): bool =
-        p.format == cafEquals and cliSameSpelling(mode, head, p.alias))
+        p.format == cafEquals and sameFlagSpelling(g, mode, head, p.alias))
       if eid >= 0:
         return FlagMatch(found: true, id: eid, spelling: head,
           attached: some(word[eq + 1 .. ^1]))
@@ -309,9 +336,11 @@ func matchSingleDash(g: CliGrammar; scope: seq[int];
 
 func cliFindShort*(g: CliGrammar; scope: seq[int]; letter: char): int =
   ## The flag of ``scope`` whose ``short`` is ``letter`` (exactly, else
-  ## under the program's ``flagMatching``), or -1.
+  ## under the program's ``flagMatching`` unless ``exactOneLetterFlags``
+  ## keeps letters exact), or -1.
   for listed in matchModes(g):
-    let mode = listed
+    let mode = if cprExactOneLetterFlags in g.parseRules: cfmExact
+               else: listed
     let id = findFlag(g, scope, proc (p: CliGrammarParam): bool =
       p.short != '\0' and cliSameLetter(mode, p.short, letter))
     if id >= 0:
@@ -590,6 +619,11 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
           text: argv[k], argvIndex: k, valueArgvIndex: -1, verbatim: true))
       break
     var word = argv[i]
+    if cliIsLoneDash(g, word):
+      # ``loneDashesAreFlags``: a flag with an empty name, which no flag
+      # has. (A flag's value never gets here: it is consumed with its
+      # flag; nor does a word a ``rest`` positional takes.)
+      fail(cekUnknownFlag, i, "")
     let isFlagWord = not terminated and word.len > 1 and word[0] == '-'
     if not terminated and word == "--":
       terminated = true

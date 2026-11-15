@@ -61,7 +61,9 @@ type
     spelling*: string
       ## The flag spelling or word the error is about (``--jobs``, ``-j``,
       ## ``frobnicate``), or the parameter's display name (``--output``,
-      ## ``<target>``) for a missing one.
+      ## ``<target>``) for a missing one. Empty for the lone ``-`` or ``--``
+      ## that ``parsing loneDashesAreFlags`` makes an unknown flag (a flag
+      ## with an empty name; ``argvIndex`` locates the word).
     value*: string
       ## The rejected value (``cekInvalidValue``, ``cekSwitchFalseValue``).
       ## For ``cekUnknownFlag``, the value written with the flag
