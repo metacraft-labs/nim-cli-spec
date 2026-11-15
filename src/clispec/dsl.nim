@@ -24,9 +24,10 @@
 ## * Named arguments follow the head. A flag accepts ``alias = "<spelling>"``,
 ##   ``required = true|false``, ``format = separate|concat|equals``,
 ##   ``placement = after|before`` and ``repeated = true|false``. A positional
-##   accepts ``position = <int>``, ``repeated = true|false`` and
+##   accepts ``position = <int>``, ``repeated = true|false``,
 ##   ``required = true|false`` (it is required unless it says otherwise or
-##   has a ``default``).
+##   has a ``default``) and ``rest = true|false`` (the rest of the command
+##   line, ``CliParam.rest``).
 ## * Every parameter also accepts what a program declares about its own
 ##   command line: ``help = "<text>"``, ``default = <expr>``,
 ##   ``env = ["NAME", ...]``, ``values = [a, b, c]``,
@@ -49,10 +50,12 @@
 ##   ``refuseFalse = true`` (a switch) and ``alsoSets = [<param> =
 ##   "<text>", ...]``.
 ## * Directly under ``cli:``, ``flagMatching exact | ignoreCase |
-##   ignoreStyle`` and ``parsing <rule>, ...`` (``shortEquals``,
-##   ``helpWithAnyValue``, ``helpInCluster``, ``valueErrorsBeforeHelp``,
-##   ``switchesRefuseFalse``, ``lenientSwitchValues``, ``colonValues``,
-##   ``equalsTakesNext``) opt into the
+##   ignoreStyle``, ``commandMatching exact | ignoreCase | ignoreStyle``
+##   (the same modes, for subcommand words) and ``parsing <rule>, ...``
+##   (``shortEquals``, ``helpWithAnyValue``, ``helpInCluster``,
+##   ``valueErrorsBeforeHelp``, ``switchesRefuseFalse``,
+##   ``lenientSwitchValues``, ``colonValues``, ``equalsTakesNext``,
+##   ``helpWord``, ``versionWord``, ``longHelpOnly``) opt into the
 ##   command-line rules ``clispec/model`` documents.
 ## * ``call:`` opens the anonymous command, ``subcmd "<name>":`` a named one;
 ##   both nest. A nested scope sees the parameters its enclosing scopes
@@ -103,12 +106,16 @@
 ## twice, or with a value that is not a string literal; ``acceptsNextWord``
 ## without ``optionalValue``; ``refuseFalse`` on a non-``bool`` or with
 ## ``negatable``; ``help`` or ``longHelp`` that is not a constant string
-## expression; an unknown ``parsing`` rule or ``flagMatching`` mode; one of
+## expression; an unknown ``parsing`` rule, ``flagMatching`` or
+## ``commandMatching`` mode; one of
 ## the library's arguments given twice; two subcommands of one command answering
-## to the same word; ``aliases`` on ``call:``; a ``help`` statement
+## to the same word (compared under ``commandMatching``), or one answering
+## to ``help`` under ``parsing helpWord`` or to ``version`` under
+## ``versionWord``; ``rest`` on a flag, on a type that is not a ``seq``, or
+## together with ``repeated``; ``aliases`` on ``call:``; a ``help`` statement
 ## inside a ``group`` section; ``keyStyle``, ``convention``,
-## ``configSchema``, ``flagMatching`` or ``parsing`` anywhere but directly
-## under ``cli:``; an unknown
+## ``configSchema``, ``flagMatching``, ``commandMatching`` or ``parsing``
+## anywhere but directly under ``cli:``; an unknown
 ## convention, or one source's convention given twice; a ``perConvention``
 ## entry for ``declared`` or one convention given twice; a ``perSource``
 ## entry naming a file source the description does not declare, ``file``
@@ -116,7 +123,9 @@
 ## ``sources`` exclude ``cli``, or a file source when they exclude ``file``;
 ## and two parameters of one command whose long flags or keys in one source
 ## come out the same once converted and overridden. (``cliProgram`` adds rules of its own for a
-## program's own command line, such as reserved configuration keys.)
+## program's own command line, such as reserved configuration keys and a
+## ``rest`` positional that is not the last one of its command or follows a
+## ``repeated`` one.)
 ##
 ## Whether a ``default``, ``optionalValue``, ``values`` entry or ``implies``
 ## value is a value of the parameter's type is checked here when the type is
@@ -175,6 +184,12 @@ type
       ## The command line's long flags'.
     fileSources*: seq[CliSourceConvention]
       ## The named file sources'.
+    commandMatching*: CliFlagMatching
+      ## How subcommand words are compared (``CliModel.commandMatching``),
+      ## for the check that no two subcommands answer to one word.
+    parseRules*: set[CliParseRule]
+      ## The description's ``parsing`` rules, for the words ``helpWord`` and
+      ## ``versionWord`` reserve.
 
   CliScope* = object
     ## What a command-extension hook is told about the scope a statement
@@ -216,7 +231,8 @@ type
 func cliNamingOf*[C, P](model: CliModel[C, P]): CliNaming =
   ## The conventions a model's description declares.
   CliNaming(fileConvention: model.keyStyle,
-    flagConvention: model.flagConvention, fileSources: model.fileSources)
+    flagConvention: model.flagConvention, fileSources: model.fileSources,
+    commandMatching: model.commandMatching, parseRules: model.parseRules)
 
 proc cliIdentText*(node: NimNode): string =
   ## The spelling of an identifier node. Nim parses the word ``out`` in a
@@ -594,6 +610,9 @@ const
   flagOnlyParamKeys = ["short", "optionalvalue", "negatable", "counted",
     "acceptsnextword", "refusefalse", "alsosets"]
     ## The named arguments only a flag takes, normalised.
+  positionalOnlyParamKeys = ["rest"]
+    ## The named arguments only a positional takes and that a flag must not
+    ## pass to an extension, normalised.
 
 proc cliConventionLit*(node: NimNode; what: string): CliConvention =
   ## A convention written as an identifier: ``declared``, ``camelCase``,
@@ -757,7 +776,7 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
   var given: seq[string] = @[]
   var requiredNode: NimNode = nil
   var keyNode, envNode, defaultNode, perSourceNode: NimNode = nil
-  var acceptsNextWordNode, refuseFalseNode: NimNode = nil
+  var acceptsNextWordNode, refuseFalseNode, restNode: NimNode = nil
   for i in 2 ..< node.len:
     let arg = node[i]
     if arg.kind != nnkExprEqExpr:
@@ -765,13 +784,17 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
     let spelled = cliIdentText(arg[0])
     let key = spelled.normalize
     let value = arg[1]
-    if key in commonParamKeys or key in flagOnlyParamKeys:
+    if key in commonParamKeys or key in flagOnlyParamKeys or
+        key in positionalOnlyParamKeys:
       if key in given:
         cliParamError(name, "`" & spelled & "` is given twice", arg)
       given.add(key)
       if key in flagOnlyParamKeys and result.kind == cpkPositional:
         cliParamError(name, "`" & spelled & "` applies to flags only, " &
           "not to a positional", arg)
+      if key in positionalOnlyParamKeys and result.kind == cpkFlag:
+        cliParamError(name, "`" & spelled & "` applies to positionals " &
+          "only, not to a flag", arg)
     var consumed = true
     case key
     of "help":
@@ -785,6 +808,9 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
     of "acceptsnextword":
       result.acceptsNextWord = strictBoolLit(value, name, spelled)
       acceptsNextWordNode = arg
+    of "rest":
+      result.rest = strictBoolLit(value, name, spelled)
+      restNode = arg
     of "refusefalse":
       result.refuseFalse = strictBoolLit(value, name, spelled)
       refuseFalseNode = arg
@@ -943,6 +969,13 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
   if result.acceptsNextWord and not result.optionalValue.isSet:
     cliParamError(name, "acceptsNextWord applies to a flag with an " &
       "optionalValue (one whose value may be left out)", acceptsNextWordNode)
+  if result.rest:
+    if tc notin {tcUnknown, tcSeq}:
+      cliParamError(name, "rest takes the rest of the command line, so " &
+        "its type is a list (a seq), not " & result.nimType, restNode)
+    if result.repeated:
+      cliParamError(name, "rest and repeated contradict each other: a " &
+        "rest positional takes the remaining words itself", restNode)
   if result.refuseFalse:
     if tc notin {tcUnknown, tcBool}:
       cliParamError(name, "refuseFalse applies to a switch (a bool), not " &
@@ -1192,12 +1225,26 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
         childPath.add(childName)
       let childHeader = parseCommandHeader(stmt, isCall, childPath)
       if not isCall:
+        let mode = ctx.naming.commandMatching
         for word in @[childName] & childHeader.aliases:
           for seen in childWords:
             if seen.word == word:
               error("clispec: " & cliCommandLabel(childPath) &
                 ": the word '" & word & "' is already used by " &
                 cliCommandLabel(ctx.path & @[seen.owner]), stmt)
+            if cliSameSpelling(mode, word, seen.word):
+              error("clispec: " & cliCommandLabel(childPath) &
+                ": the word '" & word & "' matches '" & seen.word &
+                "' of " & cliCommandLabel(ctx.path & @[seen.owner]) &
+                " under commandMatching " & $mode, stmt)
+          for (rule, reserved) in [(cprHelpWord, "help"),
+                                   (cprVersionWord, "version")]:
+            if rule in ctx.naming.parseRules and
+                cliSameSpelling(mode, word, reserved):
+              error("clispec: " & cliCommandLabel(childPath) &
+                ": the word '" & word & "' asks for the " & reserved &
+                " under parsing " & $rule & ", so no subcommand can " &
+                "answer to it", stmt)
           childWords.add((word, childName))
       discard parseScopeImpl[C, P](stmt[^1], childPath, false, cmd,
         ctx.wholeBody, childHeader, commands, groups, ctx.naming)
@@ -1219,7 +1266,8 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
       noteGroup(groups, title, groupHelp, stmt)
       walkScope[C, P](cmd, stmt[^1], title, ctx, commands, groups, helpGiven,
         childWords)
-    of "keystyle", "configschema", "convention", "flagmatching", "parsing":
+    of "keystyle", "configschema", "convention", "flagmatching",
+        "commandmatching", "parsing":
       # Read by ``parseCliModel`` before the scope is walked; valid only
       # directly under ``cli:``.
       if not ctx.isRoot or group.len > 0:
@@ -1349,7 +1397,7 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
   root.ext = rootExt
   # The program-wide statements come first: the conventions decide every
   # key and long flag, so they must be known before any parameter is read.
-  var fileSeen, cliSeen, matchingSeen = false
+  var fileSeen, cliSeen, matchingSeen, commandMatchingSeen = false
   for stmt in body:
     case cliCalleeName(stmt).normalize
     of "keystyle":
@@ -1424,12 +1472,29 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
       if not found:
         error("clispec: flagMatching must be exact, ignoreCase or " &
           "ignoreStyle, not " & stmt[1].repr, stmt[1])
+    of "commandmatching":
+      if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2:
+        error("clispec: commandMatching is written commandMatching exact | " &
+          "ignoreCase | ignoreStyle", stmt)
+      if commandMatchingSeen:
+        error("clispec: commandMatching is given twice", stmt)
+      commandMatchingSeen = true
+      var found = false
+      for m in CliFlagMatching:
+        if nimIdentNormalize(cliIdentText(stmt[1])) ==
+            nimIdentNormalize($m):
+          result.commandMatching = m
+          found = true
+      if not found:
+        error("clispec: commandMatching must be exact, ignoreCase or " &
+          "ignoreStyle, not " & stmt[1].repr, stmt[1])
     of "parsing":
       if stmt.kind notin {nnkCommand, nnkCall} or stmt.len < 2:
         error("clispec: parsing is written parsing <rule>, ... (" &
           "shortEquals, helpWithAnyValue, helpInCluster, " &
           "valueErrorsBeforeHelp, switchesRefuseFalse, " &
-          "lenientSwitchValues, colonValues, equalsTakesNext)", stmt)
+          "lenientSwitchValues, colonValues, equalsTakesNext, helpWord, " &
+          "versionWord, longHelpOnly)", stmt)
       for k in 1 ..< stmt.len:
         var found = false
         for r in CliParseRule:
@@ -1444,7 +1509,8 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
           error("clispec: unknown parsing rule " & stmt[k].repr &
             " (expected shortEquals, helpWithAnyValue, helpInCluster, " &
             "valueErrorsBeforeHelp, switchesRefuseFalse, " &
-            "lenientSwitchValues, colonValues or equalsTakesNext)", stmt[k])
+            "lenientSwitchValues, colonValues, equalsTakesNext, helpWord, " &
+            "versionWord or longHelpOnly)", stmt[k])
     else:
       discard
   result.root = parseCliScope[C, P](body, @[], true, root, body,
@@ -1576,6 +1642,11 @@ proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
         result.add(cliFailWhenNot(infix(typeNode, "is", ident("SomeInteger")),
           prefix & "counted requires an integer type, not " & param.nimType,
           param.sourceFile, param.sourceLine, 0))
+      if param.rest:
+        result.add(cliFailWhenNot(infix(typeNode, "is", ident("seq")),
+          prefix & "rest takes the rest of the command line, so its type " &
+          "is a list (a seq), not " & param.nimType, param.sourceFile,
+          param.sourceLine, 0))
       if param.negatable:
         result.add(cliFailWhenNot(infix(typeNode, "is", ident("bool")),
           prefix & "negatable requires bool, not " & param.nimType,

@@ -271,11 +271,14 @@ parameter of the command, the parameter itself, one parameter twice, or
 giving a value that is not a string literal, `acceptsNextWord` without
 `optionalValue`, `refuseFalse` on a non-`bool` or together with
 `negatable`, a `help` or `longHelp` that is not a constant string
-expression, an unknown `parsing` rule or `flagMatching` mode, an argument given twice, two
-subcommands of one command answering to the same word, `aliases` on `call:`,
+expression, an unknown `parsing` rule, `flagMatching` or `commandMatching` mode, an argument given twice, two
+subcommands of one command answering to the same word (compared under
+`commandMatching`), a subcommand answering to `help` under `parsing
+helpWord` or to `version` under `versionWord`, `rest` on a flag, on a type
+that is not a `seq` or together with `repeated`, `aliases` on `call:`,
 a `help` statement inside a `group` section (the section's help goes in
-its head), `keyStyle`, `convention`, `configSchema`, `flagMatching` or
-`parsing` anywhere but directly under `cli:`, an unknown convention or one source's convention given twice,
+its head), `keyStyle`, `convention`, `configSchema`, `flagMatching`,
+`commandMatching` or `parsing` anywhere but directly under `cli:`, an unknown convention or one source's convention given twice,
 a `perConvention` entry for `declared` or for one convention twice, a
 `perSource` entry for a file source the description does not declare, for
 `file` (that is `key`), for one source twice, for `cli` on a positional or
@@ -286,7 +289,9 @@ come out the same once converted and overridden. The generated checks also rejec
 combine proc that does not have the signature below, and a `complete`
 expression that is not a `CliCompleter`. In a `cliProgram` that
 declares a `configSchema`, a configuration key that is `schema` or lies
-under `extensions` is an error too: both belong to the file itself.
+under `extensions` is an error too: both belong to the file itself; so is,
+in any `cliProgram`, a `rest` positional that is not the last positional of
+its command or follows a `repeated` one.
 
 The parser rejects what it can tell from spellings. Whether an expression is a
 value of a type needs the compiler, so `cliModelTypeChecks(model)` generates
@@ -473,6 +478,15 @@ Directly under `cli:`:
   match, so `--CHECKPOINT-INTERVAL` and `--check_point-interval` are
   `--checkpoint-interval` while `--checkpoint_interval`,
   `--checkpointInterval` and `--checkpointinterval` are not.
+- `commandMatching ignoreCase | ignoreStyle | exact`: the same modes for
+  subcommand words (names and `aliases`), wherever one is resolved: the
+  parser, `helpText`/`helpJson` paths and completion. Under `ignoreStyle`
+  (`cmpIgnoreStyle` over the whole word, the loader's rule) `LIST`,
+  `l_ist`, `START_BACKEND` and `StartBackend` are `list` and
+  `start_backend`, while `start-backend` is not `start_backend` and
+  `get_default_org` is not `get-default-org`. An exact match wins; two
+  subcommands of one command that match each other in the mode are a
+  declaration error.
 - `parsing <rule>, ...`, any of:
   - `shortEquals`: `-o=value` gives a short option `value` (otherwise, as
     `getopt` reads it, the value is `=value`), and `-s=value` gives a short
@@ -503,12 +517,54 @@ Directly under `cli:`:
     word as that value when it does not start with `-` (an empty word is
     a value), else the value is empty: `--output= x`, `--flag= yes`,
     `--help= json`. A short flag does not (`-o= x` gives `-o` an empty
-    value under `shortEquals`).
+    value under `shortEquals`);
+  - `helpWord`: the bare word `help` where a subcommand word is expected
+    (after a command that has subcommands, before `--`) asks for the help
+    of that command, as `--help` there would, and the words after it are
+    not read (`tool help build` is the top-level help; `tool remote help`
+    is the help of `remote`). It is compared under `commandMatching`, and
+    `CliOptions(disableHelpFlag: true)` turns it off with the flags. Where
+    no subcommand word is expected it is an ordinary word. A subcommand
+    answering to `help` is a declaration error;
+  - `versionWord`: the same for the word `version`, which asks for the
+    version (below) when the program gives a version text;
+  - `longHelpOnly`: only `--help` asks for help; `-h`, alone or in a
+    cluster (whatever `helpInCluster` says), is an unknown flag unless a
+    flag declares it. The help row of `CliHelpLayout.helpFlag` and
+    completion then show `--help` alone.
 
-  Neither of the last two looks inside a word that is the value of the
-  flag before it: `-o --x:y` gives `-o` the value `--x:y`, and
-  `--output --a= b` gives `--output` the value `--a=` and leaves `b` a
-  word of its own.
+  Neither `colonValues` nor `equalsTakesNext` looks inside a word that is
+  the value of the flag before it: `-o --x:y` gives `-o` the value
+  `--x:y`, and `--output --a= b` gives `--output` the value `--a=` and
+  leaves `b` a word of its own.
+
+In `CliOptions`:
+
+- `versionText = "<text>"`: when not empty, `--version` (compared under
+  `flagMatching`; `--version=<anything>` too under `helpWithAnyValue`)
+  raises `CliVersionRequest`, a `CliHelpRequest` whose `text` is the
+  version text exactly as given, so a program that prints a help
+  request's text and exits 0 handles it unchanged; so does the word
+  `version` under `versionWord`. A flag the description spells
+  `--version` keeps that spelling. Without a version text neither means
+  anything. `--version` is not listed in help unless
+  `CliHelpLayout(versionFlag: "<text>")` asks for its row, and completion
+  does not offer it.
+
+On a positional:
+
+- `rest = true`, on the last positional of a command, of a `seq` type: the
+  rest of the command line. Once every positional before it has its word,
+  every remaining word is its, verbatim (never split on a `separator`):
+  flags, `--help`, `--version`, `help` and `--` included, and no flag of
+  any command is read after that. Before that, flags and `--` are read as
+  usual, so `tool run --verbose prog -x --help` sets `--verbose` and gives
+  `prog` to the first positional and `-x --help` to the rest; a command
+  whose only positional is the rest one takes every word after its
+  subcommand word (`tool remote --verbose a` gives it `--verbose a`). It is
+  required unless declared otherwise (`required = false` lets it be empty).
+  Completion offers only its own values from where it starts (none
+  without `values` or a completer), and the JSON marks it `"rest": true`.
 
 On a flag:
 
@@ -523,6 +579,9 @@ On a flag:
   the usage error `cekSwitchFalseValue`, carrying the spelling and the value
   so a program can word it itself; `--flag=true` and bare `--flag` set it.
   It applies to the command line; `negatable` contradicts it.
+- A flag of type `Option[bool]` (`flag interactive is Option[bool]`) takes
+  a value, the next word or `--flag=value`, as any value flag does
+  (`-i true`; `-i prog` is an invalid value); a switch is a `boolFlag`.
 - `alsoSets = [<param> = "<text>", ...]`: each occurrence of the flag (of a
   switch, one that sets it to true) also supplies `<text>`, as it would be
   written on the command line, to each named parameter of the same command,
@@ -542,7 +601,14 @@ word around the `=` or `:` (`"--name= x"` and `"--name :x"`, each one
 word, give `x`), where clispec keeps them; `--` is an unknown option to
 it, not the end of the flags; an unknown letter in a cluster of short
 flags is reported as the whole word
-(`-coop`), not the letter; errors decided once the whole command line is
+(`-coop`), not the letter; its rest-of-line field starts after as many
+words as the command has fields before it, counting flags and the words
+before the subcommand word, so a flag between the subcommand word and the
+first positional (`run --verbose prog a`) shifts the words, where a
+`rest = true` positional starts after the positionals before it; it read
+the rest from the process's own arguments, not the ones it was given; it
+accepted the default subcommand's own name as a word, which clispec does
+not; errors decided once the whole command line is
 read (a value its type rejects, a bare word no positional accepts) come
 after the ones the tokenizer finds (an unknown flag, a refused false
 switch) rather than strictly in argv order, except before a help request
@@ -596,6 +662,48 @@ assert Rec.optionsTable(layout = CliHelpLayout(column: 26, width: 60,
 """
 ```
 
+The subcommand-word rules, a rest positional and the version:
+
+```nim
+import clispec
+
+cliProgram(Dbg, "dbg"):
+  flagMatching ignoreStyle
+  commandMatching ignoreStyle
+  parsing helpWord, versionWord, longHelpOnly
+  boolFlag newTab is bool, perSource = [cli = "new-tab"], help = "New tab"
+  subcmd "list":
+    discard
+  subcmd "start_backend":
+    pos kind is string
+  subcmd "run":
+    pos program is string
+    pos args is seq[string], rest = true, required = false
+
+assert Dbg.load(@["LIST"]).command == DbgCommand.list
+assert Dbg.load(@["StartBackend", "db"]).startBackend.kind == "db"
+let r = Dbg.load(@["run", "--new-tab", "prog", "-x", "--help", "--"])
+assert r.newTab and r.run.program == "prog"
+assert r.run.args == @["-x", "--help", "--"]
+let opts = CliOptions(versionText: "dbg 1.0")
+for argv in [@["--version"], @["version"], @["run", "--VERSION"]]:
+  try:
+    discard Dbg.load(argv, opts)
+    assert false
+  except CliVersionRequest as e:
+    assert e.text == "dbg 1.0"
+try:
+  discard Dbg.load(@["help", "run"])
+  assert false
+except CliHelpRequest as e:
+  assert e.commandPath.len == 0 and e.text == Dbg.helpText()
+try:
+  discard Dbg.load(@["-h"])
+  assert false
+except CliUsageError as e:
+  assert e.kind == cekUnknownFlag and e.spelling == "-h"
+```
+
 ### Errors
 
 `load` never ends the process. A command line it rejects raises a
@@ -632,7 +740,10 @@ its argv index is -1.
 `--help` and `-h` raise `CliHelpRequest` with the help of the command they
 were given to in `text`; `--help=json` gives the machine-readable form. A
 program turns this off with `CliOptions(disableHelpFlag: true)`, and a flag
-the program itself spells `--help` or `-h` takes precedence. The help of a
+the program itself spells `--help` or `-h` takes precedence. Under `parsing
+longHelpOnly` `-h` is not help, and under `parsing helpWord` the word
+`help` is (see
+[Command lines from confutils' type-based loader](#command-lines-from-confutils-type-based-loader)). The help of a
 command lists its subcommands, its positionals and every flag it accepts,
 ungrouped flags under `Options:` and then each `group` section. For a
 smaller program than the one above, it looks like this:
@@ -657,7 +768,9 @@ Options:
 32, characters), the `width` descriptions are word-wrapped to (0: not
 wrapped; words are joined by one space and a word longer than the line is
 kept whole), `helpFlag` (when not empty, the options table ends with a
-`-h, --help` row with this text), `listMarker` (`...` after a list's
+`-h, --help` row with this text; `--help` alone under `longHelpOnly`),
+`versionFlag` (when not empty, a `--version` row with this text after it,
+for a program that sets `CliOptions.versionText`), `listMarker` (`...` after a list's
 placeholder), `canonicalFirst` (`--name` before a long `alias`) and `notes`
 (`[required]`, `[default: x]`, `[env: X]`). Every default is the layout
 above, so `CliHelpLayout()` changes nothing. `cliHelpText(g, command,
@@ -684,7 +797,8 @@ name `clispec-help/1`, meant for completion and editor hints:
 {"schema": "clispec-help/1", "program": "tool", "command": COMMAND,
  "conventions": {"cli": CONVENTION, "file": CONVENTION, SOURCE: CONVENTION, ...},
  "parsing": {"flagMatching": "exact" | "ignoreCase" | "ignoreStyle",
-             "rules": [RULE, ...]}}
+             "rules": [RULE, ...],
+             "commandMatching": "ignoreCase" | "ignoreStyle" (when set)}}
 COMMAND   = {"name", "path", "aliases", "help", "visibility", "usage",
              "parameters": [PARAMETER, ...], "commands": [COMMAND, ...]}
 PARAMETER = {"name", "kind": "flag" | "positional", "spellings",
@@ -693,6 +807,7 @@ PARAMETER = {"name", "kind": "flag" | "positional", "spellings",
              "valueName", "choices", "list", "separator": string | null,
              "counted", "required", "default": string | null, "env", "help",
              "group": string | null, "visibility", "position" (positionals),
+             "rest": true (a rest positional only),
              "declaredIn", "dynamicCompletion", "completer": string | null,
              "configKeys": {"file": KEY, SOURCE: KEY, ...}, "longHelp",
              "placeholder", "acceptsNextWord", "refuseFalse",
@@ -778,7 +893,8 @@ What is offered where:
 
 - A word starting with `-` gets every spelling of the command's flags that
   starts with it (`--name`, `--no-name` for a negatable flag, the `alias`,
-  `-x`), then `--help` and `-h`. A flag that only takes `--flag=value`
+  `-x`), then `--help` and `-h` (`--help` alone under `longHelpOnly`;
+  `--version` is not offered). A flag that only takes `--flag=value`
   (`format = equals`) is offered as `--flag=`.
 - After a flag that takes the next word as its value, and in
   `--flag=<partial>`, the flag's values: its closed set (`values`, or an
@@ -788,7 +904,12 @@ What is offered where:
   `equalsTakesNext`, a word after `--flag=` that does not start with `-`.
 - Any other word: the subcommands (a name, or an alias when the name does not
   match what was typed), then the values of the positional the word fills.
-  After `--`, positionals only.
+  After `--`, positionals only. Under `commandMatching ignoreCase |
+  ignoreStyle` what was typed is compared in that mode and the declared
+  word is offered (`LI` offers `list`; a shell that filters by what was
+  typed may drop it).
+- From where a `rest` positional starts, only its own values: no flag and
+  no subcommand.
 - `hidden` items and `internal` parameters are never offered; an `internal`
   subcommand only inside the command that holds it, never at the root.
 

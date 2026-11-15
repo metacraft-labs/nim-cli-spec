@@ -63,8 +63,8 @@
 ## * ``Tool.load(argv, options)`` parses ``argv`` (without the program
 ##   name) and returns a ``Tool``. ``Tool.load(options)`` parses the
 ##   process's own arguments. It raises ``CliUsageError`` for a command line
-##   it rejects and ``CliHelpRequest`` when help is asked for; it never ends
-##   the process.
+##   it rejects and ``CliHelpRequest`` when help is asked for (its subtype
+##   ``CliVersionRequest`` when the version is); it never ends the process.
 ## * ``Tool.helpText(path)`` and ``Tool.helpJson(path)`` render the help of
 ##   the command reached by the subcommand words ``path`` (see
 ##   ``clispec/help``); an unknown word is a ``CliUsageError``.
@@ -691,8 +691,9 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
         raises: [CliUsageError, CliHelpRequest].} =
       ## Parses ``argv`` (without the program name) into a configuration
       ## object. Raises ``CliUsageError`` for a command line it rejects and
-      ## ``CliHelpRequest`` when help is asked for (and its subtype
-      ## ``CliCompletionRequest`` when a completion script asks).
+      ## ``CliHelpRequest`` when help is asked for (and its subtypes
+      ## ``CliCompletionRequest`` when a completion script asks and
+      ## ``CliVersionRequest`` when the version is asked for).
       let opts = cliWithValueCheck(options, `valueCheck`)
       if cliIsCompletionRequest(argv, opts):
         cliCompletionCheck(`gc`, `completersName`(), argv, opts)

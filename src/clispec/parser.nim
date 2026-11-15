@@ -57,6 +57,10 @@
 ## * ``--help`` and ``-h`` request help (``--help=json`` the machine-readable
 ##   form) unless the program turns them off or declares those spellings
 ##   itself.
+## * ``--version`` requests the version (``CliVersionRequest``) when the
+##   program gives a version text (``CliOptions.versionText``) and declares
+##   no ``--version`` flag of its own; it is compared under ``flagMatching``
+##   and takes an attached value only under ``helpWithAnyValue``.
 ##
 ## Opt-in rules
 ## ============
@@ -68,8 +72,13 @@
 ## ``shortEquals`` (``-o=value``), ``helpWithAnyValue`` (``--help=1``),
 ## ``helpInCluster`` (``-help``), ``valueErrorsBeforeHelp``,
 ## ``switchesRefuseFalse``, ``lenientSwitchValues``, ``colonValues``
-## (``--name:value``, ``-o:value``) and ``equalsTakesNext`` (``--name=
-## value``). On a flag,
+## (``--name:value``, ``-o:value``), ``equalsTakesNext`` (``--name=
+## value``), ``helpWord`` and ``versionWord`` (the bare words ``help`` and
+## ``version`` where a subcommand word is expected) and ``longHelpOnly``
+## (``-h`` is not help); ``commandMatching ignoreCase | ignoreStyle``
+## compares subcommand words in that mode when none matches exactly. A
+## positional declared ``rest = true`` takes, once the positionals before
+## it have their words, every remaining word verbatim. On a flag,
 ## ``acceptsNextWord`` lets an optional value be the next word when it is a
 ## valid value, ``refuseFalse`` makes a switch's false value the error
 ## ``cekSwitchFalseValue``, and ``alsoSets`` adds, for each occurrence, a
@@ -102,7 +111,13 @@ type
       ## The exit code a usage error carries (``DefaultUsageExitCode``, 2,
       ## when zero).
     disableHelpFlag*: bool
-      ## Do not treat ``--help`` / ``-h`` as a request for help.
+      ## Do not treat ``--help`` / ``-h`` (nor, under ``helpWord``, the word
+      ## ``help``) as a request for help.
+    versionText*: string
+      ## The program's version, as it wants it printed. When not empty,
+      ## ``--version`` (and under ``parsing versionWord`` the word
+      ## ``version``) raises ``CliVersionRequest`` carrying it; empty (the
+      ## default), neither means anything special.
     completionEntry*: string
       ## The hidden first word through which a shell's completion script
       ## asks the program for candidates (``clispec/completion``);
@@ -319,7 +334,7 @@ func isHelpSpelling(g: CliGrammar; scope: seq[int]; word: string;
     return
   let eq = if word.startsWith("--"): cliValueSeparator(g, word) else: -1
   let head = if eq >= 0: word[0 ..< eq] else: word
-  let canonical = if head == "-h": "-h"
+  let canonical = if head == "-h" and cprLongHelpOnly notin g.parseRules: "-h"
                   elif cliSameSpelling(g.flagMatching, head, "--help"):
                     "--help"
                   else: ""
@@ -335,6 +350,22 @@ func isHelpSpelling(g: CliGrammar; scope: seq[int]; word: string;
     return (true, true)
   if value == "text" or cprHelpWithAnyValue in g.parseRules:
     return (true, false)
+
+func isVersionSpelling(g: CliGrammar; scope: seq[int]; word: string;
+                       options: CliOptions): bool =
+  ## ``--version`` (compared under ``flagMatching``) when the program has a
+  ## version text and no flag of ``scope`` is spelt ``--version``;
+  ## ``--version=<anything>`` too under ``helpWithAnyValue``.
+  if options.versionText.len == 0 or not word.startsWith("--"):
+    return false
+  let eq = cliValueSeparator(g, word)
+  let head = if eq >= 0: word[0 ..< eq] else: word
+  if not cliSameSpelling(g.flagMatching, head, "--version"):
+    return false
+  if findFlag(g, scope, proc (p: CliGrammarParam): bool =
+      "--version" in cliFlagSpellings(p)) >= 0:
+    return false
+  eq < 0 or cprHelpWithAnyValue in g.parseRules
 
 type SwitchValue = enum
   svTrue, svFalse, svInvalid
@@ -373,7 +404,8 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
     raises: [CliUsageError, CliHelpRequest].} =
   ## Phase 1: reads ``argv`` (the arguments, without the program name).
   ## Raises ``CliUsageError`` for a word it cannot place and
-  ## ``CliHelpRequest`` when help is asked for.
+  ## ``CliHelpRequest`` when help is asked for (``CliVersionRequest`` when
+  ## the version is).
   let program = effectiveProgram(g, options)
   let exitCode = effectiveExitCode(options)
   var selected = @[0]
@@ -507,11 +539,33 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
     raise (ref CliHelpRequest)(msg: "help requested", commandPath: path,
       json: json, text: text)
 
+  proc requestVersion() {.raises: [CliUsageError, CliVersionRequest].} =
+    checkValuesBeforeHelp()
+    raise (ref CliVersionRequest)(msg: "version requested",
+      commandPath: g.commands[node].path, text: options.versionText)
+
+  proc restStarts(): int =
+    ## The ``rest`` positional that takes the word at hand and every one
+    ## after it: the current command runs (it has no subcommands) and every
+    ## positional before the rest one has its word. -1 otherwise.
+    if g.commands[node].children.len > 0:
+      return -1
+    let r = cliRestParam(g, node)
+    if r.id >= 0 and positionals.len >= r.index: r.id else: -1
+
   descend()
   var terminated = false
   var i = 0
 
   while i < argv.len:
+    let restId = restStarts()
+    if restId >= 0:
+      # The rest of the command line, verbatim: nothing after this point is
+      # read as a flag, a help request or ``--``.
+      for k in i ..< argv.len:
+        addCandidate(restId, CliCandidate(source: csCli, form: ccfValue,
+          text: argv[k], argvIndex: k, valueArgvIndex: -1, verbatim: true))
+      break
     var word = argv[i]
     let isFlagWord = not terminated and word.len > 1 and word[0] == '-'
     if not terminated and word == "--":
@@ -521,6 +575,14 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
     if not isFlagWord:
       let cmd = g.commands[node]
       if cmd.children.len > 0:
+        if not terminated and cprHelpWord in g.parseRules and
+            not options.disableHelpFlag and
+            cliSameSpelling(g.commandMatching, word, "help"):
+          requestHelp(false)
+        if not terminated and cprVersionWord in g.parseRules and
+            options.versionText.len > 0 and
+            cliSameSpelling(g.commandMatching, word, "version"):
+          requestVersion()
         let next = if terminated: -1 else: cliChildNamed(g, node, word)
         if next >= 0:
           enter(next)
@@ -530,9 +592,10 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
           # no word from the command line (it holds only flags) cannot
           # accept it, so an unterminated word there is a mistyped
           # subcommand and is reported as one, naming the subcommands,
-          # rather than as a stray argument of the call:.
+          # rather than as a stray argument of the call:. The word is read
+          # again in the call:, where it may start a ``rest`` positional.
           enter(cmd.callChild)
-          positionals.add((word, i))
+          continue
         elif terminated:
           fail(cekUnexpectedPositional, i, word)
         else:
@@ -559,6 +622,8 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
     let helpAsk = isHelpSpelling(g, scope, word, options)
     if helpAsk.help:
       requestHelp(helpAsk.json)
+    if isVersionSpelling(g, scope, word, options):
+      requestVersion()
     var m = if word.startsWith("--"): matchLong(g, scope, word)
             else: matchSingleDash(g, scope, word)
     if not m.found and g.commands[node].children.len > 0 and
@@ -592,6 +657,7 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
           if id < 0:
             if letter == 'h' and attempt == 0 and
                 cprHelpInCluster in g.parseRules and
+                cprLongHelpOnly notin g.parseRules and
                 not options.disableHelpFlag and
                 (callNode < 0 or cliFindShort(g, scopes[^1], 'h') < 0):
               # ``-help``, ``-vh``: the letters before it count, the rest
@@ -722,10 +788,13 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
   var next = 0
   for s, id in slots:
     let p = g.params[id]
+    if p.rest:
+      # Its words were taken as they came.
+      continue
     if p.repeated or p.isList:
       var reserve = 0
       for later in slots[s + 1 .. ^1]:
-        if g.params[later].required:
+        if g.params[later].required and not g.params[later].rest:
           inc reserve
       let take = max(0, positionals.len - next - reserve)
       for w in positionals[next ..< next + take]:

@@ -28,6 +28,7 @@ task test, "Run the test suite":
             "test_cs_m9_clispec_has_no_serialization_dependency",
             "test_cs_m10_help_layout", "test_cs_m10_parse_compat_rules",
             "test_cs_m10_confutils_compat_record",
+            "test_cs_m10_command_word_rules",
             "test_type_check_nodes_carry_written_position",
             "test_suite_lists_agree"]:
     exec "nim c -r --hints:off tests/" & t & ".nim"

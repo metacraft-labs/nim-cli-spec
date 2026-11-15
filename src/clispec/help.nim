@@ -53,8 +53,9 @@
 ## parameter's ``longHelp`` paragraphs follow its description, one per line.
 ##
 ## ``CliHelpLayout`` sets the indent, the description column, the width
-## descriptions are wrapped to, a row for the help flag, the list marker,
-## the order of a long alias and the notes; its defaults are the layout
+## descriptions are wrapped to, a row for the help flag (and one for
+## ``--version``), the list marker, the order of a long alias and the
+## notes; its defaults are the layout
 ## above, in which nothing is wrapped. ``cliOptionsTable`` renders just the
 ## rows of a command's options table, for a program that writes the rest of
 ## its help screen itself.
@@ -81,7 +82,10 @@
 ## "acceptsNextWord", "refuseFalse", "alsoSets" ([{"param", "value"}])}``,
 ## and after ``conventions`` the document ends with ``"parsing":
 ## {"flagMatching", "rules"}`` (the description's ``flagMatching`` mode and
-## ``parsing`` rules). ``placeholder`` is what help shows between ``<`` and
+## ``parsing`` rules; ``"commandMatching"`` follows when the description
+## sets a mode other than ``exact``). A positional declared ``rest = true``
+## has ``"rest": true`` after its ``position`` (the key is absent
+## otherwise). ``placeholder`` is what help shows between ``<`` and
 ## ``>`` (``valueName`` stays the type's name). ``conventions`` names the
 ## naming convention of the command line (``cli``), of every configuration
 ## file (``file``) and of each named file source; ``configKeys`` is a
@@ -127,6 +131,13 @@ type
       ## When not empty, the options table ends with a row for the help
       ## flag (``-h, --help``, the spellings that request help) with this
       ## description.
+    versionFlag*: string = ""
+      ## When not empty, the options table ends with a row for
+      ## ``--version`` with this description (after the help flag's row),
+      ## unless a flag of the command is spelt ``--version``. Help does not
+      ## know whether the program has a version text
+      ## (``CliOptions.versionText``), so it lists the row only when asked;
+      ## by default ``--version`` is not listed.
     listMarker*: bool = true
       ## A list flag's placeholder is followed by ``...``
       ## (``--tag <string>...``).
@@ -355,7 +366,9 @@ func helpFlagLeft(g: CliGrammar; command: int): string =
   ## ``CliHelpLayout.helpFlag``; a spelling a flag of the command declares
   ## does not.
   var spellings: seq[string] = @[]
-  for s in ["-h", "--help"]:
+  let asked = if cprLongHelpOnly in g.parseRules: @["--help"]
+              else: @["-h", "--help"]
+  for s in asked:
     var claimed = false
     for id in g.commands[command].params:
       if g.params[id].kind == cpkFlag and s in cliFlagSpellings(g.params[id]):
@@ -374,6 +387,14 @@ func optionRows(g: CliGrammar; holder: int; params: seq[int];
     let left = helpFlagLeft(g, holder)
     if left.len > 0:
       result.add((left, @[layout.helpFlag]))
+  if section.len == 0 and layout.versionFlag.len > 0:
+    var claimed = false
+    for id in g.commands[holder].params:
+      if g.params[id].kind == cpkFlag and
+          "--version" in cliFlagSpellings(g.params[id]):
+        claimed = true
+    if not claimed:
+      result.add(("--version", @[layout.versionFlag]))
 
 proc cliOptionsTable*(g: CliGrammar; command: int;
                       layout = CliHelpLayout(); group = ""): string =
@@ -468,6 +489,8 @@ func paramJson(g: CliGrammar; p: CliGrammarParam): JsonNode =
   result["visibility"] = %($p.visibility)
   if p.kind == cpkPositional:
     result["position"] = %p.position
+    if p.rest:
+      result["rest"] = %true
   result["declaredIn"] = %p.declaredIn
   result["dynamicCompletion"] = %p.hasCompleter
   result["completer"] = if p.hasCompleter: %p.completer else: newJNull()
@@ -513,7 +536,10 @@ proc cliHelpJsonNode*(g: CliGrammar; command: int; program: string): JsonNode =
   var rules = newJArray()
   for r in g.parseRules:
     rules.add(%($r))
-  result["parsing"] = %*{"flagMatching": $g.flagMatching, "rules": rules}
+  var parsing = %*{"flagMatching": $g.flagMatching, "rules": rules}
+  if g.commandMatching != cfmExact:
+    parsing["commandMatching"] = %($g.commandMatching)
+  result["parsing"] = parsing
 
 proc cliHelpJson*(g: CliGrammar; command: int; program: string): string =
   ## The machine-readable help of ``command``, pretty-printed (see the module

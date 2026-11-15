@@ -65,6 +65,7 @@ const clispecTests = [
   ClispecTest(source: "tests/test_cs_m10_help_layout.nim"),
   ClispecTest(source: "tests/test_cs_m10_parse_compat_rules.nim"),
   ClispecTest(source: "tests/test_cs_m10_confutils_compat_record.nim"),
+  ClispecTest(source: "tests/test_cs_m10_command_word_rules.nim"),
   ClispecTest(source: "tests/test_type_check_nodes_carry_written_position.nim"),
   ClispecTest(source: "tests/test_suite_lists_agree.nim"),
   ClispecTest(source: "tests/e2e_cs_m5_real_shell_completion.nim",

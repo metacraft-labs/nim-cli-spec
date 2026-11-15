@@ -11,7 +11,8 @@
 ##
 ## A request for help (``--help``) is not an error; it is reported as a
 ## ``CliHelpRequest`` carrying the rendered help, so a program decides
-## itself where to print it and how to exit. Nothing in clispec ever ends the
+## itself where to print it and how to exit. A request for the version is
+## its subtype ``CliVersionRequest``. Nothing in clispec ever ends the
 ## process.
 
 import std/strutils
@@ -90,6 +91,15 @@ type
     commandPath*: seq[string]
     json*: bool
     text*: string
+
+  CliVersionRequest* = object of CliHelpRequest
+    ## ``--version`` (or, under ``parsing versionWord``, the word
+    ## ``version`` where a subcommand word is expected) was given to a
+    ## program that has a version text (``CliOptions.versionText``). Not a
+    ## failure: ``text`` is that version text, exactly as the program gave
+    ## it, and the program prints it and exits as it does for help. It is a
+    ## ``CliHelpRequest``, so a program that handles help requests handles
+    ## it too.
 
 const DefaultUsageExitCode* = 2
   ## The exit code of a usage error unless the program declares another.

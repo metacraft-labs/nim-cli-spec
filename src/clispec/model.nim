@@ -125,6 +125,8 @@
 ## source's own, then ``key``), then the override for the source's
 ## convention, then the conversion (``cliSpelling``, ``cliSourceKey``).
 
+from std/strutils import cmpIgnoreCase, cmpIgnoreStyle
+
 type
   CliParamKind* = enum
     ## How a parameter appears on the command line.
@@ -242,7 +244,8 @@ type
 
   CliFlagMatching* = enum
     ## How a word on the command line is compared with a flag's spellings
-    ## (``flagMatching <mode>`` under ``cli:``). A spelling that matches
+    ## (``flagMatching <mode>`` under ``cli:``), or with a subcommand's name
+    ## and aliases (``commandMatching <mode>``). A spelling that matches
     ## exactly always wins; the other modes are tried only when none does.
     cfmExact = "exact"
       ## Byte for byte (the default).
@@ -254,7 +257,9 @@ type
       ## are ignored, every other character must match (``--Out_put`` is
       ## ``--output``, but ``--checkpoint_interval`` is not
       ## ``--checkpoint-interval``, because ``-`` is not ignored). This is
-      ## how confutils' type-based command lines match option names.
+      ## how confutils' type-based command lines match option names, and
+      ## subcommand words (``START_BACKEND`` and ``StartBackend`` are
+      ## ``start_backend``; ``start-backend`` is not).
 
   CliParseRule* = enum
     ## An opt-in command-line rule (``parsing <rule>, ...`` under ``cli:``).
@@ -308,6 +313,25 @@ type
       ## word that is the value of the flag before it (``--output --a= b``
       ## gives ``--output`` the value ``--a=``) nor for a short flag
       ## (``-o= x`` gives ``-o`` an empty value under ``shortEquals``).
+    cprHelpWord = "helpWord"
+      ## The bare word ``help`` where a subcommand word is expected (after a
+      ## command that has subcommands, before ``--``) asks for the help of
+      ## that command, as ``--help`` there would; the words after it are
+      ## not read. It is compared under ``commandMatching`` (``HELP``,
+      ## ``he_lp`` under ``ignoreStyle``). A subcommand answering to the
+      ## word is then a declaration error.
+    cprVersionWord = "versionWord"
+      ## The bare word ``version`` where a subcommand word is expected asks
+      ## for the version (``CliVersionRequest``), as ``--version`` does,
+      ## when the program gives a version text (``CliOptions.versionText``);
+      ## without one it is an ordinary word. Compared under
+      ## ``commandMatching``; a subcommand answering to the word is a
+      ## declaration error.
+    cprLongHelpOnly = "longHelpOnly"
+      ## Only ``--help`` asks for help: ``-h``, alone or inside a cluster of
+      ## short flags (``helpInCluster``), is an ordinary spelling, unknown
+      ## unless a flag declares it. Help's own row (``CliHelpLayout.helpFlag``)
+      ## and completion then show ``--help`` alone.
 
   CliGroup* = object
     ## A ``group "<title>":`` section: parameters listed together in help.
@@ -335,6 +359,11 @@ type
       ## A list value is rendered as one flag occurrence per element.
     position*: int
       ## The ordering key among positionals.
+    rest*: bool
+      ## ``rest = true`` (a list positional, the last of its command): the
+      ## rest of the command line. Once every positional before it has its
+      ## word, every remaining word is its, verbatim: flags, ``--help``
+      ## and ``--`` included, and no further flag of any command is read.
     alias*: string
       ## The exact spelling of the flag (``-o``, ``--output=``). Empty means
       ## the canonical ``--<name>``.
@@ -506,6 +535,9 @@ type
     flagMatching*: CliFlagMatching
       ## ``flagMatching <mode>`` under ``cli:``: how words are compared with
       ## flag spellings.
+    commandMatching*: CliFlagMatching
+      ## ``commandMatching <mode>`` under ``cli:``: how words are compared
+      ## with subcommand names and aliases.
     parseRules*: set[CliParseRule]
       ## ``parsing <rule>, ...`` under ``cli:``: the opt-in command-line
       ## rules.
@@ -533,6 +565,17 @@ const
   cksDeclared* = cnDeclared ## The older name of ``cnDeclared``.
   cksSnakeCase* = cnSnakeCase ## The older name of ``cnSnakeCase``.
   cksKebabCase* = cnKebabCase ## The older name of ``cnKebabCase``.
+
+func cliSameSpelling*(mode: CliFlagMatching; word, spelling: string): bool =
+  ## Whether ``word`` is ``spelling`` under the matching mode ``mode``
+  ## (``CliFlagMatching``).
+  case mode
+  of cfmExact:
+    word == spelling
+  of cfmIgnoreCase:
+    cmpIgnoreCase(word, spelling) == 0
+  of cfmIgnoreStyle:
+    cmpIgnoreStyle(word, spelling) == 0
 
 func isWordChar(ch: char): bool =
   ch in {'a'..'z', 'A'..'Z', '0'..'9'} or ord(ch) >= 128

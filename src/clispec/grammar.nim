@@ -29,11 +29,18 @@
 ##   word after such a command is read as a subcommand word, so its
 ##   positionals belong in its ``call:``);
 ## * a ``subcmd`` inside a ``call:``, and two ``call:`` scopes in one command;
-## * more than one list-valued (``repeated``) positional in one command.
+## * more than one list-valued (``repeated``) positional in one command;
+## * a ``rest`` positional that is not the last positional of its command,
+##   or that follows a ``repeated`` one;
+## * under ``commandMatching``, two subcommands of one command whose words
+##   match each other in that mode (``clispec/dsl`` reports it for every
+##   model; repeated here for a model built by hand).
 
 import std/[algorithm, json, strutils]
 
 import ./model
+
+export cliSameSpelling
 
 type
   CliGrammarParam* = object
@@ -52,6 +59,8 @@ type
     required*: bool
     repeated*: bool
     position*: int
+    rest*: bool
+      ## ``rest = true``: the rest of the command line (``CliParam.rest``).
     negatable*: bool
     counted*: bool
     hasOptionalValue*: bool
@@ -158,6 +167,9 @@ type
     flagMatching*: CliFlagMatching
       ## How words are compared with flag spellings
       ## (``CliModel.flagMatching``).
+    commandMatching*: CliFlagMatching
+      ## How words are compared with subcommand names and aliases
+      ## (``CliModel.commandMatching``).
     parseRules*: set[CliParseRule]
       ## The opt-in command-line rules (``CliModel.parseRules``).
 
@@ -196,6 +208,7 @@ func toGrammarParam[P](p: CliParam[P]; declaredBy: int): CliGrammarParam =
     nimType: p.nimType, kind: p.kind,
     format: p.format, alias: stripAlias(p.alias), short: p.short,
     required: p.required, repeated: p.repeated, position: p.position,
+    rest: p.rest,
     negatable: p.negatable, counted: p.counted,
     hasOptionalValue: p.optionalValue.isSet, separator: p.separator,
     help: p.help, longHelp: p.longHelp, placeholder: p.valueName,
@@ -208,6 +221,29 @@ func toGrammarParam[P](p: CliParam[P]; declaredBy: int): CliGrammarParam =
     completer: (if p.complete.isSet: p.complete.code else: ""),
     declaredIn: p.declaredIn,
     declaredBy: declaredBy, valueName: p.nimType)
+
+func cliPositionals*(g: CliGrammar; command: int): seq[int] =
+  ## The positional parameters of a command, in the order they are filled:
+  ## by ``position``, then by declaration. A positional whose ``sources``
+  ## exclude the command line takes no word and is left out.
+  var items: seq[tuple[position, order, id: int]] = @[]
+  for order, id in g.commands[command].params:
+    if g.params[id].kind == cpkPositional and csCli in g.params[id].sources:
+      items.add((g.params[id].position, order, id))
+  items.sort(proc (a, b: tuple[position, order, id: int]): int =
+    result = cmp(a.position, b.position)
+    if result == 0:
+      result = cmp(a.order, b.order))
+  for item in items:
+    result.add(item.id)
+
+func cliRestParam*(g: CliGrammar; command: int): tuple[id, index: int] =
+  ## The ``rest`` positional of ``command`` and its index among the
+  ## command's positionals (``cliPositionals``), or ``(-1, -1)``.
+  for index, id in cliPositionals(g, command):
+    if g.params[id].rest:
+      return (id, index)
+  (-1, -1)
 
 proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
                          problems: var seq[CliGrammarProblem];
@@ -224,6 +260,7 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
   result.flagConvention = model.flagConvention
   result.fileSources = model.fileSources
   result.flagMatching = model.flagMatching
+  result.commandMatching = model.commandMatching
   result.parseRules = model.parseRules
   # The model lists the scopes in post-order: each one after the scopes
   # nested inside it. Rebuild the tree with a stack: when a scope arrives,
@@ -333,6 +370,39 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
                    else: "command '" & cmd.path.join(" ") & "'")
                 else: "command '" & cmd.path.join(" ") & "'"
     var lists = 0
+    var repeatedSeen, restSeen = false
+    for id in cliPositionals(result, k):
+      let p = result.params[id]
+      if restSeen:
+        problems.add(CliGrammarProblem(message: "clispec: parameter '" &
+          p.name & "': " & label & " takes the rest of the command line " &
+          "in an earlier positional, so no positional can follow it",
+          sourceFile: cmd.sourceFile, sourceLine: cmd.sourceLine))
+      if p.rest:
+        if repeatedSeen:
+          problems.add(CliGrammarProblem(message: "clispec: parameter '" &
+            p.name & "': a rest positional cannot follow a repeated one " &
+            "in " & label & ", which would never stop taking words",
+            sourceFile: cmd.sourceFile, sourceLine: cmd.sourceLine))
+        restSeen = true
+      if p.repeated:
+        repeatedSeen = true
+    for child in cmd.children:
+      if result.commandMatching == cfmExact:
+        break
+      for other in cmd.children:
+        if other >= child:
+          break
+        let a = result.commands[child]
+        let b = result.commands[other]
+        for wa in @[a.name] & a.aliases:
+          for wb in @[b.name] & b.aliases:
+            if cliSameSpelling(result.commandMatching, wa, wb):
+              problems.add(CliGrammarProblem(message: "clispec: command '" &
+                a.path.join(" ") & "': the word '" & wa & "' matches '" &
+                wb & "' of command '" & b.path.join(" ") & "' under " &
+                "commandMatching " & $result.commandMatching,
+                sourceFile: a.sourceFile, sourceLine: a.sourceLine))
     for id in cmd.params:
       let p = result.params[id]
       if p.kind != cpkPositional:
@@ -359,11 +429,19 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
 
 func cliChildNamed*(g: CliGrammar; command: int; word: string): int =
   ## The subcommand of ``command`` that answers to ``word`` (its name or one
-  ## of its aliases), or -1.
+  ## of its aliases), or -1. A word that matches exactly wins; under a
+  ## ``commandMatching`` other than ``exact``, one that matches in that mode
+  ## is accepted when none does.
   for child in g.commands[command].children:
     let c = g.commands[child]
     if c.name == word or word in c.aliases:
       return child
+  if g.commandMatching != cfmExact:
+    for child in g.commands[command].children:
+      let c = g.commands[child]
+      for w in @[c.name] & c.aliases:
+        if cliSameSpelling(g.commandMatching, word, w):
+          return child
   -1
 
 func cliSubcommandWords*(g: CliGrammar; command: int): seq[string] =
@@ -382,21 +460,6 @@ func cliCommandAt*(g: CliGrammar; words: openArray[string]): int =
     result = cliChildNamed(g, result, word)
     if result < 0:
       return -1
-
-func cliPositionals*(g: CliGrammar; command: int): seq[int] =
-  ## The positional parameters of a command, in the order they are filled:
-  ## by ``position``, then by declaration. A positional whose ``sources``
-  ## exclude the command line takes no word and is left out.
-  var items: seq[tuple[position, order, id: int]] = @[]
-  for order, id in g.commands[command].params:
-    if g.params[id].kind == cpkPositional and csCli in g.params[id].sources:
-      items.add((g.params[id].position, order, id))
-  items.sort(proc (a, b: tuple[position, order, id: int]): int =
-    result = cmp(a.position, b.position)
-    if result == 0:
-      result = cmp(a.order, b.order))
-  for item in items:
-    result.add(item.id)
 
 func cliLongName*(p: CliGrammarParam): string =
   ## The long flag without ``--``: ``longName``, or ``name`` for a grammar
@@ -471,16 +534,19 @@ func cliRefusesFalse*(g: CliGrammar; p: CliGrammarParam): bool =
   ## ``switchesRefuseFalse``.
   p.isSwitch and (p.refuseFalse or cprSwitchesRefuseFalse in g.parseRules)
 
-func cliSameSpelling*(mode: CliFlagMatching; word, spelling: string): bool =
-  ## Whether ``word`` is ``spelling`` under the matching mode ``mode``
-  ## (``CliFlagMatching``).
+func cliStartsWithSpelling*(mode: CliFlagMatching; word, prefix: string):
+    bool =
+  ## Whether ``word`` starts with ``prefix`` under the matching mode
+  ## ``mode``: the prefix of a word being completed, compared as a whole
+  ## word would be (``LI`` and ``l_i`` start ``list`` under
+  ## ``ignoreStyle``).
   case mode
   of cfmExact:
-    word == spelling
+    word.startsWith(prefix)
   of cfmIgnoreCase:
-    cmpIgnoreCase(word, spelling) == 0
+    word.toLowerAscii.startsWith(prefix.toLowerAscii)
   of cfmIgnoreStyle:
-    cmpIgnoreStyle(word, spelling) == 0
+    normalize(word).startsWith(normalize(prefix))
 
 func cliSameLetter*(mode: CliFlagMatching; a, b: char): bool =
   ## Whether two short-flag letters are the same under ``mode``.

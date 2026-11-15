@@ -12,7 +12,8 @@
 ##   completed as a flag: every spelling of every flag the command accepts
 ##   (``--<long name>``, ``--no-<long name>`` for a ``negatable`` flag, the
 ##   ``alias`` and ``-<short>``) that starts with the word, then ``--help``
-##   and ``-h`` when they request help. A flag that takes its value only as
+##   and ``-h`` when they request help (``--help`` alone under ``parsing
+##   longHelpOnly``). ``--version`` is not offered. A flag that takes its value only as
 ##   ``--flag=value`` (``format = equals``) is offered as ``--flag=``, so
 ##   the user types the value straight after it. A ``concat`` alias, whose
 ##   value is written straight after it, is not offered on its own.
@@ -30,7 +31,15 @@
 ## * any other word is a subcommand word or a positional: the subcommands
 ##   of the command reached so far (their names, or an alias when the name
 ##   does not match what was typed), followed by the values of the
-##   positional the word fills.
+##   positional the word fills. Under ``commandMatching ignoreCase |
+##   ignoreStyle`` what was typed is compared with a subcommand word in
+##   that mode (``LI`` offers ``list``), and the word offered is the
+##   declared one; a shell that filters candidates by what was typed may
+##   drop it.
+## * once a ``rest`` positional has taken a word, or would take the word
+##   under the cursor, every word is that positional's: nothing is offered
+##   but its own values (its ``values`` or completer; none when it has
+##   neither), no flag and no subcommand.
 ##
 ## A flag's or a positional's values are its closed value set (``values``,
 ## or every value of an enum type), else what its ``complete`` completer
@@ -168,6 +177,9 @@ type
       ## negation or a counted flag); -1 otherwise.
     positionals: int
       ## Bare words placed as positionals of the current command.
+    rest: int
+      ## The ``rest`` positional that has taken the words from some point
+      ## on (every word after it is its), or -1.
 
 proc descend(g: CliGrammar; w: var Walk) =
   while g.commands[w.node].children.len == 0 and
@@ -245,11 +257,22 @@ proc walkFlag(g: CliGrammar; w: var Walk; word: string) =
       w.optionalNext = optional
       return
 
+func restStarts(g: CliGrammar; w: Walk): int =
+  ## The ``rest`` positional that takes the next word and every one after
+  ## it, as the parser decides it, or -1.
+  if g.commands[w.node].children.len > 0:
+    return -1
+  let r = cliRestParam(g, w.node)
+  if r.id >= 0 and w.positionals >= r.index: r.id else: -1
+
 proc walk(g: CliGrammar; words: openArray[string];
           options: CliOptions): Walk =
-  result = Walk(pendingValue: -1, optionalNext: -1, attachedNext: -1)
+  result = Walk(pendingValue: -1, optionalNext: -1, attachedNext: -1,
+    rest: -1)
   descend(g, result)
   for word in words:
+    if result.rest >= 0:
+      continue
     if result.pendingValue >= 0:
       result.pendingValue = -1
       continue
@@ -262,6 +285,9 @@ proc walk(g: CliGrammar; words: openArray[string];
       result.optionalNext = -1
       if cliAcceptsWord(g, id, word, options):
         continue
+    result.rest = restStarts(g, result)
+    if result.rest >= 0:
+      continue
     if not result.terminated and word == "--":
       result.terminated = true
       continue
@@ -275,6 +301,9 @@ proc walk(g: CliGrammar; words: openArray[string];
             continue
         if cmd.callChild >= 0:
           enter(g, result, cmd.callChild)
+          result.rest = restStarts(g, result)
+          if result.rest >= 0:
+            continue
       inc result.positionals
       continue
     walkFlag(g, result, word)
@@ -349,7 +378,9 @@ proc flagCandidates(g: CliGrammar; w: Walk; typed: string;
       if s.startsWith(typed):
         result.addCandidate(s, p.help)
   if not options.disableHelpFlag:
-    for s in ["--help", "-h"]:
+    let spellings = if cprLongHelpOnly in g.parseRules: @["--help"]
+                    else: @["--help", "-h"]
+    for s in spellings:
       if s notin spelled and s.startsWith(typed):
         result.addCandidate(s, "Show help")
 
@@ -404,6 +435,13 @@ proc cliComplete*(g: CliGrammar; completers: openArray[CliCompleter];
   let before = words[0 ..< at]
   let typed = if at < words.len: words[at] else: ""
   let w = walk(g, before, options)
+  let rest = if w.rest >= 0: w.rest else: restStarts(g, w)
+  if rest >= 0 and w.pendingValue < 0 and w.attachedNext == -1 and
+      w.optionalNext < 0:
+    # Inside the rest of the command line, nothing is a flag or a
+    # subcommand: only the rest positional's own values are offered.
+    return valueCandidates(g, completers, rest, typed, w, before,
+      switchValues = false)
   if w.pendingValue >= 0:
     return valueCandidates(g, completers, w.pendingValue, typed, w, before,
       switchValues = false)
@@ -431,11 +469,12 @@ proc cliComplete*(g: CliGrammar; completers: openArray[CliCompleter];
       if not cliListsCommand(g, w.node, child):
         continue
       let c = g.commands[child]
-      if c.name.startsWith(typed):
+      let mode = g.commandMatching
+      if cliStartsWithSpelling(mode, c.name, typed):
         result.addCandidate(c.name, c.help)
       else:
         for alias in c.aliases:
-          if alias.startsWith(typed):
+          if cliStartsWithSpelling(mode, alias, typed):
             result.addCandidate(alias, c.help)
             break
   let slot = positionalSlot(g, w)
