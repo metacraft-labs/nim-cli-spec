@@ -32,6 +32,10 @@
 ## * more than one list-valued (``repeated``) positional in one command;
 ## * a ``rest`` positional that is not the last positional of its command,
 ##   or that follows a ``repeated`` one;
+## * an ``afterSeparator`` positional that is not the last positional of
+##   its command (so a command has at most one, and none beside a ``rest``
+##   one), or one declared under ``parsing loneDashesAreFlags``, where
+##   ``--`` ends nothing and so nothing could fill it;
 ## * under ``commandMatching``, two subcommands of one command whose words
 ##   match each other in that mode (``clispec/dsl`` reports it for every
 ##   model; repeated here for a model built by hand).
@@ -61,6 +65,9 @@ type
     position*: int
     rest*: bool
       ## ``rest = true``: the rest of the command line (``CliParam.rest``).
+    afterSeparator*: bool
+      ## ``afterSeparator = true``: the words after ``--``
+      ## (``CliParam.afterSeparator``).
     negatable*: bool
     counted*: bool
     hasOptionalValue*: bool
@@ -218,7 +225,7 @@ func toGrammarParam[P](p: CliParam[P]; declaredBy: int): CliGrammarParam =
     nimType: p.nimType, kind: p.kind,
     format: p.format, alias: stripAlias(p.alias), short: p.short,
     required: p.required, repeated: p.repeated, position: p.position,
-    rest: p.rest,
+    rest: p.rest, afterSeparator: p.afterSeparator,
     negatable: p.negatable, counted: p.counted,
     hasOptionalValue: p.optionalValue.isSet, separator: p.separator,
     help: p.help, longHelp: p.longHelp, placeholder: p.valueName,
@@ -247,6 +254,22 @@ func cliPositionals*(g: CliGrammar; command: int): seq[int] =
       result = cmp(a.order, b.order))
   for item in items:
     result.add(item.id)
+
+func cliAfterSeparatorParam*(g: CliGrammar; command: int): int =
+  ## The ``afterSeparator`` positional of ``command``: the one the words
+  ## after its ``--`` fill. -1 when it has none.
+  for id in cliPositionals(g, command):
+    if g.params[id].afterSeparator:
+      return id
+  -1
+
+func cliWordPositionals*(g: CliGrammar; command: int): seq[int] =
+  ## The positionals of ``command`` that the words before its ``--`` (and,
+  ## without an ``afterSeparator`` positional, after it too) fill, in
+  ## ``cliPositionals`` order: every one but the ``afterSeparator`` one.
+  for id in cliPositionals(g, command):
+    if not g.params[id].afterSeparator:
+      result.add(id)
 
 func cliRestParam*(g: CliGrammar; command: int): tuple[id, index: int] =
   ## The ``rest`` positional of ``command`` and its index among the
@@ -384,6 +407,7 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
                 else: "command '" & cmd.path.join(" ") & "'"
     var lists = 0
     var repeatedSeen, restSeen = false
+    var afterSeparatorSeen = ""
     for id in cliPositionals(result, k):
       let p = result.params[id]
       if restSeen:
@@ -391,6 +415,30 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
           p.name & "': " & label & " takes the rest of the command line " &
           "in an earlier positional, so no positional can follow it",
           sourceFile: cmd.sourceFile, sourceLine: cmd.sourceLine))
+      if afterSeparatorSeen.len > 0 and p.afterSeparator:
+        problems.add(CliGrammarProblem(message: "clispec: parameter '" &
+          p.name & "': " & label & " has two afterSeparator positionals ('" &
+          afterSeparatorSeen & "' and '" & p.name & "'); the words after " &
+          "-- fill one", sourceFile: cmd.sourceFile,
+          sourceLine: cmd.sourceLine))
+      elif afterSeparatorSeen.len > 0:
+        # The words after ``--`` are the afterSeparator positional's alone,
+        # so a positional after it could only take words from before
+        # ``--``, which help (``[<a>] [-- <b>...] [<c>]``) would misstate.
+        problems.add(CliGrammarProblem(message: "clispec: parameter '" &
+          p.name & "': " & label & " gives the words after -- to '" &
+          afterSeparatorSeen & "' (afterSeparator), which must be its " &
+          "last positional", sourceFile: cmd.sourceFile,
+          sourceLine: cmd.sourceLine))
+      if p.afterSeparator:
+        if afterSeparatorSeen.len == 0:
+          afterSeparatorSeen = p.name
+        if cprLoneDashesAreFlags in result.parseRules:
+          problems.add(CliGrammarProblem(message: "clispec: parameter '" &
+            p.name & "': afterSeparator takes the words after --, but " &
+            "under parsing loneDashesAreFlags -- is an unknown flag, so " &
+            "nothing could fill it", sourceFile: cmd.sourceFile,
+            sourceLine: cmd.sourceLine))
       if p.rest:
         if repeatedSeen:
           problems.add(CliGrammarProblem(message: "clispec: parameter '" &

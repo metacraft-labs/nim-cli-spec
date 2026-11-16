@@ -63,7 +63,10 @@
 ##
 ## Rows: long spellings aligned (four spaces stand for a missing short
 ## spelling when another row of the section has one); a counted flag's
-## spelling ends with ``...``; the description is ``help`` followed by the
+## spelling ends with ``...``; an ``afterSeparator`` positional is written
+## after the ``--`` that introduces its words, ``[-- <command>...]``
+## (``-- <command>...`` when required), here and on the usage line, in
+## both layouts; the description is ``help`` followed by the
 ## notes ``[required]``, ``[default: x]`` (not for switches and counted
 ## flags; a text default quoted when empty or holding white space),
 ## ``[possible values: a, b]`` (when the placeholder does not list the set)
@@ -156,9 +159,10 @@
 ## ``parsing`` rules; ``"commandMatching"`` follows when the description
 ## sets a mode other than ``exact``). A positional declared ``rest = true``
 ## has ``"rest": true`` after its ``position`` (the key is absent
-## otherwise), and a command declared ``shadowedByWord = true`` has
-## ``"shadowedByWord": true`` after its ``visibility`` (likewise absent
-## otherwise). ``placeholder`` is what help shows between ``<`` and
+## otherwise), one declared ``afterSeparator = true`` has
+## ``"afterSeparator": true`` there (likewise absent otherwise), and a
+## command declared ``shadowedByWord = true`` has ``"shadowedByWord": true``
+## after its ``visibility`` (likewise absent otherwise). ``placeholder`` is what help shows between ``<`` and
 ## ``>`` (``valueName`` stays the type's name). ``conventions`` names the
 ## naming convention of the command line (``cli``), of every configuration
 ## file (``file``) and of each named file source; ``configKeys`` is a
@@ -366,7 +370,10 @@ func flagLeft(p: CliGrammarParam; layout: CliHelpLayout): string =
   parts.join(", ")
 
 func positionalLeft(p: CliGrammarParam): string =
-  let core = "<" & p.name & ">" & (if p.repeated or p.isList: "..." else: "")
+  ## ``<target>``, ``[<files>...]``; an ``afterSeparator`` positional is
+  ## written after the ``--`` that introduces its words: ``[-- <cmd>...]``.
+  let core = (if p.afterSeparator: "-- " else: "") & "<" & p.name & ">" &
+    (if p.repeated or p.isList: "..." else: "")
   if p.required: core else: "[" & core & "]"
 
 func notes(p: CliGrammarParam; layout: CliHelpLayout): string =
@@ -907,6 +914,8 @@ func paramJson(g: CliGrammar; p: CliGrammarParam): JsonNode =
     result["position"] = %p.position
     if p.rest:
       result["rest"] = %true
+    if p.afterSeparator:
+      result["afterSeparator"] = %true
   result["declaredIn"] = %p.declaredIn
   result["dynamicCompletion"] = %p.hasCompleter
   result["completer"] = if p.hasCompleter: %p.completer else: newJNull()

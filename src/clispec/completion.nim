@@ -44,7 +44,9 @@
 ## * once a ``rest`` positional has taken a word, or would take the word
 ##   under the cursor, every word is that positional's: nothing is offered
 ##   but its own values (its ``values`` or completer; none when it has
-##   neither), no flag and no subcommand.
+##   neither), no flag and no subcommand. The same holds after ``--`` in a
+##   command that declares an ``afterSeparator`` positional, which no word
+##   before ``--`` fills.
 ##
 ## A flag's or a positional's values are its closed value set (``values``,
 ## or every value of an enum type), else what its ``complete`` completer
@@ -299,6 +301,15 @@ proc walk(g: CliGrammar; words: openArray[string];
       continue
     if not result.terminated and word == "--":
       result.terminated = true
+      # The command that runs takes every later word in its
+      # ``afterSeparator`` positional, as the parser does; a command with
+      # subcommands runs its ``call:`` once a word follows ``--``.
+      if g.commands[result.node].children.len > 0 and
+          g.commands[result.node].callChild >= 0 and
+          cliAfterSeparatorParam(g, g.commands[result.node].callChild) >= 0:
+        enter(g, result, g.commands[result.node].callChild)
+      if g.commands[result.node].children.len == 0:
+        result.rest = cliAfterSeparatorParam(g, result.node)
       continue
     if result.terminated or word.len < 2 or word[0] != '-':
       let cmd = g.commands[result.node]
@@ -427,7 +438,8 @@ func positionalSlot(g: CliGrammar; w: Walk): int =
     target = g.commands[target].callChild
     if target < 0:
       return -1
-  let slots = cliPositionals(g, target)
+  # Before ``--``, a word never fills the ``afterSeparator`` positional.
+  let slots = cliWordPositionals(g, target)
   var placed = if target == w.node: w.positionals else: 0
   for id in slots:
     if g.params[id].repeated or g.params[id].isList:

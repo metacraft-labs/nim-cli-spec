@@ -71,6 +71,7 @@ const clispecTests = [
   ClispecTest(source: "tests/test_cs_m5b_no_color_and_not_a_terminal.nim",
     runsCompiler: true),
   ClispecTest(source: "tests/test_type_check_nodes_carry_written_position.nim"),
+  ClispecTest(source: "tests/test_cs_m6_after_separator.nim"),
   ClispecTest(source: "tests/test_suite_lists_agree.nim"),
   ClispecTest(source: "tests/e2e_cs_m5_real_shell_completion.nim",
     runsCompiler: true, realShells: true),

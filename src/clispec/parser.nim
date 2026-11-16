@@ -49,7 +49,10 @@
 ##   ``separator`` each occurrence is split on it.
 ## * ``--`` ends the flags: every later word is a positional (under
 ##   ``parsing loneDashesAreFlags`` it is an unknown flag instead, as is a
-##   lone ``-``).
+##   lone ``-``). When the command that runs declares an ``afterSeparator``
+##   positional, every word after its first ``--`` is that positional's,
+##   exactly as written, and no word before it is. A ``--`` that is a
+##   flag's value (``--flag --``, ``--flag=--``) ends nothing.
 ## * The first bare word after a command that has subcommands names one (or
 ##   one of its ``aliases``). When the command also has a ``call:``, a word
 ##   that names no subcommand, or a flag (or a cluster of short flags) only
@@ -686,7 +689,7 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
     # in a fixed order (it has no list positional): a word no positional
     # accepts, or one its positional rejects. With a list positional, which
     # positional a word fills depends on the words not read yet.
-    let slots = cliPositionals(g, node)
+    let slots = cliWordPositionals(g, node)
     var fixed = g.commands[node].children.len == 0
     for id in slots:
       if g.params[id].repeated or g.params[id].isList:
@@ -766,11 +769,31 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
     let r = cliRestParam(g, node)
     if r.id >= 0 and positionals.len >= r.index: r.id else: -1
 
+  proc afterSeparatorStarts(): int =
+    ## The ``afterSeparator`` positional of the command that runs, once its
+    ## ``--`` has been read; -1 otherwise. A command with subcommands is not
+    ## the one that runs: the word after its ``--`` enters its ``call:``
+    ## below, and is read again there.
+    if g.commands[node].children.len > 0:
+      return -1
+    cliAfterSeparatorParam(g, node)
+
   descend()
   var terminated = false
   var i = 0
 
   while i < argv.len:
+    if terminated:
+      let sepId = afterSeparatorStarts()
+      if sepId >= 0:
+        # The words after ``--``, exactly as written: a later ``--``, a word
+        # that looks like a flag and ``--help`` are among them. A flag's
+        # value was consumed with its flag below, so a ``--`` that is a
+        # value (``--flag --``, ``--flag=--``) never set ``terminated``.
+        for k in i ..< argv.len:
+          addCandidate(sepId, CliCandidate(source: csCli, form: ccfValue,
+            text: argv[k], argvIndex: k, valueArgvIndex: -1, verbatim: true))
+        break
     let restId = restStarts()
     if restId >= 0:
       # The rest of the command line, verbatim: nothing after this point is
@@ -999,8 +1022,10 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
         expected = subcommandWords(g, node))
 
   # Positionals, in position order. A list positional takes what the
-  # positionals after it do not need.
-  let slots = cliPositionals(g, node)
+  # positionals after it do not need. An ``afterSeparator`` positional took
+  # its words above; a word before ``--`` that no other positional takes is
+  # unexpected.
+  let slots = cliWordPositionals(g, node)
   var next = 0
   for s, id in slots:
     let p = g.params[id]

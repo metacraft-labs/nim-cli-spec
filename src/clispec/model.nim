@@ -389,6 +389,11 @@ type
       ## rest of the command line. Once every positional before it has its
       ## word, every remaining word is its, verbatim: flags, ``--help``
       ## and ``--`` included, and no further flag of any command is read.
+    afterSeparator*: bool
+      ## ``afterSeparator = true`` (a list positional, the last of its
+      ## command): the words after the ``--`` that ends the command's flags,
+      ## exactly as written (a later ``--`` and words that look like flags
+      ## included). No word before that ``--`` fills it.
     alias*: string
       ## The exact spelling of the flag (``-o``, ``--output=``). Empty means
       ## the canonical ``--<name>``.

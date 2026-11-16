@@ -26,8 +26,9 @@
 ##   ``placement = after|before`` and ``repeated = true|false``. A positional
 ##   accepts ``position = <int>``, ``repeated = true|false``,
 ##   ``required = true|false`` (it is required unless it says otherwise or
-##   has a ``default``) and ``rest = true|false`` (the rest of the command
-##   line, ``CliParam.rest``).
+##   has a ``default``), ``rest = true|false`` (the rest of the command
+##   line, ``CliParam.rest``) and ``afterSeparator = true|false`` (the words
+##   after ``--``, ``CliParam.afterSeparator``).
 ## * Every parameter also accepts what a program declares about its own
 ##   command line: ``help = "<text>"``, ``default = <expr>``,
 ##   ``env = ["NAME", ...]``, ``values = [a, b, c]``,
@@ -634,7 +635,7 @@ const
   flagOnlyParamKeys = ["short", "optionalvalue", "negatable", "counted",
     "acceptsnextword", "refusefalse", "alsosets"]
     ## The named arguments only a flag takes, normalised.
-  positionalOnlyParamKeys = ["rest"]
+  positionalOnlyParamKeys = ["rest", "afterseparator"]
     ## The named arguments only a positional takes and that a flag must not
     ## pass to an extension, normalised.
 
@@ -801,6 +802,7 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
   var requiredNode: NimNode = nil
   var keyNode, envNode, defaultNode, perSourceNode: NimNode = nil
   var acceptsNextWordNode, refuseFalseNode, restNode: NimNode = nil
+  var afterSeparatorNode, separatorNode, sourcesNode: NimNode = nil
   for i in 2 ..< node.len:
     let arg = node[i]
     if arg.kind != nnkExprEqExpr:
@@ -835,6 +837,9 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
     of "rest":
       result.rest = strictBoolLit(value, name, spelled)
       restNode = arg
+    of "afterseparator":
+      result.afterSeparator = strictBoolLit(value, name, spelled)
+      afterSeparatorNode = arg
     of "refusefalse":
       result.refuseFalse = strictBoolLit(value, name, spelled)
       refuseFalseNode = arg
@@ -878,6 +883,7 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
       keyNode = value
     of "sources":
       result.sources = cliSourcesLit(value, name)
+      sourcesNode = value
     of "merge":
       case cliIdentText(value).normalize
       of "replace": result.merge = cmrReplace
@@ -890,6 +896,7 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
       result.separator = cliStrLit(value, "separator")
       if result.separator.len == 0:
         cliParamError(name, "separator must not be empty", value)
+      separatorNode = value
     of "implies":
       if value.kind != nnkBracket or value.len == 0:
         cliParamError(name, "implies must be a non-empty list such as " &
@@ -1000,6 +1007,28 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
     if result.repeated:
       cliParamError(name, "rest and repeated contradict each other: a " &
         "rest positional takes the remaining words itself", restNode)
+  if result.afterSeparator:
+    # The words after ``--`` are a list, kept exactly as written, and only
+    # the command line has a ``--``.
+    if tc notin {tcUnknown, tcSeq}:
+      cliParamError(name, "afterSeparator takes the words after --, so " &
+        "its type is a list (a seq), not " & result.nimType,
+        afterSeparatorNode)
+    if result.rest:
+      cliParamError(name, "afterSeparator and rest contradict each other: " &
+        "a rest positional starts where the earlier positionals end, an " &
+        "afterSeparator one at --", afterSeparatorNode)
+    if result.repeated:
+      cliParamError(name, "afterSeparator and repeated contradict each " &
+        "other: an afterSeparator positional takes the words after -- " &
+        "itself", afterSeparatorNode)
+    if result.separator.len > 0:
+      cliParamError(name, "afterSeparator and separator contradict each " &
+        "other: the words after -- are kept exactly as written",
+        separatorNode)
+    if csCli notin result.sources:
+      cliParamError(name, "afterSeparator takes the words after -- on " &
+        "the command line, but `sources` exclude cli", sourcesNode)
   if result.refuseFalse:
     if tc notin {tcUnknown, tcBool}:
       cliParamError(name, "refuseFalse applies to a switch (a bool), not " &
@@ -1757,6 +1786,11 @@ proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
       if param.rest:
         result.add(cliFailWhenNot(infix(typeNode, "is", ident("seq")),
           prefix & "rest takes the rest of the command line, so its type " &
+          "is a list (a seq), not " & param.nimType, param.sourceFile,
+          param.sourceLine, 0))
+      if param.afterSeparator:
+        result.add(cliFailWhenNot(infix(typeNode, "is", ident("seq")),
+          prefix & "afterSeparator takes the words after --, so its type " &
           "is a list (a seq), not " & param.nimType, param.sourceFile,
           param.sourceLine, 0))
       if param.negatable:
