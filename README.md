@@ -1492,7 +1492,7 @@ reach a hook, so an extension's vocabulary must avoid those words.
 nix develop          # nim, just, the hook tools and the shells e2e drives
 just test            # the test suite
 just e2e             # real bash, zsh, fish and pwsh completing in a pseudo-terminal
-just lint            # nim check over the library and the tests
+just lint            # nim check over the library and the tests, also for Windows and macOS
 ```
 
 Without Nix, any Nim 2.x will do: `nimble test` (and `nimble e2e`, which

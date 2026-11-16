@@ -9,7 +9,21 @@
 ##     (bash, zsh, fish, PowerShell) driven in a pseudo-terminal, which the
 ##     dev shell provides. They are kept out of `test` so that suite needs
 ##     nothing but the compiler; `build` and `lint` cover them too.
-##   * `lint` is `nim check` over the umbrella module and every test module.
+##   * `lint` is `nim check` over the umbrella module and every test module,
+##     then the cross-OS check: `nim check --os:windows` and `--os:macosx`
+##     over the umbrella and every module under `src/clispec/`. Code behind
+##     `when defined(windows)` or `when defined(macosx)` is not compiled on
+##     the host, so without it a module that does not compile for another
+##     platform passes every local check and fails first in a consumer's
+##     build. `nim check` resolves names and types for the target without a
+##     C compiler or the target's headers (an `importc` binding is not looked
+##     up until the C compiler sees it, so this does not cover those). The
+##     standard library's types differ between Nim versions on Windows
+##     (`FileHandle` is `cint` in Nim 2.2 and `int` in later versions), so
+##     the check also runs with every `nim` named in `CLISPEC_EXTRA_NIM`
+##     (space-separated paths). The dev shell sets it to the metacraft-labs
+##     Nim fork (2.3.1); outside the shell the recipe refuses to run without
+##     it rather than check with 2.2 alone.
 ##   * `format` runs `nimpretty` when it is available.
 ##
 ## The tests need nothing but the compiler and the standard library: clispec
@@ -75,6 +89,28 @@ lint:
     for t in {{tests}} {{e2e-tests}}; do
       nim check {{nim-flags}} --nimcache:{{nimcache}}/tests/${t}_check {{src-paths}} \
         tests/${t}.nim 2>&1 | tee -a test-logs/lint.log
+    done
+    # The cross-OS check (see the header). `nim check` exits non-zero on an
+    # error, and `pipefail` carries that through `tee`.
+    if [[ -z "${CLISPEC_EXTRA_NIM:-}" ]]; then
+      echo "lint: CLISPEC_EXTRA_NIM is not set, so the cross-OS check would" \
+        "run with $(nim --version | head -1) only and miss what a newer" \
+        "standard library rejects; run inside the dev shell (nix develop)," \
+        "which sets it, or set it to a newer nim" >&2
+      exit 1
+    fi
+    # One nimcache per compiler: two Nim versions do not share one.
+    n=0
+    for compiler in nim ${CLISPEC_EXTRA_NIM:-}; do
+      n=$((n + 1))
+      for os in windows macosx; do
+        for m in src/clispec.nim src/clispec/*.nim; do
+          echo "lint: ${compiler} check --os:${os} ${m}" | tee -a test-logs/lint.log
+          "${compiler}" check {{nim-flags}} --os:${os} \
+            --nimcache:{{nimcache}}/src/cross${n}_${os}_check {{src-paths}} \
+            "${m}" 2>&1 | tee -a test-logs/lint.log
+        done
+      done
     done
 
 # Format the Nim sources in place with nimpretty, when it is installed.

@@ -175,18 +175,45 @@ func cliStyleSpellings*(text: string; on: bool): string =
   flush()
 
 when defined(windows):
+  # Win32 console API, documented at
+  # https://learn.microsoft.com/en-us/windows/console/getconsolemode and
+  # https://learn.microsoft.com/en-us/windows/console/setconsolemode.
   proc getConsoleMode(console: Handle; mode: ptr DWORD): WINBOOL {.stdcall,
     dynlib: "kernel32", importc: "GetConsoleMode".}
   proc setConsoleMode(console: Handle; mode: DWORD): WINBOOL {.stdcall,
     dynlib: "kernel32", importc: "SetConsoleMode".}
 
+  proc consoleHandle(stream: File): Handle =
+    ## The Win32 handle behind ``stream``, for the console API: the C
+    ## runtime's descriptor (``_fileno``) translated by ``_get_osfhandle``
+    ## (https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/get-osfhandle),
+    ## which answers ``INVALID_HANDLE_VALUE`` for a descriptor that is not
+    ## open and -2 for a standard stream with no console or file behind it
+    ## (a GUI program); the console API refuses both.
+    ##
+    ## The descriptor is converted to ``cint`` explicitly because the
+    ## standard library's types differ between Nim versions: Nim 2.2 has
+    ## ``FileHandle = cint`` and ``get_osfhandle(fd: FileHandle)``, later
+    ## versions ``FileHandle = int`` on Windows and
+    ## ``get_osfhandle(fd: cint)``. A C runtime descriptor is a C ``int``,
+    ## so the conversion loses nothing, and the full-width ``Handle`` comes
+    ## back without the narrowing ``getOsFileHandle`` does under Nim 2.2.
+    get_osfhandle(cint(getFileHandle(stream)))
+
   proc enableEscapeSequences(stream: File): bool =
     ## Whether ``stream`` is a console that now interprets escape sequences:
     ## turns on its virtual terminal processing
     ## (``ENABLE_VIRTUAL_TERMINAL_PROCESSING``), false when it is not a
-    ## console or the console refuses (before Windows 10).
+    ## console or the console refuses.
+    ##
+    ## ``GetConsoleMode`` fails on anything but a console handle (a pipe, a
+    ## file, the ``NUL`` device, which ``_isatty`` counts as a terminal), so
+    ## those get plain text. ``SetConsoleMode`` fails with
+    ## ``ERROR_INVALID_PARAMETER`` for the flag on consoles older than
+    ## Windows 10, which do not interpret escape sequences
+    ## (https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences).
     const enableVirtualTerminalProcessing = DWORD(0x0004)
-    let console = get_osfhandle(getFileHandle(stream))
+    let console = consoleHandle(stream)
     if console == INVALID_HANDLE_VALUE:
       return false
     var mode: DWORD = 0
@@ -227,7 +254,10 @@ proc cliOutputWidth*(stream: File): int =
   if result == 0 and isatty(stream):
     try:
       when defined(windows):
-        result = terminalWidthIoctl([get_osfhandle(getFileHandle(stream))])
+        # The visible window's width, from the console screen buffer
+        # (``srWindow``, https://learn.microsoft.com/en-us/windows/console/console-screen-buffer-info-str);
+        # 0 when the handle is not a console screen buffer (``NUL``).
+        result = terminalWidthIoctl([consoleHandle(stream)])
       else:
         result = terminalWidthIoctl([int(getFileHandle(stream))])
     except CatchableError:

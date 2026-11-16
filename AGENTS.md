@@ -24,7 +24,11 @@ library.
   PowerShell, set `$env:CLISPEC_E2E_REQUIRE = 'pwsh,powershell'` and run
   `nimble e2e`, or without nimble
   `nim c -r --hints:off tests/e2e_cs_m5_real_shell_completion.nim`.
-- Lint: `just lint` (`nim check` over the umbrella and every test).
+- Lint: `just lint` (`nim check` over the umbrella and every test, then
+  `nim check --os:windows` and `--os:macosx` over every module in `src/`;
+  the cross-OS part runs again with each `nim` in `CLISPEC_EXTRA_NIM`,
+  which the dev shell sets to the metacraft-labs Nim fork, a newer standard
+  library than the main 2.2 compiler's; lint refuses to run without it).
 - Build without running: `just build`.
 
 ## Layout

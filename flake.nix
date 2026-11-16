@@ -19,9 +19,18 @@
       ];
 
       perSystem =
-        { pkgs, ... }:
+        { pkgs, system, ... }:
         let
           version = builtins.replaceStrings [ "\n" "\r" ] [ "" "" ] (builtins.readFile ./version.txt);
+          # A second, newer Nim for `just lint`'s cross-OS check only: the
+          # metacraft-labs/nim fork (Nim 2.3.1 devel). Its standard library
+          # differs from 2.2's on Windows (`FileHandle` is `int` there, not
+          # `cint`), so code that type-checks for Windows with 2.2 can fail
+          # with it. It is taken from the reprobuild flake that `nixos-modules`
+          # already pins, so this repository defines no second build of it and
+          # follows that pin when `nix flake update nixos-modules` moves it.
+          # The main compiler stays nixpkgs' `nim`.
+          nimFork = inputs.nixos-modules.inputs.reprobuild.packages.${system}.nim-fork;
         in
         {
           # The dev env `repro.nim`'s `devEnv` activates (`useFlakeDevShell()`)
@@ -61,6 +70,9 @@
             # Every shell above is provisioned, so the real-shell test fails
             # rather than skips when one of them cannot be found.
             CLISPEC_E2E_REQUIRE = "bash,zsh,fish,pwsh";
+            # The further compilers `just lint` runs its cross-OS check with
+            # (see the Justfile); the recipe refuses to run without one.
+            CLISPEC_EXTRA_NIM = "${nimFork}/bin/nim";
           };
 
           # The library is source: consumers put `src/` on their Nim path.
