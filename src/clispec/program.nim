@@ -65,6 +65,8 @@
 ##   process's own arguments. It raises ``CliUsageError`` for a command line
 ##   it rejects and ``CliHelpRequest`` when help is asked for (its subtype
 ##   ``CliVersionRequest`` when the version is); it never ends the process.
+##   A program prints them with ``cliPrintHelp(e)`` and ``cliPrintError(e)``
+##   (``clispec/errors``), which decide colour and width for the stream.
 ## * ``Tool.helpText(path)`` and ``Tool.helpJson(path)`` render the help of
 ##   the command reached by the subcommand words ``path`` (see
 ##   ``clispec/help``; ``helpText(path, long = true)`` is the long page
@@ -114,14 +116,18 @@ proc cliSelectedChild*(g: CliGrammar; r: CliResolution; command: int): int =
 proc cliHelpCommand*(g: CliGrammar; path: openArray[string];
                      program: string): int {.raises: [CliUsageError].} =
   ## The command reached by the subcommand words ``path``, or a usage error
-  ## (unknown subcommand) naming the command that does not know the word.
+  ## (unknown subcommand) naming the command that does not know the word,
+  ## with its suggestions.
   result = 0
   var walked: seq[string] = @[]
   for word in path:
     let next = cliChildNamed(g, result, word)
     if next < 0:
-      raise newCliUsageError(cekUnknownSubcommand, program, walked, -1, word,
-        expected = cliSubcommandWords(g, result).join(", "))
+      let e = newCliUsageError(cekUnknownSubcommand, program, walked, -1,
+        word, expected = cliSubcommandWords(g, result).join(", "))
+      e.cliAddErrorContext(g, result)
+      e.suggestions = cliSubcommandSuggestions(g, result, word)
+      raise e
     walked.add(g.commands[next].name)
     result = next
 
@@ -708,22 +714,23 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
 
     proc `helpTextName`(t: typedesc[`T`]; path: openArray[string] = [];
                         program = `prog`; layout = cliDefaultHelpLayout;
-                        long = false): string {.
+                        long = false; styled = false): string {.
         raises: [CliUsageError].} =
       ## The human-readable help of the command reached by the subcommand
       ## words ``path``, laid out by ``layout``: the short page (``-h``),
-      ## or with ``long`` the long one (``--help``).
+      ## or with ``long`` the long one (``--help``); ``styled`` adds the
+      ## escape sequences of ``clispec/styles``.
       cliHelpText(`gc`, cliHelpCommand(`gc`, path, program), program,
-        layout, long)
+        layout, long, styled)
 
     proc `optionsTableName`(t: typedesc[`T`]; path: openArray[string] = [];
                             layout = cliDefaultHelpLayout; group = "";
-                            long = false): string {.
+                            long = false; styled = false): string {.
         raises: [CliUsageError].} =
       ## The rows of the options table of the command reached by the
       ## subcommand words ``path`` (``cliOptionsTable``).
       cliOptionsTable(`gc`, cliHelpCommand(`gc`, path, `prog`), layout,
-        group, long)
+        group, long, styled)
 
     proc `completeName`(t: typedesc[`T`]; words: openArray[string];
                         cursor = -1; options = CliOptions()):

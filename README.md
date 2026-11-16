@@ -366,10 +366,10 @@ proc main(argv: seq[string]): int =
   try:
     let conf = Tool.load(argv)
     discard conf # ... run the program ...
-  except CliHelpRequest as e:
-    stdout.write e.text
+  except CliHelpRequest as e:   # help, the version, completion requests
+    cliPrintHelp(e)             # to stdout
   except CliUsageError as e:
-    stderr.writeLine "tool: ", e.msg
+    cliPrintError(e)            # to stderr
     return e.exitCode
 
 assert main(@["build", "--jobs", "many", "app"]) == 2
@@ -412,8 +412,8 @@ Generated for `Tool` (exported when written
 | --------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `Tool.load(argv, options = CliOptions())`                       | parses `argv` (without the program name)                                     |
 | `Tool.load(options = CliOptions())`                             | parses the process's own arguments                                           |
-| `Tool.helpText(path = [], layout, long)` / `Tool.helpJson(path = [])` | the help of the command reached by the subcommand words `path` (`long`: the `--help` page) |
-| `Tool.optionsTable(path = [], layout, group = "", long)`        | just the rows of that command's options table (see [Help](#help))            |
+| `Tool.helpText(path = [], layout, long, styled)` / `Tool.helpJson(path = [])` | the help of the command reached by the subcommand words `path` (`long`: the `--help` page; `styled`: with colour) |
+| `Tool.optionsTable(path = [], layout, group = "", long, styled)` | just the rows of that command's options table (see [Help](#help))            |
 | `Tool.complete(words, cursor = -1)`                             | the completion candidates for `words[cursor]` (the last word by default)     |
 | `Tool.completionScript(shell)` / `Tool.completionReply(args)`   | a shell's completion script; the answer to a script's request                |
 | `Tool.cliGrammar` / `Tool.cliModel`                             | the parser's tables and the model, both constants                            |
@@ -828,6 +828,80 @@ environment says where (`invalid value 'many' for '--jobs' of 'tool' (from
 environment variable TOOL_JOBS); expected an integer`), in `source` as well;
 its argv index is -1.
 
+A program prints a usage error with `cliPrintError(e)` (to standard error;
+`cliPrintError(e, stream)` elsewhere) and help with `cliPrintHelp(e)` (to
+standard output), as in the example above, instead of writing `e.msg` and
+`e.text` itself: they choose the colour and the width for the stream they
+write to (see [Colour and width](#colour-and-width)). `cliPrintError`
+writes the block `cliErrorText(e, styled = false)` renders:
+
+```text
+error: unknown subcommand 'biuld' for 'tool'; expected one of: build, run
+
+  tip: a similar subcommand exists: 'build'
+
+Usage: tool [options] <command>
+
+For more information, try 'tool --help'.
+```
+
+The first line is `e.msg`, the kind's wording, unchanged. The tip is there
+when the error carries `suggestions`: `a similar subcommand exists:
+'build'`, `a similar flag exists: '--jobs'` or `a similar value exists:
+'release'`, and with several `some similar flags exist: '--jobs',
+'--jolt'` (`subcommands`, `values`), closest first. `Usage:` is the usage
+line of the command the error is about (`e.usage`), never broken, and the
+last line names the command that prints its help (`e.helpCommand`, empty
+when `disableHelpFlag` is set); each line is left out when the error does
+not carry it. A library that raises usage errors of its own fills both
+with `cliAddErrorContext(e, grammar, command, options)`.
+
+Suggestions are offered for an unknown subcommand (the subcommands the
+command lists in its help; an alias that matches offers its command's
+name, once), an unknown flag (the spellings, as written, of the flags the
+command accepts and lists, their `--no-` form, `--help` and `--version`
+where they apply; compared without their leading dashes) and a value
+outside a closed value set (`values`, an enum's values). A candidate is
+offered when its Damerau–Levenshtein distance from the typed word
+(`cliEditDistance`) is at most 2 and less than half the word's length
+(`cliIsSimilar`: `--job` gives `--jobs`; a four-letter word two edits away
+gives nothing), closest first, declaration order among equals, at most
+three (`cliSuggest`). A `hidden` item and an `internal` parameter are never
+offered, and an `internal` subcommand only inside the command that holds
+it. A prefix is never accepted as a flag, and nothing prompts.
+
+```nim
+import clispec
+
+type Profile = enum debug, release
+
+cliProgram(Pkg, "pkg"):
+  subcmd "build", help = "Build", aliases = ["b"]:
+    flag jobs is int, short = 'j', help = "Parallel jobs"
+    flag profile is Profile, default = debug
+  subcmd "run", help = "Run":
+    discard
+
+proc errorOf(argv: seq[string]): ref CliUsageError =
+  try:
+    discard Pkg.load(argv)
+  except CliUsageError as e:
+    return e
+
+assert errorOf(@["biuld"]).suggestions == @["build"]
+assert errorOf(@["build", "--job", "3"]).suggestions == @["--jobs"]
+assert errorOf(@["build", "--profile", "relase"]).suggestions == @["release"]
+let e = errorOf(@["build", "--job", "3"])
+assert cliErrorText(e) == """error: unknown flag '--job' for 'pkg build'
+
+  tip: a similar flag exists: '--jobs'
+
+Usage: pkg build [options]
+
+For more information, try 'pkg build --help'.
+"""
+```
+
 ### Help
 
 `--help` and `-h` raise `CliHelpRequest` with the help of the command they
@@ -876,7 +950,10 @@ next line. When fewer than 40 columns would remain, the section uses the
 next-line layout: every description under its row, indented 12. A note is
 not broken unless it is wider than the line; the usage line, example
 command lines and words longer than the line are never broken. The width
-is the layout's `width` (80 when 0), at most 100.
+is the layout's `width`, at most 100; `cliDefaultHelpLayout` leaves it to
+the printer (`width` 0, see [Colour and width](#colour-and-width)), and a
+page rendered without one (`helpText`, `CliHelpRequest.text`) is 80
+columns wide, the same wherever the program runs.
 
 A command declares its long description and its examples in its body:
 
@@ -939,8 +1016,8 @@ keeps them: those two statements are offered to the extension first.
 `chsStandard`, the page above, or `chsClassic`, the layout clispec printed
 before it, which is the type's default: `CliHelpLayout()`, and any layout
 built field by field without `style`, renders exactly the classic text.
-Two presets name them: `cliDefaultHelpLayout` (the standard page at 80
-columns, the default argument of `cliHelpText`, `cliOptionsTable`, the
+Two presets name them: `cliDefaultHelpLayout` (the standard page, its
+width left to the printer, the default argument of `cliHelpText`, `cliOptionsTable`, the
 generated `helpText` and `optionsTable`, and of `CliOptions.helpLayout`, so
 it is also the help `load` raises) and `cliClassicHelpLayout`. A program
 that must keep the classic layout for its users opts into it with
@@ -993,6 +1070,65 @@ field. An `internal` subcommand is listed only in the help of the command that
 holds it, never in the root command's help, which is the program's primary
 help; so `tool internal --help` documents the namespace that `tool --help`
 leaves out (its internal parameters excepted).
+
+#### Colour and width
+
+`cliPrintHelp(e, stream = stdout)` and `cliPrintError(e, stream = stderr)`
+decide, for the stream they write to:
+
+- **Colour.** The text is styled only when the stream is a terminal (on
+  Windows, a console on which virtual terminal processing is or can be
+  turned on), `NO_COLOR` is unset or empty and `TERM` is not `dumb`, unless
+  the program forces it with `CliOptions(color: ccmAlways)` or `ccmNever`
+  (the default is `ccmAuto`, that rule; `cliUseColor(stream, mode)`). The colours follow
+  cargo: headings bold bright green (`ESC[1;92m`); flag spellings, command
+  names and aliases, the program name, the words of a usage line, example
+  command lines and suggestions bold bright cyan (`ESC[1;96m`);
+  placeholders (`<N>`, `[options]`, `[<packages>...]`) cyan (`ESC[36m`); in
+  an error, `error:` bold bright red (`ESC[1;91m`), the offending word
+  yellow (`ESC[33m`) and `tip:` bold bright green; each span ends with
+  `ESC[0m`. Descriptions and notes are not styled. The styled text is the
+  plain text with escape sequences added and nothing else changed
+  (`cliStripStyles` gives the plain text back), so the layout, measured on
+  the visible text (`cliVisibleLen`), is the same.
+- **Width.** `COLUMNS` when it is set to a positive integer, else the
+  terminal's width when the stream is a terminal, else 80; at most 100
+  (`cliOutputWidth(stream)`). A layout whose `width` is set keeps it.
+
+`load` still fills `CliHelpRequest.text` with the plain page at the
+layout's width (80 for the default), so a program that captures it gets the
+same text everywhere. The request also carries `render(width, styled)`,
+which renders the page again (nil for JSON help, the version text and
+completion answers, which are printed as they are), and the program's
+`color`; `cliPrintHelp` calls it. `cliHelpText(..., styled = true)` and
+`Tool.helpText(styled = true)` render a styled page directly. The classic
+layout is printed as it is: its width never changes, and it is styled
+only under `ccmAlways`.
+
+```nim
+import std/strutils
+import clispec
+
+cliProgram(Hue, "hue"):
+  help "Paint things"
+  flag shade is string, short = 's', valueName = "NAME", help = "The shade"
+
+proc helpOf(argv: seq[string]; options = CliOptions()): ref CliHelpRequest =
+  try:
+    discard Hue.load(argv, options)
+  except CliHelpRequest as e:
+    return e
+
+let e = helpOf(@["-h"], CliOptions(color: ccmAlways))
+assert e.text == Hue.helpText()                 # plain, 80 columns
+let styled = e.render(80, true)
+assert "\e[1;92mUsage:\e[0m" in styled
+assert "\e[1;96m--shade\e[0m \e[36m<NAME>\e[0m" in styled
+assert cliStripStyles(styled) == e.text
+assert styled == Hue.helpText(styled = true)
+```
+
+#### The machine-readable form
 
 The machine-readable form, `helpJson`, is a JSON document with the schema
 name `clispec-help/1`, meant for completion and editor hints:

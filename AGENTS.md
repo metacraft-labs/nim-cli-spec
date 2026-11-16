@@ -47,7 +47,12 @@ library.
   a parameter (the command line's with their argv index and spelling).
 - `src/clispec/values.nim`: text to typed values (`parseCliValue`).
 - `src/clispec/errors.nim`: the usage-error taxonomy (`CliErrorKind`, one
-  wording per kind in `cliErrorMessage`) and `CliHelpRequest`.
+  wording per kind in `cliErrorMessage`) and `CliHelpRequest`; the
+  suggestions (`cliEditDistance`, `cliSuggest`), the error block
+  (`cliErrorText`) and the printers `cliPrintError` / `cliPrintHelp`.
+- `src/clispec/styles.nim`: whether to style help and errors for a stream
+  (`CliColorMode`, `cliUseColor`), the palette and styling helpers
+  (`cliStripStyles`), and the page width for a stream (`cliOutputWidth`).
 - `src/clispec/help.nim`: human-readable help and the `clispec-help/1` JSON.
 - `src/clispec/completers.nim`: the completer type (`CliCompleter`,
   `CliCompletionContext`, `CliCompletion`), the check `cliModelTypeChecks`
@@ -107,7 +112,14 @@ library.
   (`--help`) pages at 80, 160 and 50 columns, the notes, examples and the
   JSON's `examples` / `longHelp`, and checks that the classic layout
   (`cliClassicHelpLayout`) does not give them. A test that expects the
-  classic text names `cliClassicHelpLayout`.
+  classic text names `cliClassicHelpLayout`. It also pins the styled pages
+  and the error block (with suggestions) exactly, and that every page
+  styled is the plain one plus escape sequences.
+  `tests/test_cs_m5b_no_color_and_not_a_terminal.nim` runs the fixture
+  `tests/fixtures/cs_m5b_help/depot.nim` on a pseudo-terminal it opens and
+  through pipes: colour (`NO_COLOR`, `TERM=dumb`, `CliOptions.color`) and
+  width (`COLUMNS`, the terminal's size, the cap at 100). The `depot`
+  description both use is `tests/fixtures/cs_m5b_help/depot_cli.nim`.
 - `tests/test_cs_m9_clispec_has_no_serialization_dependency.nim` fails when
   `clispec.nimble`, `flake.nix` or `repro.nim` declares a serialization
   library or a module under `src/` imports one.

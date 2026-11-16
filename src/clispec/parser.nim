@@ -147,6 +147,12 @@ type
     valueCheck*: CliValueCheck
       ## The value check of the program's parameters (``CliValueCheck``).
       ## The generated ``load`` fills it in when it is nil.
+    color*: CliColorMode
+      ## Whether ``cliPrintHelp`` and ``cliPrintError`` style what they
+      ## print (``clispec/styles``): ``ccmAuto`` (the default) when the
+      ## stream is a terminal, ``NO_COLOR`` is unset or empty and ``TERM``
+      ## is not ``dumb``; ``ccmAlways``; ``ccmNever``. The help requests
+      ## and usage errors the parser raises carry it.
 
   CliTokens* = object
     ## What ``cliTokenize`` read from argv.
@@ -182,6 +188,12 @@ type
       ## not selected.
     exitCode*: int
     program*: string
+    color*: CliColorMode
+      ## ``CliOptions.color``, for the usage errors raised after
+      ## tokenizing.
+    disableHelpFlag*: bool
+      ## ``CliOptions.disableHelpFlag``, likewise (an error then names no
+      ## help command).
 
 func cliWithValueCheck*(options: CliOptions;
                         check: CliValueCheck): CliOptions =
@@ -425,6 +437,112 @@ func isVersionSpelling(g: CliGrammar; scope: seq[int]; word: string;
     return false
   eq < 0 or cprHelpWithAnyValue in g.parseRules
 
+func cliHelpCommandLine*(g: CliGrammar; command: int; program: string;
+                         options = CliOptions()): string =
+  ## The command line that prints the help of ``command``
+  ## (``tool build --help``; ``-h`` when the command spells ``--help``
+  ## itself), or empty when help is off (``disableHelpFlag``) or both
+  ## spellings belong to the command's own flags. A ``call:`` is its
+  ## holder's.
+  if options.disableHelpFlag:
+    return ""
+  let holder = if g.commands[command].isCall: g.commands[command].parent
+               else: command
+  let scope = g.commands[holder].params
+  var asked = @["--help"]
+  if cprLongHelpOnly notin g.parseRules:
+    asked.add("-h")
+  for s in asked:
+    let spelling = s
+    if findFlag(g, scope, proc (p: CliGrammarParam): bool =
+        spelling in cliFlagSpellings(p)) < 0:
+      return (@[program] & g.commands[holder].path & @[spelling]).join(" ")
+  ""
+
+func cliAddErrorContext*(e: ref CliUsageError; g: CliGrammar; command: int;
+                         options = CliOptions()) =
+  ## Fills in what ``cliErrorText`` prints besides the message: the usage
+  ## line of ``command``, the command line that prints its help and the
+  ## program's ``color``. The parser calls it for every error it raises; a
+  ## library that raises its own usage errors (another source's) calls it
+  ## too.
+  e.usage = cliUsageLine(g, command, e.program)
+  e.helpCommand = cliHelpCommandLine(g, command, e.program, options)
+  e.color = options.color
+
+func dashless(spelling: string): string =
+  var k = 0
+  while k < spelling.len and k < 2 and spelling[k] == '-':
+    inc k
+  spelling[k .. ^1]
+
+func cliSubcommandSuggestions*(g: CliGrammar; command: int; word: string;
+                               options = CliOptions()): seq[string] =
+  ## What an unknown subcommand ``word`` of ``command`` may have meant: the
+  ## names of the subcommands its help lists (an alias that matches offers
+  ## its command's name), and ``help`` / ``version`` where those words are
+  ## requests (``cliSuggest``).
+  var candidates: seq[CliSuggestionCandidate] = @[]
+  for child in g.commands[command].children:
+    if not cliListsCommand(g, command, child):
+      continue
+    let c = g.commands[child]
+    for w in @[c.name] & c.aliases:
+      candidates.add((w, c.name, c.name))
+  for w in ["help", "version"]:
+    if (w == "help" and cliIsHelpWord(g, w, options)) or
+        (w == "version" and cliIsVersionWord(g, w, options)):
+      candidates.add((w, w, w))
+  cliSuggest(word, candidates)
+
+func cliFlagSuggestions*(g: CliGrammar; command: int; word: string;
+                         options = CliOptions()): seq[string] =
+  ## What an unknown flag ``word`` given to ``command`` may have meant: the
+  ## spellings, as written, of the flags the command accepts and lists in
+  ## its help (``hidden`` and ``internal`` ones never; with a ``call:``
+  ## beside subcommands, the ``call:``'s too), their ``--no-`` form, and
+  ## ``--help`` and ``--version`` where they request help and the version.
+  ## A one-letter ``-x`` is not offered. Spellings are compared without
+  ## their leading dashes; one suggestion per flag (``cliSuggest``).
+  let typed = dashless(word)
+  if typed.len == 0:
+    return
+  var scope = g.commands[command].params
+  if g.commands[command].children.len > 0 and
+      g.commands[command].callChild >= 0:
+    scope.add(g.commands[g.commands[command].callChild].params)
+  var candidates: seq[CliSuggestionCandidate] = @[]
+  for id in scope:
+    let p = g.params[id]
+    if p.kind != cpkFlag or csCli notin p.sources or
+        p.visibility != cvShown:
+      continue
+    var spellings = cliFlagSpellings(p)
+    if p.negatable:
+      spellings.add("--no-" & cliLongName(p))
+    for spelling in spellings:
+      if spelling.len == 2 and spelling[0] == '-':
+        continue
+      candidates.add((dashless(spelling), spelling, $id))
+  for spelling in ["--help", "--version"]:
+    let asks = if spelling == "--help": isHelpSpelling(g, scope, spelling,
+                 options).help
+               else: isVersionSpelling(g, scope, spelling, options)
+    if asks:
+      candidates.add((dashless(spelling), spelling, spelling))
+  cliSuggest(typed, candidates)
+
+func cliValueSuggestions*(p: CliGrammarParam; text: string): seq[string] =
+  ## What a value ``text`` outside ``p``'s closed value set may have meant:
+  ## the values of the set (``cliSuggest``). Empty for an open set or a
+  ## value in the set.
+  if p.choices.len == 0 or text in p.choices:
+    return
+  var candidates: seq[CliSuggestionCandidate] = @[]
+  for c in p.choices:
+    candidates.add((c, c, c))
+  cliSuggest(text, candidates)
+
 type SwitchValue = enum
   svTrue, svFalse, svInvalid
 
@@ -474,8 +592,17 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
 
   proc fail(kind: CliErrorKind; at: int; spelling: string; value = "";
             expected = "") {.raises: [CliUsageError].} =
-    raise newCliUsageError(kind, program, g.commands[node].path, at,
+    let e = newCliUsageError(kind, program, g.commands[node].path, at,
       spelling, value, expected, exitCode = exitCode)
+    e.cliAddErrorContext(g, node, options)
+    case kind
+    of cekUnknownSubcommand:
+      e.suggestions = cliSubcommandSuggestions(g, node, spelling, options)
+    of cekUnknownFlag:
+      e.suggestions = cliFlagSuggestions(g, node, spelling, options)
+    else:
+      discard
+    raise e
 
   proc descend() =
     # A command without subcommands runs its call: directly.
@@ -576,18 +703,24 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
         for piece in pieces:
           let expected = options.valueCheck(slots[k], piece)
           if expected.len > 0:
-            raise newCliUsageError(cekInvalidValue, program,
+            let e = newCliUsageError(cekInvalidValue, program,
               g.commands[p.declaredBy].path, w.index, cliDisplayName(p),
               piece, expected, exitCode = exitCode)
+            e.cliAddErrorContext(g, p.declaredBy, options)
+            e.suggestions = cliValueSuggestions(p, piece)
+            raise e
     if found:
       let p = g.params[bestId]
       let spelling = if bestCand.spelling.len > 0: bestCand.spelling
                      else: cliDisplayName(p)
       let index = if bestCand.valueArgvIndex >= 0: bestCand.valueArgvIndex
                   else: bestCand.argvIndex
-      raise newCliUsageError(cekInvalidValue, program,
+      let e = newCliUsageError(cekInvalidValue, program,
         g.commands[p.declaredBy].path, index, spelling, bestText,
         bestExpected, exitCode = exitCode)
+      e.cliAddErrorContext(g, p.declaredBy, options)
+      e.suggestions = cliValueSuggestions(p, bestText)
+      raise e
 
   proc requestHelp(json: bool; long: bool) {.
       raises: [CliUsageError, CliHelpRequest].} =
@@ -599,8 +732,25 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
       layout.versionFlag = "Print version"
     let text = if json: cliHelpJson(g, node, program)
                else: cliHelpText(g, node, program, layout, long)
+    var render: CliHelpRender = nil
+    if not json:
+      # The page again, for the stream it is printed to: a standard layout
+      # whose width is 0 takes the printer's width; a classic one is styled
+      # only when the program asks for colour.
+      let grammar = g
+      let command = node
+      let color = options.color
+      render = proc (width: int; styled: bool): string {.closure, gcsafe,
+          raises: [].} =
+        var l = layout
+        if l.style == chsStandard and l.width == 0:
+          l.width = width
+        let paint = styled and (l.style == chsStandard or
+          color == ccmAlways)
+        cliHelpText(grammar, command, program, l, long, paint)
     raise (ref CliHelpRequest)(msg: "help requested", commandPath: path,
-      json: json, long: long, text: text)
+      json: json, long: long, text: text, render: render,
+      color: options.color)
 
   proc requestVersion() {.raises: [CliUsageError, CliVersionRequest].} =
     checkValuesBeforeHelp()
@@ -904,6 +1054,8 @@ func cliNewResolution*(g: CliGrammar; tokens: CliTokens;
   result.selected = tokens.selected
   result.program = effectiveProgram(g, options)
   result.exitCode = effectiveExitCode(options)
+  result.color = options.color
+  result.disableHelpFlag = options.disableHelpFlag
   result.merged = newSeq[seq[CliCandidate]](g.params.len)
   result.overridden = newSeq[seq[CliCandidate]](g.params.len)
   result.decisions = newSeq[CliDecision](g.params.len)
@@ -958,9 +1110,12 @@ proc cliDecide*(g: CliGrammar; r: var CliResolution) {.
     let id = visible[i]
     let p = g.params[id]
     if p.required and r.decisions[id].kind == cdkUnset:
-      raise newCliUsageError(cekMissingRequired, r.program,
+      let e = newCliUsageError(cekMissingRequired, r.program,
         g.commands[p.declaredBy].path, -1, cliDisplayName(p),
         exitCode = r.exitCode)
+      e.cliAddErrorContext(g, p.declaredBy, CliOptions(color: r.color,
+        disableHelpFlag: r.disableHelpFlag))
+      raise e
 
 proc cliResolve*(g: CliGrammar; argv: openArray[string];
                  options = CliOptions()): CliResolution {.
@@ -985,9 +1140,13 @@ proc invalid(g: CliGrammar; r: CliResolution; id: int; c: CliCandidate;
   let index = if c.source != csCli: -1
               elif c.valueArgvIndex >= 0: c.valueArgvIndex
               else: c.argvIndex
-  raise newCliUsageError(cekInvalidValue, r.program,
+  let e = newCliUsageError(cekInvalidValue, r.program,
     g.commands[p.declaredBy].path, index, spelling, text, expected,
     exitCode = r.exitCode, source = c.described)
+  e.cliAddErrorContext(g, p.declaredBy, CliOptions(color: r.color,
+    disableHelpFlag: r.disableHelpFlag))
+  e.suggestions = cliValueSuggestions(p, text)
+  raise e
 
 proc convertText[T](g: CliGrammar; r: CliResolution; id: int;
                     c: CliCandidate; text: string; value: var T) {.
