@@ -63,8 +63,9 @@
 ##   both nest. A nested scope sees the parameters its enclosing scopes
 ##   declared before it opened. The head takes ``help``, ``longHelp``,
 ##   ``visibility`` and
-##   (``subcmd`` only) ``aliases = ["<word>", ...]`` and ``shadowedByWord =
-##   true|false`` (``CliCommand.shadowedByWord``):
+##   (``subcmd`` only) ``aliases = ["<word>", ...]``, ``shadowedByWord =
+##   true|false`` (``CliCommand.shadowedByWord``) and ``tier =
+##   primary|secondary`` (``CliCommand.tier``):
 ##   ``subcmd "build", help = "...", aliases = ["b"]:``,
 ##   ``call(help = "..."):``.
 ## * ``help "<text>"`` as a statement gives the scope's command its help
@@ -78,6 +79,9 @@
 ##   extension does not claim it.
 ## * ``group "<title>"[, help = "<text>"]:`` lists the declarations inside it
 ##   under one help heading; it opens no command and changes no scoping.
+##   Around parameters it is an options section; around ``subcmd``
+##   statements a command section, listed in its holder's help instead of
+##   ``Commands:`` (``CliCommand.group``). One title lists one kind.
 ## * A flag declared directly under ``cli:`` is placed before the subcommand
 ##   word (``placement = before``); everywhere else the default is after it.
 ## * Directly under ``cli:`` only, ``configSchema "<id>"`` names the schema
@@ -126,7 +130,10 @@
 ## ``versionWord`` without ``shadowedByWord = true``, or ``shadowedByWord``
 ## on one that answers to neither (or on ``call:``); ``rest`` on a flag, on
 ## a type that is not a ``seq``, or together with ``repeated``; ``aliases``
-## on ``call:``; a ``help`` statement inside a ``group`` section; a
+## on ``call:``; ``tier`` on ``call:`` or set to anything but ``primary``
+## or ``secondary``; a ``call:`` inside a ``group`` section; a group title
+## that lists both subcommands and parameters (anywhere in the
+## description); a ``help`` statement inside a ``group`` section; a
 ## command's ``longHelp`` given twice; an ``example`` without its ``help``,
 ## with an empty command line, with a text that is not a string literal
 ## (or ``&`` of literals), or with another argument;
@@ -1082,6 +1089,9 @@ type
     shadowedNode: NimNode
       ## The ``shadowedByWord`` argument, for its diagnostics; nil when not
       ## given.
+    tier: CliTier
+    group: string
+      ## The ``group`` section the ``subcmd`` statement stands in, if any.
 
 proc flagSpellings(param: CliParam): seq[string] =
   ## The spellings a flag answers to, for collision checks: its canonical
@@ -1164,7 +1174,7 @@ proc parseCommandHeader(stmt: NimNode; isCall: bool;
       continue
     let key = cliIdentText(arg[0]).normalize
     if key in ["help", "longhelp", "aliases", "visibility",
-               "shadowedbyword"]:
+               "shadowedbyword", "tier"]:
       if key in given:
         error("clispec: " & label & ": `" & cliIdentText(arg[0]) &
           "` is given twice", arg)
@@ -1206,6 +1216,20 @@ proc parseCommandHeader(stmt: NimNode; isCall: bool;
           "false, got: " & v.repr, v)
       result.shadowedByWord = ($v).normalize == "true"
       result.shadowedNode = arg
+    of "tier":
+      if isCall:
+        error("clispec: " & label & ": the anonymous `call:` command has " &
+          "no row in its holder's help, so it has no tier", arg)
+      let v = arg[1]
+      var found = false
+      if v.kind == nnkIdent:
+        for t in CliTier:
+          if ($v).normalize == ($t).normalize:
+            result.tier = t
+            found = true
+      if not found:
+        error("clispec: " & label & ": tier must be primary or secondary, " &
+          "got: " & v.repr, v)
     else:
       discard
 
@@ -1322,7 +1346,15 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
       var childPath = ctx.path
       if childName.len > 0:
         childPath.add(childName)
-      let childHeader = parseCommandHeader(stmt, isCall, childPath)
+      var childHeader = parseCommandHeader(stmt, isCall, childPath)
+      if group.len > 0:
+        if isCall:
+          # A ``call:`` is run without a word and has no row of its own, so
+          # no heading could list it.
+          error("clispec: " & cliCommandLabel(childPath, isRoot = false) &
+            ": the anonymous `call:` command has no row in help, so it " &
+            "cannot stand in group '" & group & "'", stmt)
+        childHeader.group = group
       if not isCall:
         let mode = ctx.naming.commandMatching
         var shadowed = false
@@ -1441,6 +1473,8 @@ proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
   result.visibility = header.visibility
   result.anonymous = header.anonymous
   result.shadowedByWord = header.shadowedByWord
+  result.group = header.group
+  result.tier = header.tier
   result.depth = if isRoot: 0 else: parent.depth + 1
   let inherited = parent.params.len
   var helpGiven = false
@@ -1656,6 +1690,23 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
       "modes or drop the rule", exactLettersNode)
   result.root = parseCliScope[C, P](body, @[], true, root, body,
     result.commands, result.groups, cliNamingOf(result))
+  # A heading lists parameters or subcommands, never both: on one page the
+  # two kinds of rows would come under two headings of the same title.
+  for group in result.groups:
+    var commandAt, paramAt = ""
+    for cmd in result.commands:
+      if commandAt.len == 0 and cmd.group == group.name:
+        commandAt = cliCommandLabel(cmd.path)
+      for p in cmd.params:
+        if paramAt.len == 0 and p.group == group.name:
+          paramAt = "parameter '" & p.name & "'"
+    for p in result.root.params:
+      if paramAt.len == 0 and p.group == group.name:
+        paramAt = "parameter '" & p.name & "'"
+    if commandAt.len > 0 and paramAt.len > 0:
+      error("clispec: group '" & group.name & "' lists both " & commandAt &
+        " and " & paramAt & "; a group lists subcommands or parameters, " &
+        "not both", nodeAt(group.sourceFile, group.sourceLine))
 
 # ---------------------------------------------------------------------------
 # Type checks of the expressions a model holds.

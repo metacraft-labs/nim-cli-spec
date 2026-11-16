@@ -198,13 +198,18 @@ loneDashesAreFlags` (where `--` ends nothing) is a compile error.
 
 A command takes `help`, `longHelp`, `aliases` and `visibility` in its head
 (`subcmd "build", help = "...", aliases = ["b"]:`, `call(help = "..."):`),
-and a subcommand `shadowedByWord = true` (see `helpWord` below), or
+and a subcommand `shadowedByWord = true` (see `helpWord` below) and
+`tier = primary | secondary` (see
+[Command groups and tiers](#command-groups-and-tiers)), or
 its help as a `help "<text>"` statement in its body, which is also how the
 root command gets one; likewise `longHelp "<text>"`, and any number of
 `example "<command line>", help = "<text>"` statements (see [Help](#help)). `group "<title>"[, help = "<text>"]:` lists the
 parameters declared inside it under one heading in help; it opens no command
 and changes no scoping, and may be reopened (in another command, say) to add
-more parameters to the same heading.
+more parameters to the same heading. Around `subcmd` statements it is a
+command group instead: help lists those subcommands under its heading
+rather than `Commands:`. One title lists parameters or subcommands, not
+both.
 
 **Names.** A parameter's name is its canonical long flag (`output` is
 `--output`); `alias` adds a spelling. Its configuration-file key is the path of
@@ -319,7 +324,9 @@ subcommands of one command answering to the same word (compared under
 `commandMatching`), a subcommand answering to `help` under `parsing
 helpWord` or to `version` under `versionWord` without `shadowedByWord =
 true`, `shadowedByWord` on a subcommand that answers to neither (or on
-`call:`), `rest` on a flag, on a type
+`call:`), `tier` on `call:` or set to anything but `primary` or
+`secondary`, a `call:` inside a `group` section, a group title that lists
+both subcommands and parameters, `rest` on a flag, on a type
 that is not a `seq` or together with `repeated`, `afterSeparator` on a
 flag, on a type that is not a `seq`, together with `rest`, `repeated` or
 `separator`, or with `sources` that exclude `cli`, `aliases` on `call:`,
@@ -453,15 +460,15 @@ expressions; those of a `seq[T]` or `Option[T]` parameter are values of `T`.
 Generated for `Tool` (exported when written
 `cliProgram(Tool, "tool", exported = true):`):
 
-| Procedure                                                                     | Does                                                                                                              |
-| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `Tool.load(argv, options = CliOptions())`                                     | parses `argv` (without the program name)                                                                          |
-| `Tool.load(options = CliOptions())`                                           | parses the process's own arguments                                                                                |
-| `Tool.helpText(path = [], layout, long, styled)` / `Tool.helpJson(path = [])` | the help of the command reached by the subcommand words `path` (`long`: the `--help` page; `styled`: with colour) |
-| `Tool.optionsTable(path = [], layout, group = "", long, styled)`              | just the rows of that command's options table (see [Help](#help))                                                 |
-| `Tool.complete(words, cursor = -1)`                                           | the completion candidates for `words[cursor]` (the last word by default)                                          |
-| `Tool.completionScript(shell)` / `Tool.completionReply(args)`                 | a shell's completion script; the answer to a script's request                                                     |
-| `Tool.cliGrammar` / `Tool.cliModel`                                           | the parser's tables and the model, both constants                                                                 |
+| Procedure                                                                          | Does                                                                                                                                                  |
+| ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Tool.load(argv, options = CliOptions())`                                          | parses `argv` (without the program name)                                                                                                              |
+| `Tool.load(options = CliOptions())`                                                | parses the process's own arguments                                                                                                                    |
+| `Tool.helpText(path = [], layout, long, styled, all)` / `Tool.helpJson(path = [])` | the help of the command reached by the subcommand words `path` (`long`: the `--help` page; `styled`: with colour; `all`: `secondary` subcommands too) |
+| `Tool.optionsTable(path = [], layout, group = "", long, styled)`                   | just the rows of that command's options table (see [Help](#help))                                                                                     |
+| `Tool.complete(words, cursor = -1)`                                                | the completion candidates for `words[cursor]` (the last word by default)                                                                              |
+| `Tool.completionScript(shell)` / `Tool.completionReply(args)`                      | a shell's completion script; the answer to a script's request                                                                                         |
+| `Tool.cliGrammar` / `Tool.cliModel`                                                | the parser's tables and the model, both constants                                                                                                     |
 
 `CliOptions` sets the program name used in messages, the exit code of usage
 errors (`usageExitCode`, 2 when not set), `disableHelpFlag`, the word
@@ -1120,6 +1127,95 @@ holds it, never in the root command's help, which is the program's primary
 help; so `tool internal --help` documents the namespace that `tool --help`
 leaves out (its internal parameters excepted).
 
+#### Command groups and tiers
+
+A command with many subcommands can sort them under headings and keep the
+everyday ones apart from the rest. `group "<title>"[, help = "<text>"]:`
+around `subcmd` statements lists those subcommands under its heading
+instead of `Commands:`; `tier = secondary` on a subcommand (the default is
+`primary`) leaves it out of `-h` and `--help`, which then end with a line
+pointing at `--help-all`, the long page that lists both tiers:
+
+```nim
+import std/strutils
+import clispec
+
+cliProgram(Kt, "kt"):
+  help "Build and ship"
+  subcmd "init", help = "Create a project":
+    discard
+  group "Build Commands", help = "Sources to artifacts":
+    subcmd "build", help = "Build the project":
+      discard
+    subcmd "graph", help = "Print the build graph", tier = secondary:
+      discard
+  subcmd "doctor", help = "Diagnose the environment", tier = secondary:
+    discard
+
+assert Kt.helpText() == """Build and ship
+
+Usage: kt <command>
+
+Commands:
+  init  Create a project
+
+Build Commands:
+  Sources to artifacts
+  build  Build the project
+
+Options:
+  -h, --help  Print help
+
+Run 'kt --help-all' to list all 4 commands, or 'kt <command> --help' for
+details.
+"""
+try:
+  discard Kt.load(@["--help-all"])
+  assert false
+except CliHelpRequest as e:
+  assert e.all and e.long
+  assert e.text == Kt.helpText(long = true, all = true)
+  assert "  graph  Print the build graph\n" in e.text
+  assert "  doctor  Diagnose the environment\n" in e.text
+# Completion offers both tiers.
+var offered: seq[string] = @[]
+for c in Kt.complete(@[""]):
+  offered.add(c.value)
+assert offered == @["init", "build", "graph", "doctor"]
+```
+
+- **Sections.** `Commands:` holds the listed subcommands in no group; each
+  command group follows it, in the order the groups were first declared,
+  with its help under the heading, as a parameter group's section has.
+  Each section aligns its own rows.
+- **Tiers.** `-h` and `--help` list the `primary` subcommands. When the
+  command has `secondary` ones they leave out, the page's last line is
+  `Run '<path> --help-all' to list all <N> commands, or
+'<path> <command> --help' for details.`, where `N` is the number of
+  subcommands
+  `--help-all` lists (an `internal` one counts only where it is listed, a
+  `hidden` one never; `1 command` for one). It is wrapped at the page
+  width like prose, with each quoted command line kept whole. `--help-all`
+  is the long page with both tiers and the usual last line. `secondary` is
+  not `internal`: the parser, completion and the machine-readable form
+  treat both tiers alike.
+- **Where `--help-all` is accepted.** In a program that declares at least
+  one `secondary` subcommand, at every command (the page is `--help`'s
+  where the command has no `secondary` subcommand). It takes the values
+  `--help` takes (`--help-all=json` is the JSON) and gives way to a flag
+  the program spells `--help-all`. Under `parsing helpWord`, `help --all`
+  (`--all` the word right after `help`) asks for it too. In a program
+  without `secondary` subcommands `--help-all` means nothing to clispec,
+  an unknown flag as before. `CliHelpRequest.all` says the page lists
+  both tiers; `cliHelpText(..., all = true)` and
+  `Tool.helpText(all = true)` render it.
+- **Unchanged pages.** A program that declares no command group and no
+  `secondary` subcommand gets exactly the pages, the JSON and the
+  completion it got before.
+- **The classic layout** (`cliClassicHelpLayout`) has no command groups and
+  no tiers: it lists every listed subcommand under `Commands:`, as it
+  always did, whichever page was asked for.
+
 #### Colour and width
 
 `cliPrintHelp(e, stream = stdout)` and `cliPrintError(e, stream = stderr)`
@@ -1189,7 +1285,10 @@ name `clispec-help/1`, meant for completion and editor hints:
              "rules": [RULE, ...],
              "commandMatching": "ignoreCase" | "ignoreStyle" (when set)}}
 COMMAND   = {"name", "path", "aliases", "help", "longHelp", "visibility",
-             "shadowedByWord": true (a shadowedByWord subcommand only), "usage",
+             "shadowedByWord": true (a shadowedByWord subcommand only),
+             "group": string | null, "tier": "primary" | "secondary"
+               (both on every command, when the program declares a command
+               group or a secondary subcommand), "usage",
              "examples": [{"command", "help"}, ...],
              "parameters": [PARAMETER, ...], "commands": [COMMAND, ...]}
 PARAMETER = {"name", "kind": "flag" | "positional", "spellings",
@@ -1217,9 +1316,9 @@ when the set is open; `valueName` is the value's type name and
 `configKeys` gives the parameter's key in every file source (`{}` when no file
 may supply it), and `conventions` the convention of every source.
 
-`commands` nests the listed subcommands recursively, and the listing rules
-above decide what appears, with one difference: the machine-readable form
-also lists `internal` parameters, wherever they apply, with `"visibility":
+`commands` nests the listed subcommands recursively, of both tiers, and
+the listing rules above decide what appears, with one difference: the
+machine-readable form also lists `internal` parameters, wherever they apply, with `"visibility":
 "internal"`, so tools that know about them can still find them. `hidden`
 items are left out of it too. Keys are always emitted in this order. Within
 `clispec-help/1` keys are only ever added, never renamed or removed, and
@@ -1286,7 +1385,8 @@ What is offered where:
 - A word starting with `-` gets every spelling of the command's flags that
   starts with it (`--name`, `--no-name` for a negatable flag, the `alias`,
   `-x`), then `--help` and `-h` (`--help` alone under `longHelpOnly`;
-  `--version` is not offered). A flag that only takes `--flag=value`
+  `--version` is not offered), then `--help-all` in a program that
+  declares a `secondary` subcommand. A flag that only takes `--flag=value`
   (`format = equals`) is offered as `--flag=`.
 - After a flag that takes the next word as its value, and in
   `--flag=<partial>`, the flag's values: its closed set (`values`, or an
@@ -1294,8 +1394,9 @@ What is offered where:
   written `--flag=`. In a list with a `separator`, the element after the last
   separator. Under `colonValues`, `--flag:<partial>` too; under
   `equalsTakesNext`, a word after `--flag=` that does not start with `-`.
-- Any other word: the subcommands (a name, or an alias when the name does not
-  match what was typed), then the values of the positional the word fills.
+- Any other word: the subcommands of both tiers (a name, or an alias when
+  the name does not match what was typed), then the values of the
+  positional the word fills.
   After `--`, positionals only, and in a command that declares an
   `afterSeparator` positional only that positional's values (a word before
   `--` never gets them). Under `commandMatching ignoreCase |

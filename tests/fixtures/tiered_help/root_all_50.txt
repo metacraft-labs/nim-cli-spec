@@ -1,0 +1,35 @@
+Develop, build and ship projects
+
+Usage: kit [options] <command>
+
+Commands:
+  init    Create a new project
+  doctor  Diagnose the environment
+
+Build Commands:
+  Turn sources into artifacts
+  build, b
+            Build the project
+  test
+            Run the tests
+  graph
+            Print the build graph
+
+Workspace Commands:
+  sync  Fetch and fast-forward every repository
+  repo  Manage the repositories
+  lock  Refresh the lock files
+
+Options:
+  -v, --verbose
+            Print more output
+  -h, --help
+            Print help
+
+Output:
+  How results are shown
+  --color <auto|always|never>
+            When to colour the output
+            [default: auto]
+
+Run 'kit <command> --help' for more on a command.

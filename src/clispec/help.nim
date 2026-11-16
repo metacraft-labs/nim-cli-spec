@@ -23,6 +23,12 @@
 ##   namespace that ``tool --help`` leaves out (its internal parameters
 ##   excepted).
 ##
+## A subcommand's ``tier`` decides which page lists it, among the ones the
+## rules above let through: ``-h`` and ``--help`` list the ``primary``
+## subcommands, ``--help-all`` (``help --all`` under ``parsing helpWord``)
+## lists ``secondary`` ones too. The machine-readable form and completion
+## list both tiers.
+##
 ## The standard page
 ## =================
 ##
@@ -54,12 +60,22 @@
 ## Sections, each only when it has entries, one blank line apart: the
 ## command's ``help`` line (on the long page followed by the command's
 ## ``longHelp``, one paragraph per non-blank line), ``Usage:``,
-## ``Aliases:``, ``Commands:``, ``Arguments:``, ``Options:`` (the command's
+## ``Aliases:``, ``Commands:`` (the listed subcommands in no group), one
+## section per command group (``group`` around ``subcmd`` statements) in
+## the order the groups were first declared with its help under the
+## heading, ``Arguments:``, ``Options:`` (the command's
 ## own flags in no group, then the help row and the ``--version`` row),
 ## one section per ``group`` in declaration order with its help under the
 ## heading, ``Global Options:`` (inherited flags in no group),
 ## ``Examples:`` and, on a command with subcommands, ``Run '<path>
-## <command> --help' for more on a command.``
+## <command> --help' for more on a command.`` On a page that leaves out
+## ``secondary`` subcommands (``-h``, ``--help``) that last line is instead
+## ``Run '<path> --help-all' to list all <N> commands, or '<path> <command>
+## --help' for details.``, ``N`` being the number of subcommands
+## ``--help-all`` lists (``1 command`` for one), wrapped at the page width
+## with each quoted command line kept whole. A program that declares no
+## ``secondary`` subcommand and no command group gets the page above
+## unchanged.
 ##
 ## Rows: long spellings aligned (four spaces stand for a missing short
 ## spelling when another row of the section has one); a counted flag's
@@ -118,8 +134,10 @@
 ##
 ## Sections appear only when they have entries. Flags without a ``group``
 ## come under ``Options:``, then each ``group`` section in the order the
-## groups were first declared. A value's placeholder is the declared
-## ``valueName``, else the closed value set, else the type's name; a
+## groups were first declared. The classic page knows no command groups and
+## no tiers: it lists every listed subcommand under ``Commands:``, as it
+## always did, whichever page was asked for. A value's placeholder is the
+## declared ``valueName``, else the closed value set, else the type's name; a
 ## parameter's ``longHelp`` paragraphs follow its description, one per line.
 ##
 ## ``CliHelpLayout`` sets the indent, the description column, the width
@@ -162,7 +180,12 @@
 ## otherwise), one declared ``afterSeparator = true`` has
 ## ``"afterSeparator": true`` there (likewise absent otherwise), and a
 ## command declared ``shadowedByWord = true`` has ``"shadowedByWord": true``
-## after its ``visibility`` (likewise absent otherwise). ``placeholder`` is what help shows between ``<`` and
+## after its ``visibility`` (likewise absent otherwise). In a program that
+## declares a command group or a ``secondary`` subcommand, every command
+## then has ``"group"`` (its group's title, or null) and ``"tier"``
+## (``"primary"`` or ``"secondary"``); both are absent from the document of
+## a program that declares neither, so it stays as it was. Subcommands of
+## both tiers are listed. ``placeholder`` is what help shows between ``<`` and
 ## ``>`` (``valueName`` stays the type's name). ``conventions`` names the
 ## naming convention of the command line (``cli``), of every configuration
 ## file (``file``) and of each named file source; ``configKeys`` is a
@@ -300,10 +323,21 @@ func cliHelpParams*(g: CliGrammar; command: int;
       result.add(id)
 
 func cliHelpCommands*(g: CliGrammar; command: int): seq[int] =
-  ## The subcommands the help of ``command`` lists.
+  ## The subcommands the help of ``command`` lists, of either tier: what
+  ## ``--help-all`` and the machine-readable form list. ``-h`` and
+  ## ``--help`` leave out the ``secondary`` ones (``cliHelpCommandsOfPage``).
   let holder = helpHolder(g, command)
   for child in g.commands[holder].children:
     if cliListsCommand(g, holder, child):
+      result.add(child)
+
+func cliHelpCommandsOfPage*(g: CliGrammar; command: int; all: bool):
+    seq[int] =
+  ## The subcommands one human-readable page of ``command`` lists:
+  ## ``cliHelpCommands`` with ``all`` (``--help-all``), only the
+  ## ``primary`` ones without it (``-h``, ``--help``).
+  for child in cliHelpCommands(g, command):
+    if all or g.commands[child].tier == ctPrimary:
       result.add(child)
 
 func elementTypeName(nimType: string): string =
@@ -711,8 +745,36 @@ func commandPathText(g: CliGrammar; holder: int; program: string): string =
 func heading(text: string; styled: bool): string =
   cliStyled(text, ctsHeading, styled)
 
+func standardCommandSections(g: CliGrammar; children: seq[int];
+                             layout: CliHelpLayout; width: int;
+                             styled: bool): seq[seq[string]] =
+  ## The command sections of a page: ``Commands:`` (the subcommands in no
+  ## group), then one section per command group in the order the groups
+  ## were first declared, its help under the heading. Each section is a
+  ## table of its own, as each parameter group's is.
+  proc rowsOf(group: string): seq[StandardRow] =
+    for child in children:
+      let c = g.commands[child]
+      if c.group == group:
+        result.add(((@[c.name] & c.aliases).join(", "),
+          @[c.help.splitWhitespace()]))
+  let ungrouped = rowsOf("")
+  if ungrouped.len > 0:
+    result.add(@[heading("Commands:", styled)] &
+      standardTable(ungrouped, layout, width, styled, names = true))
+  for group in g.groups:
+    let rows = rowsOf(group.name)
+    if rows.len == 0:
+      continue
+    var section = @[heading(group.name & ":", styled)]
+    if group.help.strip().len > 0:
+      section.add(wrapText(group.help, layout.indent, width))
+    result.add(section & standardTable(rows, layout, width, styled,
+      names = true))
+
 proc standardHelpText(g: CliGrammar; command: int; program: string;
-                      layout: CliHelpLayout; long, styled: bool): string =
+                      layout: CliHelpLayout; long, styled: bool;
+                      all = false): string =
   let width = pageWidth(layout)
   let holder = helpHolder(g, command)
   let cmd = g.commands[holder]
@@ -736,14 +798,8 @@ proc standardHelpText(g: CliGrammar; command: int; program: string;
     blocks.add(@[heading("Aliases:", styled) & " " &
       cliStyleNames(cmd.aliases.join(", "), styled)])
   let children = cliHelpCommands(g, holder)
-  if children.len > 0:
-    var rows: seq[StandardRow] = @[]
-    for child in children:
-      let c = g.commands[child]
-      rows.add(((@[c.name] & c.aliases).join(", "),
-        @[c.help.splitWhitespace()]))
-    blocks.add(@[heading("Commands:", styled)] &
-      standardTable(rows, layout, width, styled, names = true))
+  let shown = cliHelpCommandsOfPage(g, holder, all)
+  blocks.add(standardCommandSections(g, shown, layout, width, styled))
   let params = cliHelpParams(g, holder)
   var positional: seq[StandardRow] = @[]
   let target = if call >= 0: call else: holder
@@ -784,9 +840,29 @@ proc standardHelpText(g: CliGrammar; command: int; program: string;
       section.add(repeat(' ', layout.indent + 2) &
         cliStyled(example.command, ctsLiteral, styled))
     blocks.add(section)
-  if children.len > 0:
-    blocks.add(@["Run '" & cliStyleUsage(commandPathText(g, holder,
-      program) & " <command> --help", styled) & "' for more on a command."])
+  let path = commandPathText(g, holder, program)
+  if shown.len < children.len:
+    # Some subcommands are ``secondary`` and this page leaves them out: say
+    # how many ``--help-all`` lists, which is every listed one. The line is
+    # wrapped at the page width like prose, but each quoted command line is
+    # one unit, never broken, and is styled once wrapped.
+    let allLine = path & " --help-all"
+    let oneLine = path & " <command> --help"
+    var units = @["Run", "'" & allLine & "'"]
+    units.add(("to list all " & $children.len &
+      (if children.len == 1: " command," else: " commands,") &
+      " or").splitWhitespace())
+    units.add("'" & oneLine & "'")
+    units.add(@["for", "details."])
+    var footer: seq[string] = @[]
+    for line in wrapUnits(units, 0, width):
+      footer.add(line.multiReplace(
+        ("'" & allLine & "'", "'" & cliStyleUsage(allLine, styled) & "'"),
+        ("'" & oneLine & "'", "'" & cliStyleUsage(oneLine, styled) & "'")))
+    blocks.add(footer)
+  elif children.len > 0:
+    blocks.add(@["Run '" & cliStyleUsage(path & " <command> --help",
+      styled) & "' for more on a command."])
   var lines: seq[string] = @[]
   for k, b in blocks:
     if k > 0:
@@ -825,14 +901,16 @@ proc cliOptionsTable*(g: CliGrammar; command: int;
 
 proc cliHelpText*(g: CliGrammar; command: int; program: string;
                   layout = cliDefaultHelpLayout; long = false;
-                  styled = false): string =
+                  styled = false; all = false): string =
   ## The human-readable help of ``command`` (see the module documentation),
   ## laid out by ``layout``: by default the standard page, its short form
-  ## (``-h``) or with ``long`` its long one (``--help``). The classic style
-  ## has one form and ignores ``long``. ``styled`` adds the escape
-  ## sequences of ``clispec/styles`` and changes nothing else.
+  ## (``-h``) or with ``long`` its long one (``--help``); ``all`` lists the
+  ## ``secondary`` subcommands too (``--help-all``, with ``long``). The
+  ## classic style has one form, lists every subcommand under
+  ## ``Commands:`` and ignores ``long`` and ``all``. ``styled`` adds the
+  ## escape sequences of ``clispec/styles`` and changes nothing else.
   if layout.style == chsStandard:
-    return standardHelpText(g, command, program, layout, long, styled)
+    return standardHelpText(g, command, program, layout, long, styled, all)
   let holder = helpHolder(g, command)
   let cmd = g.commands[holder]
   var lines = @[heading("Usage:", styled) & " " &
@@ -947,6 +1025,12 @@ proc commandJson(g: CliGrammar; command: int; program: string): JsonNode =
   result["visibility"] = %($cmd.visibility)
   if cmd.shadowedByWord:
     result["shadowedByWord"] = %true
+  if cliHasCommandGroups(g) or cliHasSecondaryCommands(g):
+    # Added keys: present on every command of a program that declares a
+    # command group or a ``secondary`` subcommand, so a description that
+    # declares neither keeps its document byte for byte.
+    result["group"] = if cmd.group.len > 0: %cmd.group else: newJNull()
+    result["tier"] = %($cmd.tier)
   result["usage"] = %cliUsageLine(g, holder, program)
   var examples = newJArray()
   var declared = cmd.examples

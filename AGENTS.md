@@ -124,6 +124,13 @@ library.
   through pipes: colour (`NO_COLOR`, `TERM=dumb`, `CliOptions.color`) and
   width (`COLUMNS`, the terminal's size, the cap at 100). The `depot`
   description both use is `tests/fixtures/cs_m5b_help/depot_cli.nim`.
+- `tests/test_tiered_grouped_subcommand_help.nim` pins command
+  groups and tiers: the fixture `tests/fixtures/tiered_help/kit_cli.nim`
+  and its golden pages, JSON and completion beside it (`-h`, `--help`,
+  `--help-all`, `help --all`, `--help=json`, `__complete`), that the
+  `depot` pages stay byte-identical to the goldens of
+  `test_cs_m5b_help_matches_design` (read from its source), and the
+  invalid tier and group declarations in `tests/fixtures/cs_m2_invalid/`.
 - `tests/test_cs_m9_clispec_has_no_serialization_dependency.nim` fails when
   `clispec.nimble`, `flake.nix` or `repro.nim` declares a serialization
   library or a module under `src/` imports one.

@@ -714,14 +714,17 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
 
     proc `helpTextName`(t: typedesc[`T`]; path: openArray[string] = [];
                         program = `prog`; layout = cliDefaultHelpLayout;
-                        long = false; styled = false): string {.
+                        long = false; styled = false;
+                        all = false): string {.
         raises: [CliUsageError].} =
       ## The human-readable help of the command reached by the subcommand
       ## words ``path``, laid out by ``layout``: the short page (``-h``),
-      ## or with ``long`` the long one (``--help``); ``styled`` adds the
-      ## escape sequences of ``clispec/styles``.
+      ## or with ``long`` the long one (``--help``); ``all`` lists the
+      ## ``secondary`` subcommands too (``--help-all`` is ``long`` and
+      ## ``all``); ``styled`` adds the escape sequences of
+      ## ``clispec/styles``.
       cliHelpText(`gc`, cliHelpCommand(`gc`, path, program), program,
-        layout, long, styled)
+        layout, long, styled, all)
 
     proc `optionsTableName`(t: typedesc[`T`]; path: openArray[string] = [];
                             layout = cliDefaultHelpLayout; group = "";

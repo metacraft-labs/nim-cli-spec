@@ -61,7 +61,11 @@
 ##   word the positionals declared after it do not need.
 ## * ``--help`` and ``-h`` request help (``--help=json`` the machine-readable
 ##   form) unless the program turns them off or declares those spellings
-##   itself.
+##   itself. In a program that declares a ``tier = secondary`` subcommand,
+##   ``--help-all`` does too (the long page, listing every tier), and so
+##   does ``help --all`` under ``parsing helpWord``; elsewhere
+##   ``--help-all`` is an ordinary spelling, unknown unless a flag declares
+##   it.
 ## * Under ``parsing helpWord`` / ``versionWord``, the bare word ``help`` /
 ##   ``version`` where a subcommand word is expected is a request, checked
 ##   before the subcommands: a subcommand declared ``shadowedByWord = true``
@@ -397,10 +401,13 @@ func cliIsVersionWord*(g: CliGrammar; word: string; options: CliOptions):
     cliSameSpelling(g.commandMatching, word, "version")
 
 func isHelpSpelling(g: CliGrammar; scope: seq[int]; word: string;
-                    options: CliOptions): tuple[help, json, long: bool] =
+                    options: CliOptions):
+    tuple[help, json, long, all: bool] =
   ## ``--help``, ``--help=json`` or ``-h``, unless turned off or declared
-  ## by the program for one of its own flags. ``--help`` is compared under
-  ## the program's ``flagMatching``; with ``helpWithAnyValue``,
+  ## by the program for one of its own flags; in a program with
+  ## ``secondary`` subcommands also ``--help-all`` (the long page with every
+  ## tier), which takes the same values. ``--help`` is compared under the
+  ## program's ``flagMatching``; with ``helpWithAnyValue``,
   ## ``--help=<anything>`` asks for help too.
   if options.disableHelpFlag:
     return
@@ -409,20 +416,31 @@ func isHelpSpelling(g: CliGrammar; scope: seq[int]; word: string;
   let canonical = if head == "-h" and cprLongHelpOnly notin g.parseRules: "-h"
                   elif cliSameSpelling(g.flagMatching, head, "--help"):
                     "--help"
+                  elif cliHasSecondaryCommands(g) and
+                      cliSameSpelling(g.flagMatching, head, "--help-all"):
+                    "--help-all"
                   else: ""
   if canonical.len == 0:
     return
   if findFlag(g, scope, proc (p: CliGrammarParam): bool =
       canonical in cliFlagSpellings(p)) >= 0:
     return
-  let long = canonical == "--help"
+  let all = canonical == "--help-all"
+  let long = canonical == "--help" or all
   if eq < 0:
-    return (true, false, long)
+    return (true, false, long, all)
   let value = word[eq + 1 .. ^1]
   if value == "json":
-    return (true, true, long)
+    return (true, true, long, all)
   if value == "text" or cprHelpWithAnyValue in g.parseRules:
-    return (true, false, long)
+    return (true, false, long, all)
+
+func cliIsHelpAllWord*(g: CliGrammar; word: string): bool =
+  ## Whether ``word``, right after the word ``help`` (``parsing helpWord``),
+  ## turns that request into ``--help-all``'s: ``--all`` (compared under
+  ## ``flagMatching``) in a program with ``secondary`` subcommands.
+  cliHasSecondaryCommands(g) and
+    cliSameSpelling(g.flagMatching, word, "--all")
 
 func isVersionSpelling(g: CliGrammar; scope: seq[int]; word: string;
                        options: CliOptions): bool =
@@ -527,10 +545,10 @@ func cliFlagSuggestions*(g: CliGrammar; command: int; word: string;
       if spelling.len == 2 and spelling[0] == '-':
         continue
       candidates.add((dashless(spelling), spelling, $id))
-  for spelling in ["--help", "--version"]:
-    let asks = if spelling == "--help": isHelpSpelling(g, scope, spelling,
-                 options).help
-               else: isVersionSpelling(g, scope, spelling, options)
+  for spelling in ["--help", "--help-all", "--version"]:
+    let asks = if spelling == "--version":
+                 isVersionSpelling(g, scope, spelling, options)
+               else: isHelpSpelling(g, scope, spelling, options).help
     if asks:
       candidates.add((dashless(spelling), spelling, spelling))
   cliSuggest(typed, candidates)
@@ -725,7 +743,7 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
       e.suggestions = cliValueSuggestions(p, bestText)
       raise e
 
-  proc requestHelp(json: bool; long: bool) {.
+  proc requestHelp(json: bool; long: bool; all = false) {.
       raises: [CliUsageError, CliHelpRequest].} =
     checkValuesBeforeHelp()
     let path = g.commands[node].path
@@ -734,7 +752,7 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
         options.versionText.len > 0:
       layout.versionFlag = "Print version"
     let text = if json: cliHelpJson(g, node, program)
-               else: cliHelpText(g, node, program, layout, long)
+               else: cliHelpText(g, node, program, layout, long, all = all)
     var render: CliHelpRender = nil
     if not json:
       # The page again, for the stream it is printed to: a standard layout
@@ -750,9 +768,9 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
           l.width = width
         let paint = styled and (l.style == chsStandard or
           color == ccmAlways)
-        cliHelpText(grammar, command, program, l, long, paint)
+        cliHelpText(grammar, command, program, l, long, paint, all)
     raise (ref CliHelpRequest)(msg: "help requested", commandPath: path,
-      json: json, long: long, text: text, render: render,
+      json: json, long: long, all: all, text: text, render: render,
       color: options.color)
 
   proc requestVersion() {.raises: [CliUsageError, CliVersionRequest].} =
@@ -819,7 +837,9 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
         # Before the subcommands: a subcommand declared ``shadowedByWord``
         # that answers to the word is not reached through it.
         if not terminated and cliIsHelpWord(g, word, options):
-          requestHelp(false, long = true)
+          # ``help --all``: the word right after it may ask for every tier.
+          requestHelp(false, long = true, all = i + 1 < argv.len and
+            cliIsHelpAllWord(g, argv[i + 1]))
         if not terminated and cliIsVersionWord(g, word, options):
           requestVersion()
         let next = if terminated: -1 else: cliChildNamed(g, node, word)
@@ -860,7 +880,7 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
     let scope = g.commands[node].params
     let helpAsk = isHelpSpelling(g, scope, word, options)
     if helpAsk.help:
-      requestHelp(helpAsk.json, helpAsk.long)
+      requestHelp(helpAsk.json, helpAsk.long, helpAsk.all)
     if isVersionSpelling(g, scope, word, options):
       requestVersion()
     var m = if word.startsWith("--"): matchLong(g, scope, word)

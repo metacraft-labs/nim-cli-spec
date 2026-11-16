@@ -176,8 +176,12 @@ type
     commandPath*: seq[string]
     json*: bool
     long*: bool
-      ## The long page was asked for (``--help``, or the word ``help``
-      ## under ``parsing helpWord``) rather than the short one (``-h``).
+      ## The long page was asked for (``--help``, ``--help-all``, or the
+      ## word ``help`` under ``parsing helpWord``) rather than the short one
+      ## (``-h``).
+    all*: bool
+      ## The page lists the ``secondary`` subcommands too: ``--help-all``,
+      ## or ``help --all`` under ``parsing helpWord``.
     text*: string
       ## The page, plain, at the layout's width (80 for the default
       ## layout, whose width is left to the printer): the same text

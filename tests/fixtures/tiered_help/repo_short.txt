@@ -1,0 +1,20 @@
+Manage the repositories
+
+Usage: kit repo [options] <command>
+
+Commands:
+  add       Add a repository
+  list, ls  List the repositories
+
+Options:
+  -h, --help  Print help
+
+Output:
+  How results are shown
+  --color <auto|always|never>  When to colour the output [default: auto]
+
+Global Options:
+  -v, --verbose  Print more output
+
+Run 'kit repo --help-all' to list all 4 commands, or 'kit repo <command> --help'
+for details.

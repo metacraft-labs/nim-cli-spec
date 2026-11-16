@@ -1,0 +1,20 @@
+Usage: kit [options] <command>
+
+Develop, build and ship projects
+
+Commands:
+  init      Create a new project
+  build, b  Build the project
+  test      Run the tests
+  graph     Print the build graph
+  sync      Fetch and fast-forward every repository
+  repo      Manage the repositories
+  lock      Refresh the lock files
+  doctor    Diagnose the environment
+
+Options:
+  -v, --verbose  Print more output
+
+Output:
+  How results are shown
+  --color <auto|always|never>  When to colour the output [default: auto]

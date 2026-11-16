@@ -1,0 +1,1242 @@
+{
+  "schema": "clispec-help/1",
+  "program": "kit",
+  "command": {
+    "name": "",
+    "path": [],
+    "aliases": [],
+    "help": "Develop, build and ship projects",
+    "longHelp": "",
+    "visibility": "shown",
+    "group": null,
+    "tier": "primary",
+    "usage": "kit [options] <command>",
+    "examples": [],
+    "parameters": [
+      {
+        "name": "verbose",
+        "kind": "flag",
+        "spellings": [
+          "--verbose",
+          "-v"
+        ],
+        "negation": null,
+        "value": "none",
+        "format": "separate",
+        "valueName": "bool",
+        "choices": [],
+        "list": false,
+        "separator": null,
+        "counted": false,
+        "required": false,
+        "default": null,
+        "env": [],
+        "help": "Print more output",
+        "group": null,
+        "visibility": "shown",
+        "declaredIn": [],
+        "dynamicCompletion": false,
+        "completer": null,
+        "configKeys": {
+          "file": "verbose"
+        },
+        "longHelp": "",
+        "placeholder": "bool",
+        "acceptsNextWord": false,
+        "refuseFalse": false,
+        "alsoSets": []
+      },
+      {
+        "name": "color",
+        "kind": "flag",
+        "spellings": [
+          "--color"
+        ],
+        "negation": null,
+        "value": "required",
+        "format": "separate",
+        "valueName": "When",
+        "choices": [
+          "auto",
+          "always",
+          "never"
+        ],
+        "list": false,
+        "separator": null,
+        "counted": false,
+        "required": false,
+        "default": "auto",
+        "env": [],
+        "help": "When to colour the output",
+        "group": "Output",
+        "visibility": "shown",
+        "declaredIn": [],
+        "dynamicCompletion": false,
+        "completer": null,
+        "configKeys": {
+          "file": "color"
+        },
+        "longHelp": "",
+        "placeholder": "auto|always|never",
+        "acceptsNextWord": false,
+        "refuseFalse": false,
+        "alsoSets": []
+      }
+    ],
+    "commands": [
+      {
+        "name": "init",
+        "path": [
+          "init"
+        ],
+        "aliases": [],
+        "help": "Create a new project",
+        "longHelp": "",
+        "visibility": "shown",
+        "group": null,
+        "tier": "primary",
+        "usage": "kit init [options] [<dir>]",
+        "examples": [],
+        "parameters": [
+          {
+            "name": "verbose",
+            "kind": "flag",
+            "spellings": [
+              "--verbose",
+              "-v"
+            ],
+            "negation": null,
+            "value": "none",
+            "format": "separate",
+            "valueName": "bool",
+            "choices": [],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": null,
+            "env": [],
+            "help": "Print more output",
+            "group": null,
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "verbose"
+            },
+            "longHelp": "",
+            "placeholder": "bool",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          },
+          {
+            "name": "color",
+            "kind": "flag",
+            "spellings": [
+              "--color"
+            ],
+            "negation": null,
+            "value": "required",
+            "format": "separate",
+            "valueName": "When",
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": "auto",
+            "env": [],
+            "help": "When to colour the output",
+            "group": "Output",
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "color"
+            },
+            "longHelp": "",
+            "placeholder": "auto|always|never",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          },
+          {
+            "name": "dir",
+            "kind": "positional",
+            "spellings": [],
+            "negation": null,
+            "value": "required",
+            "format": "separate",
+            "valueName": "string",
+            "choices": [],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": null,
+            "env": [],
+            "help": "Where to create it",
+            "group": null,
+            "visibility": "shown",
+            "position": 0,
+            "declaredIn": [
+              "init"
+            ],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "init.dir"
+            },
+            "longHelp": "",
+            "placeholder": "string",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          }
+        ],
+        "commands": []
+      },
+      {
+        "name": "build",
+        "path": [
+          "build"
+        ],
+        "aliases": [
+          "b"
+        ],
+        "help": "Build the project",
+        "longHelp": "",
+        "visibility": "shown",
+        "group": "Build Commands",
+        "tier": "primary",
+        "usage": "kit build [options]",
+        "examples": [],
+        "parameters": [
+          {
+            "name": "verbose",
+            "kind": "flag",
+            "spellings": [
+              "--verbose",
+              "-v"
+            ],
+            "negation": null,
+            "value": "none",
+            "format": "separate",
+            "valueName": "bool",
+            "choices": [],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": null,
+            "env": [],
+            "help": "Print more output",
+            "group": null,
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "verbose"
+            },
+            "longHelp": "",
+            "placeholder": "bool",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          },
+          {
+            "name": "color",
+            "kind": "flag",
+            "spellings": [
+              "--color"
+            ],
+            "negation": null,
+            "value": "required",
+            "format": "separate",
+            "valueName": "When",
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": "auto",
+            "env": [],
+            "help": "When to colour the output",
+            "group": "Output",
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "color"
+            },
+            "longHelp": "",
+            "placeholder": "auto|always|never",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          },
+          {
+            "name": "jobs",
+            "kind": "flag",
+            "spellings": [
+              "--jobs",
+              "-j"
+            ],
+            "negation": null,
+            "value": "required",
+            "format": "separate",
+            "valueName": "int",
+            "choices": [],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": "4",
+            "env": [],
+            "help": "Number of parallel jobs",
+            "group": null,
+            "visibility": "shown",
+            "declaredIn": [
+              "build"
+            ],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "build.jobs"
+            },
+            "longHelp": "",
+            "placeholder": "int",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          }
+        ],
+        "commands": []
+      },
+      {
+        "name": "test",
+        "path": [
+          "test"
+        ],
+        "aliases": [],
+        "help": "Run the tests",
+        "longHelp": "",
+        "visibility": "shown",
+        "group": "Build Commands",
+        "tier": "primary",
+        "usage": "kit test [options]",
+        "examples": [],
+        "parameters": [
+          {
+            "name": "verbose",
+            "kind": "flag",
+            "spellings": [
+              "--verbose",
+              "-v"
+            ],
+            "negation": null,
+            "value": "none",
+            "format": "separate",
+            "valueName": "bool",
+            "choices": [],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": null,
+            "env": [],
+            "help": "Print more output",
+            "group": null,
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "verbose"
+            },
+            "longHelp": "",
+            "placeholder": "bool",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          },
+          {
+            "name": "color",
+            "kind": "flag",
+            "spellings": [
+              "--color"
+            ],
+            "negation": null,
+            "value": "required",
+            "format": "separate",
+            "valueName": "When",
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": "auto",
+            "env": [],
+            "help": "When to colour the output",
+            "group": "Output",
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "color"
+            },
+            "longHelp": "",
+            "placeholder": "auto|always|never",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          }
+        ],
+        "commands": []
+      },
+      {
+        "name": "graph",
+        "path": [
+          "graph"
+        ],
+        "aliases": [],
+        "help": "Print the build graph",
+        "longHelp": "",
+        "visibility": "shown",
+        "group": "Build Commands",
+        "tier": "secondary",
+        "usage": "kit graph [options]",
+        "examples": [],
+        "parameters": [
+          {
+            "name": "verbose",
+            "kind": "flag",
+            "spellings": [
+              "--verbose",
+              "-v"
+            ],
+            "negation": null,
+            "value": "none",
+            "format": "separate",
+            "valueName": "bool",
+            "choices": [],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": null,
+            "env": [],
+            "help": "Print more output",
+            "group": null,
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "verbose"
+            },
+            "longHelp": "",
+            "placeholder": "bool",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          },
+          {
+            "name": "color",
+            "kind": "flag",
+            "spellings": [
+              "--color"
+            ],
+            "negation": null,
+            "value": "required",
+            "format": "separate",
+            "valueName": "When",
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": "auto",
+            "env": [],
+            "help": "When to colour the output",
+            "group": "Output",
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "color"
+            },
+            "longHelp": "",
+            "placeholder": "auto|always|never",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          }
+        ],
+        "commands": []
+      },
+      {
+        "name": "sync",
+        "path": [
+          "sync"
+        ],
+        "aliases": [],
+        "help": "Fetch and fast-forward every repository",
+        "longHelp": "",
+        "visibility": "shown",
+        "group": "Workspace Commands",
+        "tier": "primary",
+        "usage": "kit sync [options]",
+        "examples": [],
+        "parameters": [
+          {
+            "name": "verbose",
+            "kind": "flag",
+            "spellings": [
+              "--verbose",
+              "-v"
+            ],
+            "negation": null,
+            "value": "none",
+            "format": "separate",
+            "valueName": "bool",
+            "choices": [],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": null,
+            "env": [],
+            "help": "Print more output",
+            "group": null,
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "verbose"
+            },
+            "longHelp": "",
+            "placeholder": "bool",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          },
+          {
+            "name": "color",
+            "kind": "flag",
+            "spellings": [
+              "--color"
+            ],
+            "negation": null,
+            "value": "required",
+            "format": "separate",
+            "valueName": "When",
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": "auto",
+            "env": [],
+            "help": "When to colour the output",
+            "group": "Output",
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "color"
+            },
+            "longHelp": "",
+            "placeholder": "auto|always|never",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          }
+        ],
+        "commands": []
+      },
+      {
+        "name": "repo",
+        "path": [
+          "repo"
+        ],
+        "aliases": [],
+        "help": "Manage the repositories",
+        "longHelp": "",
+        "visibility": "shown",
+        "group": "Workspace Commands",
+        "tier": "primary",
+        "usage": "kit repo [options] <command>",
+        "examples": [],
+        "parameters": [
+          {
+            "name": "verbose",
+            "kind": "flag",
+            "spellings": [
+              "--verbose",
+              "-v"
+            ],
+            "negation": null,
+            "value": "none",
+            "format": "separate",
+            "valueName": "bool",
+            "choices": [],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": null,
+            "env": [],
+            "help": "Print more output",
+            "group": null,
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "verbose"
+            },
+            "longHelp": "",
+            "placeholder": "bool",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          },
+          {
+            "name": "color",
+            "kind": "flag",
+            "spellings": [
+              "--color"
+            ],
+            "negation": null,
+            "value": "required",
+            "format": "separate",
+            "valueName": "When",
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": "auto",
+            "env": [],
+            "help": "When to colour the output",
+            "group": "Output",
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "color"
+            },
+            "longHelp": "",
+            "placeholder": "auto|always|never",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          }
+        ],
+        "commands": [
+          {
+            "name": "add",
+            "path": [
+              "repo",
+              "add"
+            ],
+            "aliases": [],
+            "help": "Add a repository",
+            "longHelp": "",
+            "visibility": "shown",
+            "group": null,
+            "tier": "primary",
+            "usage": "kit repo add [options] <url>",
+            "examples": [],
+            "parameters": [
+              {
+                "name": "verbose",
+                "kind": "flag",
+                "spellings": [
+                  "--verbose",
+                  "-v"
+                ],
+                "negation": null,
+                "value": "none",
+                "format": "separate",
+                "valueName": "bool",
+                "choices": [],
+                "list": false,
+                "separator": null,
+                "counted": false,
+                "required": false,
+                "default": null,
+                "env": [],
+                "help": "Print more output",
+                "group": null,
+                "visibility": "shown",
+                "declaredIn": [],
+                "dynamicCompletion": false,
+                "completer": null,
+                "configKeys": {
+                  "file": "verbose"
+                },
+                "longHelp": "",
+                "placeholder": "bool",
+                "acceptsNextWord": false,
+                "refuseFalse": false,
+                "alsoSets": []
+              },
+              {
+                "name": "color",
+                "kind": "flag",
+                "spellings": [
+                  "--color"
+                ],
+                "negation": null,
+                "value": "required",
+                "format": "separate",
+                "valueName": "When",
+                "choices": [
+                  "auto",
+                  "always",
+                  "never"
+                ],
+                "list": false,
+                "separator": null,
+                "counted": false,
+                "required": false,
+                "default": "auto",
+                "env": [],
+                "help": "When to colour the output",
+                "group": "Output",
+                "visibility": "shown",
+                "declaredIn": [],
+                "dynamicCompletion": false,
+                "completer": null,
+                "configKeys": {
+                  "file": "color"
+                },
+                "longHelp": "",
+                "placeholder": "auto|always|never",
+                "acceptsNextWord": false,
+                "refuseFalse": false,
+                "alsoSets": []
+              },
+              {
+                "name": "url",
+                "kind": "positional",
+                "spellings": [],
+                "negation": null,
+                "value": "required",
+                "format": "separate",
+                "valueName": "string",
+                "choices": [],
+                "list": false,
+                "separator": null,
+                "counted": false,
+                "required": true,
+                "default": null,
+                "env": [],
+                "help": "The repository's URL",
+                "group": null,
+                "visibility": "shown",
+                "position": 0,
+                "declaredIn": [
+                  "repo",
+                  "add"
+                ],
+                "dynamicCompletion": false,
+                "completer": null,
+                "configKeys": {
+                  "file": "repo.add.url"
+                },
+                "longHelp": "",
+                "placeholder": "string",
+                "acceptsNextWord": false,
+                "refuseFalse": false,
+                "alsoSets": []
+              }
+            ],
+            "commands": []
+          },
+          {
+            "name": "list",
+            "path": [
+              "repo",
+              "list"
+            ],
+            "aliases": [
+              "ls"
+            ],
+            "help": "List the repositories",
+            "longHelp": "",
+            "visibility": "shown",
+            "group": null,
+            "tier": "primary",
+            "usage": "kit repo list [options]",
+            "examples": [],
+            "parameters": [
+              {
+                "name": "verbose",
+                "kind": "flag",
+                "spellings": [
+                  "--verbose",
+                  "-v"
+                ],
+                "negation": null,
+                "value": "none",
+                "format": "separate",
+                "valueName": "bool",
+                "choices": [],
+                "list": false,
+                "separator": null,
+                "counted": false,
+                "required": false,
+                "default": null,
+                "env": [],
+                "help": "Print more output",
+                "group": null,
+                "visibility": "shown",
+                "declaredIn": [],
+                "dynamicCompletion": false,
+                "completer": null,
+                "configKeys": {
+                  "file": "verbose"
+                },
+                "longHelp": "",
+                "placeholder": "bool",
+                "acceptsNextWord": false,
+                "refuseFalse": false,
+                "alsoSets": []
+              },
+              {
+                "name": "color",
+                "kind": "flag",
+                "spellings": [
+                  "--color"
+                ],
+                "negation": null,
+                "value": "required",
+                "format": "separate",
+                "valueName": "When",
+                "choices": [
+                  "auto",
+                  "always",
+                  "never"
+                ],
+                "list": false,
+                "separator": null,
+                "counted": false,
+                "required": false,
+                "default": "auto",
+                "env": [],
+                "help": "When to colour the output",
+                "group": "Output",
+                "visibility": "shown",
+                "declaredIn": [],
+                "dynamicCompletion": false,
+                "completer": null,
+                "configKeys": {
+                  "file": "color"
+                },
+                "longHelp": "",
+                "placeholder": "auto|always|never",
+                "acceptsNextWord": false,
+                "refuseFalse": false,
+                "alsoSets": []
+              }
+            ],
+            "commands": []
+          },
+          {
+            "name": "gc",
+            "path": [
+              "repo",
+              "gc"
+            ],
+            "aliases": [],
+            "help": "Collect unreachable objects",
+            "longHelp": "",
+            "visibility": "shown",
+            "group": "Maintenance",
+            "tier": "secondary",
+            "usage": "kit repo gc [options]",
+            "examples": [],
+            "parameters": [
+              {
+                "name": "verbose",
+                "kind": "flag",
+                "spellings": [
+                  "--verbose",
+                  "-v"
+                ],
+                "negation": null,
+                "value": "none",
+                "format": "separate",
+                "valueName": "bool",
+                "choices": [],
+                "list": false,
+                "separator": null,
+                "counted": false,
+                "required": false,
+                "default": null,
+                "env": [],
+                "help": "Print more output",
+                "group": null,
+                "visibility": "shown",
+                "declaredIn": [],
+                "dynamicCompletion": false,
+                "completer": null,
+                "configKeys": {
+                  "file": "verbose"
+                },
+                "longHelp": "",
+                "placeholder": "bool",
+                "acceptsNextWord": false,
+                "refuseFalse": false,
+                "alsoSets": []
+              },
+              {
+                "name": "color",
+                "kind": "flag",
+                "spellings": [
+                  "--color"
+                ],
+                "negation": null,
+                "value": "required",
+                "format": "separate",
+                "valueName": "When",
+                "choices": [
+                  "auto",
+                  "always",
+                  "never"
+                ],
+                "list": false,
+                "separator": null,
+                "counted": false,
+                "required": false,
+                "default": "auto",
+                "env": [],
+                "help": "When to colour the output",
+                "group": "Output",
+                "visibility": "shown",
+                "declaredIn": [],
+                "dynamicCompletion": false,
+                "completer": null,
+                "configKeys": {
+                  "file": "color"
+                },
+                "longHelp": "",
+                "placeholder": "auto|always|never",
+                "acceptsNextWord": false,
+                "refuseFalse": false,
+                "alsoSets": []
+              }
+            ],
+            "commands": []
+          },
+          {
+            "name": "fsck",
+            "path": [
+              "repo",
+              "fsck"
+            ],
+            "aliases": [],
+            "help": "Verify the object store",
+            "longHelp": "",
+            "visibility": "shown",
+            "group": "Maintenance",
+            "tier": "secondary",
+            "usage": "kit repo fsck [options]",
+            "examples": [],
+            "parameters": [
+              {
+                "name": "verbose",
+                "kind": "flag",
+                "spellings": [
+                  "--verbose",
+                  "-v"
+                ],
+                "negation": null,
+                "value": "none",
+                "format": "separate",
+                "valueName": "bool",
+                "choices": [],
+                "list": false,
+                "separator": null,
+                "counted": false,
+                "required": false,
+                "default": null,
+                "env": [],
+                "help": "Print more output",
+                "group": null,
+                "visibility": "shown",
+                "declaredIn": [],
+                "dynamicCompletion": false,
+                "completer": null,
+                "configKeys": {
+                  "file": "verbose"
+                },
+                "longHelp": "",
+                "placeholder": "bool",
+                "acceptsNextWord": false,
+                "refuseFalse": false,
+                "alsoSets": []
+              },
+              {
+                "name": "color",
+                "kind": "flag",
+                "spellings": [
+                  "--color"
+                ],
+                "negation": null,
+                "value": "required",
+                "format": "separate",
+                "valueName": "When",
+                "choices": [
+                  "auto",
+                  "always",
+                  "never"
+                ],
+                "list": false,
+                "separator": null,
+                "counted": false,
+                "required": false,
+                "default": "auto",
+                "env": [],
+                "help": "When to colour the output",
+                "group": "Output",
+                "visibility": "shown",
+                "declaredIn": [],
+                "dynamicCompletion": false,
+                "completer": null,
+                "configKeys": {
+                  "file": "color"
+                },
+                "longHelp": "",
+                "placeholder": "auto|always|never",
+                "acceptsNextWord": false,
+                "refuseFalse": false,
+                "alsoSets": []
+              }
+            ],
+            "commands": []
+          }
+        ]
+      },
+      {
+        "name": "lock",
+        "path": [
+          "lock"
+        ],
+        "aliases": [],
+        "help": "Refresh the lock files",
+        "longHelp": "",
+        "visibility": "shown",
+        "group": "Workspace Commands",
+        "tier": "secondary",
+        "usage": "kit lock [options]",
+        "examples": [],
+        "parameters": [
+          {
+            "name": "verbose",
+            "kind": "flag",
+            "spellings": [
+              "--verbose",
+              "-v"
+            ],
+            "negation": null,
+            "value": "none",
+            "format": "separate",
+            "valueName": "bool",
+            "choices": [],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": null,
+            "env": [],
+            "help": "Print more output",
+            "group": null,
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "verbose"
+            },
+            "longHelp": "",
+            "placeholder": "bool",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          },
+          {
+            "name": "color",
+            "kind": "flag",
+            "spellings": [
+              "--color"
+            ],
+            "negation": null,
+            "value": "required",
+            "format": "separate",
+            "valueName": "When",
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": "auto",
+            "env": [],
+            "help": "When to colour the output",
+            "group": "Output",
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "color"
+            },
+            "longHelp": "",
+            "placeholder": "auto|always|never",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          }
+        ],
+        "commands": []
+      },
+      {
+        "name": "doctor",
+        "path": [
+          "doctor"
+        ],
+        "aliases": [],
+        "help": "Diagnose the environment",
+        "longHelp": "",
+        "visibility": "shown",
+        "group": null,
+        "tier": "secondary",
+        "usage": "kit doctor [options]",
+        "examples": [],
+        "parameters": [
+          {
+            "name": "verbose",
+            "kind": "flag",
+            "spellings": [
+              "--verbose",
+              "-v"
+            ],
+            "negation": null,
+            "value": "none",
+            "format": "separate",
+            "valueName": "bool",
+            "choices": [],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": null,
+            "env": [],
+            "help": "Print more output",
+            "group": null,
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "verbose"
+            },
+            "longHelp": "",
+            "placeholder": "bool",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          },
+          {
+            "name": "color",
+            "kind": "flag",
+            "spellings": [
+              "--color"
+            ],
+            "negation": null,
+            "value": "required",
+            "format": "separate",
+            "valueName": "When",
+            "choices": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "list": false,
+            "separator": null,
+            "counted": false,
+            "required": false,
+            "default": "auto",
+            "env": [],
+            "help": "When to colour the output",
+            "group": "Output",
+            "visibility": "shown",
+            "declaredIn": [],
+            "dynamicCompletion": false,
+            "completer": null,
+            "configKeys": {
+              "file": "color"
+            },
+            "longHelp": "",
+            "placeholder": "auto|always|never",
+            "acceptsNextWord": false,
+            "refuseFalse": false,
+            "alsoSets": []
+          }
+        ],
+        "commands": []
+      }
+    ]
+  },
+  "conventions": {
+    "cli": "kebabCase",
+    "file": "declared"
+  },
+  "parsing": {
+    "flagMatching": "exact",
+    "rules": [
+      "helpWord"
+    ]
+  }
+}

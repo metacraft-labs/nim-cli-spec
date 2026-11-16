@@ -149,6 +149,12 @@ type
     shadowedByWord*: bool
       ## ``CliCommand.shadowedByWord``: a word a ``parsing`` rule reserves
       ## answers to it, and the rule wins.
+    group*: string
+      ## ``CliCommand.group``: the heading help lists the subcommand under
+      ## (empty: ``Commands:``).
+    tier*: CliTier
+      ## ``CliCommand.tier``: ``ctSecondary`` subcommands are listed by
+      ## ``--help-all`` only.
     isCall*: bool
     parent*: int
       ## The enclosing command, -1 for the root.
@@ -350,7 +356,8 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
     g.commands.add(CliGrammarCommand(name: cmd.name, path: cmd.path,
       aliases: cmd.aliases, help: cmd.help, longHelp: cmd.longHelp,
       examples: cmd.examples, visibility: cmd.visibility,
-      shadowedByWord: cmd.shadowedByWord, isCall: cmd.anonymous,
+      shadowedByWord: cmd.shadowedByWord, group: cmd.group, tier: cmd.tier,
+      isCall: cmd.anonymous,
       parent: parent, callChild: -1,
       sourceFile: cmd.sourceFile, sourceLine: cmd.sourceLine))
     scopes.add(cmd)
@@ -515,6 +522,21 @@ func cliSubcommandWords*(g: CliGrammar; command: int): seq[string] =
   for child in g.commands[command].children:
     if g.commands[child].visibility == cvShown:
       result.add(g.commands[child].name)
+
+func cliHasSecondaryCommands*(g: CliGrammar): bool =
+  ## Whether some subcommand of the program is declared ``tier =
+  ## secondary``. Only such a program accepts ``--help-all`` (and ``help
+  ## --all``): elsewhere the page it asks for would be ``--help``'s, and the
+  ## spelling stays free, an unknown flag as it always was.
+  for c in g.commands:
+    if c.tier == ctSecondary:
+      return true
+
+func cliHasCommandGroups*(g: CliGrammar): bool =
+  ## Whether some subcommand of the program stands in a ``group`` section.
+  for c in g.commands:
+    if c.group.len > 0:
+      return true
 
 func cliCommandAt*(g: CliGrammar; words: openArray[string]): int =
   ## The command reached by following subcommand words (names or aliases)

@@ -1,0 +1,24 @@
+Manage the repositories
+
+Usage: kit repo [options] <command>
+
+Commands:
+  add       Add a repository
+  list, ls  List the repositories
+
+Maintenance:
+  Rarely needed by hand
+  gc    Collect unreachable objects
+  fsck  Verify the object store
+
+Options:
+  -h, --help  Print help
+
+Output:
+  How results are shown
+  --color <auto|always|never>  When to colour the output [default: auto]
+
+Global Options:
+  -v, --verbose  Print more output
+
+Run 'kit repo <command> --help' for more on a command.

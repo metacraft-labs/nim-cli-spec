@@ -219,6 +219,18 @@ type
     cvHidden = "hidden"
       ## Accepted, and listed nowhere.
 
+  CliTier* = enum
+    ## Which help page lists a subcommand: ``subcmd "<name>", tier =
+    ## secondary:``. A tier is about how often a command is used, not about
+    ## whether it is offered: completion, the parser and the
+    ## machine-readable help treat both tiers alike.
+    ctPrimary = "primary"
+      ## Listed by ``-h`` and ``--help`` (the default).
+    ctSecondary = "secondary"
+      ## Listed only by ``--help-all`` (and ``help --all`` under ``parsing
+      ## helpWord``); ``-h`` and ``--help`` end with a line naming
+      ## ``--help-all`` instead.
+
   CliExpr* = object
     ## A Nim expression written in a description (see "Expressions" above).
     code*: string
@@ -352,7 +364,8 @@ type
       ## exact``, where it would change nothing.
 
   CliGroup* = object
-    ## A ``group "<title>":`` section: parameters listed together in help.
+    ## A ``group "<title>":`` section: parameters, or subcommands, listed
+    ## together under one heading in help. One title holds one or the other.
     name*: string
     help*: string
     sourceFile*: string
@@ -535,6 +548,12 @@ type
       ## spellings of the subcommand word.
     visibility*: CliVisibility
       ## ``subcmd "<name>", visibility = internal:``.
+    group*: string
+      ## The ``group "<title>":`` section the subcommand was declared in, or
+      ## empty: help lists it under that heading instead of ``Commands:``.
+      ## Always empty for a ``call:``, which has no row of its own.
+    tier*: CliTier
+      ## ``subcmd "<name>", tier = secondary:`` (``ctPrimary`` by default).
     shadowedByWord*: bool
       ## ``subcmd "help", shadowedByWord = true:``: the subcommand answers
       ## (by its name or an alias, compared under ``commandMatching``) to a

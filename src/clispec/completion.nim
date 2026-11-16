@@ -15,7 +15,9 @@
 ##   (``--<long name>``, ``--no-<long name>`` for a ``negatable`` flag, the
 ##   ``alias`` and ``-<short>``) that starts with the word, then ``--help``
 ##   and ``-h`` when they request help (``--help`` alone under ``parsing
-##   longHelpOnly``). ``--version`` is not offered. A flag that takes its value only as
+##   longHelpOnly``), and ``--help-all`` in a program that declares a ``tier
+##   = secondary`` subcommand. ``--version`` is not offered. A flag that
+##   takes its value only as
 ##   ``--flag=value`` (``format = equals``) is offered as ``--flag=``, so
 ##   the user types the value straight after it. A ``concat`` alias, whose
 ##   value is written straight after it, is not offered on its own.
@@ -59,7 +61,9 @@
 ## ``hidden`` commands and parameters, and ``internal`` parameters, are
 ## never offered; an ``internal`` subcommand is offered only inside its
 ## namespace (by the command that holds it, unless that is the root, whose
-## completion is the program's primary one). A value of a parameter the user
+## completion is the program's primary one). A subcommand's ``tier`` changes
+## nothing here: ``secondary`` subcommands are offered exactly like
+## ``primary`` ones, in declaration order. A value of a parameter the user
 ## typed explicitly is completed whatever its visibility. Candidates come in
 ## declaration order; descriptions are the declared ``help`` texts.
 ##
@@ -407,6 +411,9 @@ proc flagCandidates(g: CliGrammar; w: Walk; typed: string;
     for s in spellings:
       if s notin spelled and s.startsWith(typed):
         result.addCandidate(s, "Show help")
+    if cliHasSecondaryCommands(g) and "--help-all" notin spelled and
+        "--help-all".startsWith(typed):
+      result.addCandidate("--help-all", "Show help with every command")
 
 proc attachedValueCandidates(g: CliGrammar;
                              completers: openArray[CliCompleter]; w: Walk;

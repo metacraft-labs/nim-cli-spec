@@ -72,6 +72,8 @@ const clispecTests = [
     runsCompiler: true),
   ClispecTest(source: "tests/test_type_check_nodes_carry_written_position.nim"),
   ClispecTest(source: "tests/test_cs_m6_after_separator.nim"),
+  ClispecTest(source: "tests/test_tiered_grouped_subcommand_help.nim",
+    runsCompiler: true),
   ClispecTest(source: "tests/test_suite_lists_agree.nim"),
   ClispecTest(source: "tests/e2e_cs_m5_real_shell_completion.nim",
     runsCompiler: true, realShells: true),

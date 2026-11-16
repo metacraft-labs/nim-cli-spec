@@ -1,0 +1,19 @@
+Plumbing for other tools
+
+Usage: kit internal [options] <command>
+
+Commands:
+  cache-stats  Print cache statistics
+
+Options:
+  -h, --help  Print help
+
+Output:
+  How results are shown
+  --color <auto|always|never>  When to colour the output [default: auto]
+
+Global Options:
+  -v, --verbose  Print more output
+
+Run 'kit internal --help-all' to list all 2 commands, or
+'kit internal <command> --help' for details.
