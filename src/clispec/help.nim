@@ -199,7 +199,14 @@
 ## the ``complete`` expression as written, for a completion engine that
 ## calls it. The listing rules above decide which items appear; unlike the
 ## human-readable help, the machine-readable form includes ``internal``
-## parameters. Within ``clispec-help/1`` keys are only ever added, never renamed
+## parameters. A command at which a retired spelling applies
+## (``cliRetiredAt``) has, after its ``parameters``, ``"retired":
+## [{"spelling", "kind" ("flag" | "subcommand"), "replacement",
+## "declaredIn"}]``, nearest declaration first; the key is absent where none
+## applies. A retired spelling is never among a command's ``parameters``,
+## ``spellings`` or ``commands``: the list tells a tool what the program
+## refuses and names, not what it accepts. Within ``clispec-help/1`` keys
+## are only ever added, never renamed
 ## or removed, and their meaning does not change; anything else is a new
 ## schema name.
 
@@ -1043,6 +1050,17 @@ proc commandJson(g: CliGrammar; command: int; program: string): JsonNode =
   for id in cliHelpParams(g, holder, machineReadable = true):
     params.add(paramJson(g, g.params[id]))
   result["parameters"] = params
+  let retired = cliRetiredAt(g, holder)
+  if retired.len > 0:
+    # An added key, present only where a retired spelling applies, so a
+    # description without one keeps its document byte for byte.
+    var entries = newJArray()
+    for a in retired:
+      entries.add(%*{"spelling": a.retired.spelling,
+        "kind": (if cliRetiredIsFlag(a.retired): "flag" else: "subcommand"),
+        "replacement": a.retired.replacement,
+        "declaredIn": g.commands[a.declaredBy].path})
+    result["retired"] = entries
   var children = newJArray()
   for child in cliHelpCommands(g, holder):
     children.add(commandJson(g, child, program))

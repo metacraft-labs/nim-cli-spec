@@ -145,6 +145,10 @@ type
       ## ``CliCommand.longHelp``: the long help's further paragraphs.
     examples*: seq[CliExample]
       ## ``CliCommand.examples``, in declaration order.
+    retired*: seq[CliRetired]
+      ## ``CliCommand.retired``: the command's own ``retired`` statements,
+      ## in declaration order (``cliRetiredAt`` adds the ones that apply
+      ## from elsewhere).
     visibility*: CliVisibility
     shadowedByWord*: bool
       ## ``CliCommand.shadowedByWord``: a word a ``parsing`` rule reserves
@@ -355,7 +359,8 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
         g.commands[parent].children.add(index)
     g.commands.add(CliGrammarCommand(name: cmd.name, path: cmd.path,
       aliases: cmd.aliases, help: cmd.help, longHelp: cmd.longHelp,
-      examples: cmd.examples, visibility: cmd.visibility,
+      examples: cmd.examples, retired: cmd.retired,
+      visibility: cmd.visibility,
       shadowedByWord: cmd.shadowedByWord, group: cmd.group, tier: cmd.tier,
       isCall: cmd.anonymous,
       parent: parent, callChild: -1,
@@ -522,6 +527,38 @@ func cliSubcommandWords*(g: CliGrammar; command: int): seq[string] =
   for child in g.commands[command].children:
     if g.commands[child].visibility == cvShown:
       result.add(g.commands[child].name)
+
+type
+  CliRetiredAt* = object
+    ## A ``retired`` statement that applies at a command (``cliRetiredAt``).
+    retired*: CliRetired
+    declaredBy*: int
+      ## The index of the command whose statement it is.
+
+func cliRetiredAt*(g: CliGrammar; command: int): seq[CliRetiredAt] =
+  ## The retired spellings that apply where the parser stands at
+  ## ``command``: the retired flags of the command and of every command
+  ## that encloses it (a retired flag applies to its command and every
+  ## command nested in it), then, for a command with a ``call:``, the
+  ## call:'s retired flags (whose flags are read there too);
+  ## and the command's own retired subcommand words when it has
+  ## subcommands. Nearest declaration first, each command's in
+  ## declaration order.
+  var at = command
+  while at >= 0:
+    for r in g.commands[at].retired:
+      if cliRetiredIsFlag(r):
+        result.add(CliRetiredAt(retired: r, declaredBy: at))
+    at = g.commands[at].parent
+  let cmd = g.commands[command]
+  if cmd.callChild >= 0:
+    for r in g.commands[cmd.callChild].retired:
+      if cliRetiredIsFlag(r):
+        result.add(CliRetiredAt(retired: r, declaredBy: cmd.callChild))
+  if cmd.children.len > 0:
+    for r in cmd.retired:
+      if not cliRetiredIsFlag(r):
+        result.add(CliRetiredAt(retired: r, declaredBy: command))
 
 func cliHasSecondaryCommands*(g: CliGrammar): bool =
   ## Whether some subcommand of the program is declared ``tier =

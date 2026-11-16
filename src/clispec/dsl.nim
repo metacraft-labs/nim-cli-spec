@@ -77,6 +77,17 @@
 ##   statement named ``example`` or ``longHelp`` is offered to the
 ##   consumer's extension first and read by the library only when the
 ##   extension does not claim it.
+## * ``retired "<spelling>", replacement = "<text>"`` declares a spelling
+##   the command no longer accepts and what replaced it
+##   (``CliCommand.retired``): a flag (``--old``, ``-o``, or one value of a
+##   flag, ``--mode=legacy``) or, in a command with subcommands, a
+##   subcommand word (``checkout``). The parser still refuses the spelling
+##   exactly as it refuses any unknown one; the error names the
+##   replacement. A retired flag applies to the command and to every
+##   command nested in it, wherever in the body it is written; a retired
+##   word only where the command expects a subcommand word. Help,
+##   completion and suggestions never offer it. Like ``example``, the
+##   statement is offered to the consumer's extension first.
 ## * ``group "<title>"[, help = "<text>"]:`` lists the declarations inside it
 ##   under one help heading; it opens no command and changes no scoping.
 ##   Around parameters it is an options section; around ``subcmd``
@@ -100,7 +111,8 @@
 ## Anything else — an unknown statement, or a named argument the parameter
 ## kind does not take — is offered to the consumer's extension (below) and
 ## ignored when no extension claims it. The library's own words above never
-## reach the extension, except the ``example`` and ``longHelp`` statements.
+## reach the extension, except the ``example``, ``longHelp`` and
+## ``retired`` statements.
 ##
 ## Invalid declarations
 ## ====================
@@ -136,7 +148,18 @@
 ## description); a ``help`` statement inside a ``group`` section; a
 ## command's ``longHelp`` given twice; an ``example`` without its ``help``,
 ## with an empty command line, with a text that is not a string literal
-## (or ``&`` of literals), or with another argument;
+## (or ``&`` of literals), or with another argument; a ``retired`` statement
+## without its ``replacement``, with an empty one, with another argument,
+## inside a ``group`` section, or whose spelling is malformed (a flag with
+## an empty name, white space, an empty ``=value``, a value on a
+## single-dash flag) or declared twice where it applies (in the command or
+## an enclosing one for a flag); a retired flag that any command it
+## applies to accepts (a spelling, alias, short or ``--no-`` form of one of
+## its flags, compared under ``flagMatching``); a retired subcommand word
+## on a command without subcommands, on one whose ``call:`` takes
+## positional words (the word would be one of them), or that a subcommand
+## answers to or that asks for help or the version there (compared under
+## ``commandMatching``);
 ## ``keyStyle``, ``convention``, ``configSchema``, ``flagMatching``,
 ## ``commandMatching`` or ``parsing`` anywhere but directly under ``cli:``;
 ## an unknown
@@ -1259,6 +1282,60 @@ proc parseExample(stmt: NimNode; label: string): CliExample =
     error("clispec: " & label & ": an example needs its help, " & shape,
       stmt)
 
+proc parseRetired(stmt: NimNode; label: string): CliRetired =
+  ## ``retired "<spelling>", replacement = "<text>"``.
+  const shape = "retired is written retired \"<spelling>\", " &
+    "replacement = \"<text>\""
+  if stmt.kind notin {nnkCommand, nnkCall} or stmt.len < 2:
+    error("clispec: " & label & ": " & shape, stmt)
+  let info = stmt.lineInfoObj()
+  result.sourceFile = info.filename
+  result.sourceLine = info.line
+  result.spelling = cliFoldedStr(stmt[1], "clispec: " & label &
+    ": a retired spelling")
+  let spelling = result.spelling
+  var malformed = ""
+  if spelling.len == 0:
+    malformed = "it is empty"
+  else:
+    for ch in spelling:
+      if ch in Whitespace:
+        malformed = "it holds white space"
+        break
+  if malformed.len == 0 and spelling[0] == '-':
+    let parts = cliRetiredFlagParts(result)
+    if parts.name.strip(leading = true, trailing = false,
+        chars = {'-'}).len == 0:
+      malformed = "the flag has no name"
+    elif parts.hasValue and parts.value.len == 0:
+      malformed = "the value after '=' is empty (write the flag alone to " &
+        "retire every value of it)"
+    elif not spelling.startsWith("--") and spelling.len > 2 and
+        '=' in spelling:
+      malformed = "only a '--' flag is retired with one of its values"
+  if malformed.len > 0:
+    error("clispec: " & label & ": retired spelling '" & spelling &
+      "' is malformed: " & malformed, stmt[1])
+  var given = false
+  for i in 2 ..< stmt.len:
+    let arg = stmt[i]
+    if arg.kind != nnkExprEqExpr or
+        cliIdentText(arg[0]).normalize != "replacement":
+      error("clispec: " & label & ": " & shape & " (unexpected " &
+        arg.repr & ")", arg)
+    if given:
+      error("clispec: " & label & ": the replacement of retired '" &
+        spelling & "' is given twice", arg)
+    result.replacement = cliFoldedStr(arg[1], "clispec: " & label &
+      ": a retired spelling's replacement")
+    given = true
+  if not given:
+    error("clispec: " & label & ": retired '" & spelling & "' needs its " &
+      "replacement, " & shape, stmt)
+  if result.replacement.strip().len == 0:
+    error("clispec: " & label & ": the replacement of retired '" &
+      spelling & "' is empty", stmt)
+
 proc nodeAt(file: string; line: int): NimNode =
   ## A node that carries only a source position, for a diagnostic about a
   ## declaration whose AST is no longer at hand.
@@ -1430,16 +1507,27 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
           "twice", stmt)
       cmd.help = cliStrLit(stmt[1], "help")
       helpGiven = true
-    of "example", "longhelp":
+    of "example", "longhelp", "retired":
       # Library words that came after the extension hooks: a statement of
-      # either name is offered to the consumer's extension first, so one
-      # that already had such a statement keeps it.
+      # any of these names is offered to the consumer's extension first, so
+      # one that already had such a statement keeps it.
       let scope = CliScope(isRoot: ctx.isRoot, path: ctx.path,
         wholeBody: ctx.wholeBody)
       if parseCliCommandExtension(cmd, stmt, scope):
         continue
       let label = cliCommandLabel(ctx.path, ctx.isRoot)
-      if head == "longhelp":
+      if head == "retired":
+        if group.len > 0:
+          # A retired spelling has no row in any help section.
+          error("clispec: " & label & ": a retired spelling is listed " &
+            "nowhere, so it cannot stand in group '" & group & "'", stmt)
+        let r = parseRetired(stmt, label)
+        for seen in cmd.retired:
+          if seen.spelling == r.spelling:
+            error("clispec: " & label & ": retired '" & r.spelling &
+              "' is declared twice", stmt)
+        cmd.retired.add(r)
+      elif head == "longhelp":
         if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2:
           error("clispec: longHelp is written longHelp \"<text>\"", stmt)
         if cmd.longHelp.len > 0 or longHelpGiven:
@@ -1553,6 +1641,114 @@ proc parseCliScope*[C, P](body: NimNode; path: seq[string]; isRoot: bool;
   ## ``parseCliScope`` for a caller that does not keep ``group`` sections.
   var groups: seq[CliGroup] = @[]
   parseCliScope[C, P](body, path, isRoot, parent, wholeBody, commands, groups)
+
+proc retiredFlagCollides(model: CliModel; name: string;
+                         params: openArray[CliParam]): string =
+  ## The flag of ``params`` that accepts the retired flag name ``name``
+  ## (``--old``, ``-o``) as one of its spellings or its ``--no-`` form,
+  ## compared under the description's ``flagMatching``; empty when none.
+  let mode = model.flagMatching
+  for p in params:
+    if p.kind != cpkFlag or csCli notin p.sources:
+      continue
+    var spellings = flagSpellings(p)
+    if p.negatable:
+      spellings.add("--no-" & (if p.longName.len > 0: p.longName
+                               else: p.name))
+    for spelling in spellings:
+      let exactOnly = cprExactOneLetterFlags in model.parseRules and
+        (name.strip(trailing = false, chars = {'-'}).len == 1 or
+         spelling.strip(trailing = false, chars = {'-'}).len == 1)
+      if name == spelling or
+          (not exactOnly and cliSameSpelling(mode, name, spelling)):
+        return p.name
+  ""
+
+proc nestedIn(inner, outer: CliCommand): bool =
+  ## Whether the scope ``inner`` is ``outer`` or nested in it.
+  if inner.depth < outer.depth or inner.path.len < outer.path.len or
+      inner.path[0 ..< outer.path.len] != outer.path:
+    return false
+  if outer.anonymous:
+    # A ``call:`` holds no scope but itself.
+    return inner.depth == outer.depth
+  # The scopes at ``outer``'s path below its depth are ``outer``'s own (a
+  # sibling answering to the same word would be a duplicate subcommand).
+  inner.depth >= outer.depth
+
+proc checkRetired[C, P](model: CliModel[C, P]) =
+  ## The rules of ``retired`` statements that need the whole tree: a
+  ## retired flag applies to its command and every command nested in it, so
+  ## none of them may accept it or retire it again; a retired word needs
+  ## its command to expect a subcommand word that nothing else takes.
+  var scopes = @[model.root]
+  scopes.add(model.commands)
+  proc label(c: CliCommand[C, P]): string =
+    if c.anonymous:
+      "the call: of " & cliCommandLabel(c.path, c.path.len == 0)
+    else:
+      cliCommandLabel(c.path, c.depth == 0)
+  for owner in scopes:
+    for r in owner.retired:
+      let at = nodeAt(r.sourceFile, r.sourceLine)
+      if cliRetiredIsFlag(r):
+        let name = cliRetiredFlagParts(r).name
+        for scope in scopes:
+          # A ``call:``'s flags are also read where its holder expects a
+          # subcommand word, so its retired flags apply there too.
+          let holder = owner.anonymous and scope.path == owner.path and
+            scope.depth == owner.depth - 1 and not scope.anonymous
+          if not nestedIn(scope, owner) and not holder:
+            continue
+          let taken = retiredFlagCollides(model, name, scope.params)
+          if taken.len > 0:
+            error("clispec: " & label(owner) & ": retired '" & r.spelling &
+              "' is a spelling of flag '" & taken & "' in " & label(scope) &
+              "; a retired spelling must be one no command it applies " &
+              "to accepts", at)
+          if scope.depth > owner.depth:
+            for other in scope.retired:
+              if other.spelling == r.spelling:
+                error("clispec: " & label(scope) & ": retired '" &
+                  r.spelling & "' is already declared by " & label(owner) &
+                  ", whose retired flags apply to every command nested " &
+                  "in it", nodeAt(other.sourceFile, other.sourceLine))
+        continue
+      # A subcommand word: where the command expects one, unclaimed.
+      var children: seq[CliCommand[C, P]] = @[]
+      var call = -1
+      for k, c in model.commands:
+        if c.depth != owner.depth + 1:
+          continue
+        if c.anonymous and c.path == owner.path:
+          call = k
+        elif not c.anonymous and c.path.len == owner.path.len + 1 and
+            c.path[0 ..< owner.path.len] == owner.path:
+          children.add(c)
+      if owner.anonymous or children.len == 0:
+        error("clispec: " & label(owner) & ": retired word '" & r.spelling &
+          "' needs a command with subcommands, where a subcommand word is " &
+          "expected", at)
+      if call >= 0:
+        for p in model.commands[call].params:
+          if p.kind == cpkPositional and csCli in p.sources:
+            error("clispec: " & label(owner) & ": retired word '" &
+              r.spelling & "' would be read as positional '" & p.name &
+              "' of its call:, so it could never be refused", at)
+      let mode = model.commandMatching
+      for c in children:
+        for word in @[c.name] & c.aliases:
+          if cliSameSpelling(mode, r.spelling, word) or
+              r.spelling == word:
+            error("clispec: " & label(owner) & ": retired word '" &
+              r.spelling & "' is a word of " & label(c), at)
+      for (rule, reserved) in [(cprHelpWord, "help"),
+                               (cprVersionWord, "version")]:
+        if rule in model.parseRules and
+            cliSameSpelling(mode, r.spelling, reserved):
+          error("clispec: " & label(owner) & ": retired word '" &
+            r.spelling & "' asks for the " & reserved & " under parsing " &
+            $rule & ", so it could never be refused", at)
 
 proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
   ## Parses a whole ``cli:`` body. ``rootExt`` is the root command's
@@ -1690,6 +1886,7 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
       "modes or drop the rule", exactLettersNode)
   result.root = parseCliScope[C, P](body, @[], true, root, body,
     result.commands, result.groups, cliNamingOf(result))
+  checkRetired(result)
   # A heading lists parameters or subcommands, never both: on one page the
   # two kinds of rows would come under two headings of the same title.
   for group in result.groups:

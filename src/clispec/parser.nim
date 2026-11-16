@@ -553,6 +553,76 @@ func cliFlagSuggestions*(g: CliGrammar; command: int; word: string;
       candidates.add((dashless(spelling), spelling, spelling))
   cliSuggest(typed, candidates)
 
+func retiredFlagMatches(g: CliGrammar; name, spelling: string;
+                        byLetter: bool): bool =
+  ## Whether the unknown flag ``spelling`` (as an error carries it: the
+  ## flag name alone, or the whole word for a single-dash one) is the
+  ## retired flag ``name``. With ``byLetter``, a one-letter ``-x`` matches
+  ## a longer word that starts with it instead (``-xvalue``, ``-xv``): such
+  ## a word is refused at its first letter, which is the retired one.
+  if not byLetter:
+    for mode in matchModes(g):
+      if sameFlagSpelling(g, mode, spelling, name):
+        return true
+    return false
+  if name.len == 2 and name[0] == '-' and name[1] != '-' and
+      spelling.len > 2 and spelling[0] == '-' and spelling[1] != '-':
+    let mode = if cprExactOneLetterFlags in g.parseRules: cfmExact
+               else: g.flagMatching
+    return cliSameLetter(mode, spelling[1], name[1])
+  false
+
+func cliRetiredMatch*(g: CliGrammar; command: int; kind: CliErrorKind;
+                      spelling, value: string):
+    tuple[found: bool; retired: CliRetired] =
+  ## The ``retired`` declaration (``cliRetiredAt``) that an unknown flag or
+  ## subcommand word refused at ``command`` is, if any. ``spelling`` and
+  ## ``value`` are the error's (``CliUsageError``). A flag retired with one
+  ## of its values (``--mode=legacy``) matches only that value written in
+  ## the same word, and is preferred to the flag retired alone; flags are
+  ## compared as the parser compares them (``flagMatching``), words under
+  ## ``commandMatching``, values exactly.
+  if kind notin {cekUnknownFlag, cekUnknownSubcommand} or spelling.len == 0:
+    return
+  let applying = cliRetiredAt(g, command)
+  if kind == cekUnknownSubcommand:
+    for a in applying:
+      let r = a.retired
+      if not cliRetiredIsFlag(r) and (r.spelling == spelling or
+          cliSameSpelling(g.commandMatching, spelling, r.spelling)):
+        return (true, r)
+    return
+  # Most specific first: a flag retired with this value, then the flag
+  # retired alone, then a retired letter that starts the word.
+  for (withValue, byLetter) in [(true, false), (false, false),
+                                (false, true)]:
+    for a in applying:
+      let r = a.retired
+      if not cliRetiredIsFlag(r):
+        continue
+      let parts = cliRetiredFlagParts(r)
+      if parts.hasValue != withValue:
+        continue
+      if withValue and parts.value != value:
+        continue
+      if retiredFlagMatches(g, parts.name, spelling, byLetter):
+        return (true, r)
+
+func cliNameRetired*(e: ref CliUsageError; g: CliGrammar; command: int) =
+  ## When ``e``, an unknown flag or subcommand word refused at ``command``,
+  ## is a retired spelling (``cliRetiredMatch``): records the declaration
+  ## (``retired``, ``replacement``), words the message with the
+  ## replacement and drops the suggestions. The parser calls it for every
+  ## such error; a library that raises its own calls it too.
+  let m = cliRetiredMatch(g, command, e.kind, e.spelling, e.value)
+  if not m.found:
+    return
+  e.retired = m.retired.spelling
+  e.replacement = m.retired.replacement
+  e.suggestions = @[]
+  e.msg = cliErrorMessage(e.kind, e.program, e.commandPath, e.spelling,
+    e.value, e.expected, e.detail, e.source, e.retired, e.replacement)
+
 func cliValueSuggestions*(p: CliGrammarParam; text: string): seq[string] =
   ## What a value ``text`` outside ``p``'s closed value set may have meant:
   ## the values of the set (``cliSuggest``). Empty for an open set or a
@@ -623,6 +693,7 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
       e.suggestions = cliFlagSuggestions(g, node, spelling, options)
     else:
       discard
+    e.cliNameRetired(g, node)
     raise e
 
   proc descend() =

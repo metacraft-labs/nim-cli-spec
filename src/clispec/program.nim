@@ -127,6 +127,7 @@ proc cliHelpCommand*(g: CliGrammar; path: openArray[string];
         word, expected = cliSubcommandWords(g, result).join(", "))
       e.cliAddErrorContext(g, result)
       e.suggestions = cliSubcommandSuggestions(g, result, word)
+      e.cliNameRetired(g, result)
       raise e
     walked.add(g.commands[next].name)
     result = next

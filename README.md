@@ -203,7 +203,9 @@ and a subcommand `shadowedByWord = true` (see `helpWord` below) and
 [Command groups and tiers](#command-groups-and-tiers)), or
 its help as a `help "<text>"` statement in its body, which is also how the
 root command gets one; likewise `longHelp "<text>"`, and any number of
-`example "<command line>", help = "<text>"` statements (see [Help](#help)). `group "<title>"[, help = "<text>"]:` lists the
+`example "<command line>", help = "<text>"` statements (see [Help](#help)), and
+`retired "<spelling>", replacement = "<text>"` statements (see [Retired
+spellings](#retired-spellings)). `group "<title>"[, help = "<text>"]:` lists the
 parameters declared inside it under one heading in help; it opens no command
 and changes no scoping, and may be reopened (in another command, say) to add
 more parameters to the same heading. Around `subcmd` statements it is a
@@ -333,7 +335,8 @@ flag, on a type that is not a `seq`, together with `rest`, `repeated` or
 a `help` statement inside a `group` section (the section's help goes in
 its head), a command's `longHelp` given twice, an `example` without its
 `help`, with an empty command line, with a text that is not a string
-literal (or `&` of literals) or with another argument, `keyStyle`, `convention`, `configSchema`, `flagMatching`,
+literal (or `&` of literals) or with another argument, a `retired`
+statement that breaks the rules of [Retired spellings](#retired-spellings), `keyStyle`, `convention`, `configSchema`, `flagMatching`,
 `commandMatching` or `parsing` anywhere but directly under `cli:`, an unknown convention or one source's convention given twice,
 a `perConvention` entry for `declared` or for one convention twice, a
 `perSource` entry for a file source the description does not declare, for
@@ -869,6 +872,11 @@ wording, and every wording names the command (`'tool build'`):
 | `cekSwitchFalseValue`     | `switch '--split' of 'tool build' takes no false value (got '--split=off'); it is on when given and off when omitted`                     |
 | `cekConflictingSources`   | `conflicting values for '--jobs' of 'tool build': '4' from /etc/tool.toml:3 (layer 'system') and '8' from environment variable TOOL_JOBS` |
 
+An unknown flag or subcommand word that the description declares retired
+adds its replacement to the wording (`unknown flag '--old' for 'tool
+build' (a retired spelling; use --new)`); see [Retired
+spellings](#retired-spellings).
+
 The error also carries the offending argv index, the spelling, the value,
 what was expected and `exitCode`, the program's declared usage exit code.
 For an unknown flag written with a value (`--nope=v`, `--nope:v` under
@@ -954,6 +962,109 @@ Usage: pkg build [options]
 
 For more information, try 'pkg build --help'.
 """
+```
+
+### Retired spellings
+
+When a flag or a subcommand is renamed, the old spelling should stop
+working: a script that still passes it is out of date, and accepting it
+with a warning hides that. It should also not leave the user guessing what
+to type instead. A command declares each spelling it no longer accepts and
+what replaced it:
+
+```text
+retired "<spelling>", replacement = "<text>"
+```
+
+The spelling is a flag when it starts with `-` (`--old-name`, `-o`, or one
+value of a flag, `--report=none`) and otherwise a subcommand word
+(`checkout`). The parser still refuses it exactly as it refuses any
+spelling it does not know: the same `cekUnknownFlag` or
+`cekUnknownSubcommand`, the same exit code, and nothing of it is accepted.
+What changes is the error: its message names the replacement after the
+command, its `retired` field holds the declaration that matched and its
+`replacement` field the replacement, and it carries no suggestions (the
+replacement is what the user meant).
+
+- **Where it applies.** A retired flag applies to the command that
+  declares it and to every command nested in it, wherever in the body the
+  statement is written; one declared in a `call:` applies where the
+  `call:`'s holder reads flags too. A retired subcommand word applies only
+  where its command expects a subcommand word.
+- **Values.** `--report=none` matches only `--report=none` (or
+  `--report:none` under `colonValues`), and is preferred to a `--report`
+  retired alone, which matches the flag with any value or none. Only a
+  flag that is itself gone is retired this way: one value of a live flag
+  is an invalid value, not an unknown flag. A one-letter `-t` also
+  matches a word it starts (`-t4`). When the declaration that matched is
+  not the spelling itself, the message quotes it (`unknown flag
+  '--report' for 'tool build' ('--report=none' is a retired spelling; use
+  --measure=none)`).
+- **Matching** follows `flagMatching` for flags and `commandMatching` for
+  words, as for live spellings.
+- **Never offered.** A retired spelling is not listed by help, not offered
+  by completion and never suggested for a mistyped word. The
+  machine-readable help lists the ones that apply at a command in a
+  `retired` list of their own (see [The machine-readable
+  form](#the-machine-readable-form)), never among its `parameters` or
+  `commands`.
+- **Declaration errors.** A retired flag that a command it applies to
+  accepts (one of its flags' spellings, aliases, shorts or `--no-` forms,
+  compared under `flagMatching`; for `--report=none`, the flag
+  `--report`), a retired word that a subcommand answers to or that asks
+  for help or the version there, a retired word on a command without
+  subcommands or on one whose `call:` takes positional words (the word
+  would be one of them), a spelling declared twice where it applies, a
+  missing or empty `replacement`, a malformed spelling and a `retired`
+  statement inside a `group` section are compile errors.
+
+```nim
+import std/strutils
+import clispec
+
+cliProgram(Vcs, "vcs"):
+  convention cli = kebabCase
+  flag jobs is int, default = 1
+  retired "--threads", replacement = "--jobs"
+  subcmd "switch", help = "Switch to a branch":
+    pos branch is string
+  subcmd "log", help = "Show history":
+    flag format is string, default = "short"
+    retired "--pretty=oneline", replacement = "--format=short"
+    retired "--pretty", replacement = "--format"
+  retired "checkout", replacement = "vcs switch <branch>"
+
+proc errorOf(argv: seq[string]): ref CliUsageError =
+  try:
+    discard Vcs.load(argv)
+  except CliUsageError as e:
+    return e
+
+let word = errorOf(@["checkout", "main"])
+assert word.kind == cekUnknownSubcommand
+assert word.exitCode == 2
+assert word.retired == "checkout"
+assert word.replacement == "vcs switch <branch>"
+assert word.msg == "unknown subcommand 'checkout' for 'vcs' (a retired " &
+  "spelling; use vcs switch <branch>); expected one of: switch, log"
+
+# A root flag is retired in every subcommand too.
+let flag = errorOf(@["log", "--threads", "2"])
+assert flag.kind == cekUnknownFlag
+assert flag.msg == "unknown flag '--threads' for 'vcs log' (a retired " &
+  "spelling; use --jobs)"
+
+# One value of a retired flag is preferred to the flag alone.
+let oneline = errorOf(@["log", "--pretty=oneline"])
+assert oneline.retired == "--pretty=oneline"
+assert oneline.msg == "unknown flag '--pretty' for 'vcs log' " &
+  "('--pretty=oneline' is a retired spelling; use --format=short)"
+assert errorOf(@["log", "--pretty=full"]).replacement == "--format"
+
+# Never offered, never suggested.
+assert "checkout" notin Vcs.helpText()
+assert "--threads" notin Vcs.helpText(@["log"], long = true)
+assert errorOf(@["chekout"]).suggestions.len == 0
 ```
 
 ### Help
@@ -1065,8 +1176,9 @@ in declaration order, on both pages, and they are not inherited.
 `longHelp "<text>"` in the body, or `longHelp = "<text>"` in the head
 (`subcmd "build", longHelp = "...":`), gives a command its long
 description. Both take string literals or `&` of literals. A consumer
-whose extension already claims statements named `example` or `longHelp`
-keeps them: those two statements are offered to the extension first.
+whose extension already claims statements named `example`, `longHelp` or
+`retired` keeps them: those three statements are offered to the extension
+first.
 
 `CliHelpLayout` chooses and lays out the page. Its `style` is
 `chsStandard`, the page above, or `chsClassic`, the layout clispec printed
@@ -1290,7 +1402,11 @@ COMMAND   = {"name", "path", "aliases", "help", "longHelp", "visibility",
                (both on every command, when the program declares a command
                group or a secondary subcommand), "usage",
              "examples": [{"command", "help"}, ...],
-             "parameters": [PARAMETER, ...], "commands": [COMMAND, ...]}
+             "parameters": [PARAMETER, ...],
+             "retired": [{"spelling", "kind": "flag" | "subcommand",
+                          "replacement", "declaredIn"}, ...]
+               (only where a retired spelling applies),
+             "commands": [COMMAND, ...]}
 PARAMETER = {"name", "kind": "flag" | "positional", "spellings",
              "negation": string | null, "value": "none" | "required" | "optional",
              "format": "separate" | "equals" | "concat",
@@ -1315,6 +1431,11 @@ when the set is open; `valueName` is the value's type name and
 `spellings` and `negation` are spelt in the command line's convention;
 `configKeys` gives the parameter's key in every file source (`{}` when no file
 may supply it), and `conventions` the convention of every source.
+
+`retired` lists the retired spellings that apply at the command (its own,
+the retired flags of the commands that enclose it, and its `call:`'s),
+nearest declaration first, each with the path of the command that declares
+it; a tool reads it to explain a refusal, never to offer a spelling.
 
 `commands` nests the listed subcommands recursively, of both tiers, and
 the listing rules above decide what appears, with one difference: the
@@ -1407,6 +1528,7 @@ ignoreStyle` what was typed is compared in that mode and the declared
   no subcommand.
 - `hidden` items and `internal` parameters are never offered; an `internal`
   subcommand only inside the command that holds it, never at the root.
+  Nor is a [retired spelling](#retired-spellings).
 
 A completer is a `CliCompleter`, `proc (ctx: CliCompletionContext):
 seq[CliCompletion]` (a plain proc of that signature, or any expression of that

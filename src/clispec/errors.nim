@@ -69,6 +69,22 @@
 ## ``internal`` parameter are never offered, an ``internal`` subcommand only
 ## inside the command that holds it. Nothing is accepted by prefix and
 ## nothing prompts.
+##
+## Retired spellings
+## =================
+##
+## A description can declare a spelling it no longer accepts and what
+## replaced it (``retired "--old", replacement = "--new"``). Such a spelling
+## is still unknown: the error has the same kind (``cekUnknownFlag``, or
+## ``cekUnknownSubcommand`` for a word), the same exit code, and nothing of
+## it is accepted. The error then also carries the declaration that matched
+## (``retired``) and its ``replacement``, the message names it after the
+## command (``unknown flag '--old' for 'tool build' (a retired spelling;
+## use --new)``, or ``unknown flag '--mode' for 'tool build'
+## ('--mode=legacy' is a retired spelling; use --compat)`` when the
+## declaration is not the spelling itself), and it has no ``suggestions``: the replacement is what
+## the user meant, and an edit-distance guess beside it could only
+## contradict it. A retired spelling is never itself a suggestion.
 
 import std/strutils
 
@@ -159,6 +175,14 @@ type
       ## off, or the error was made without its grammar).
     color*: CliColorMode
       ## The program's ``CliOptions.color``, for ``cliPrintError``.
+    retired*: string
+      ## For an unknown flag or subcommand word the description declares
+      ## retired, the declared spelling that matched (``--old``, or
+      ## ``--mode=legacy`` when one value of a flag was retired,
+      ## ``checkout``); empty otherwise.
+    replacement*: string
+      ## That declaration's replacement (``--new``), which the message
+      ## names; empty when ``retired`` is.
 
   CliHelpRender* = proc (width: int; styled: bool): string {.closure,
       gcsafe, raises: [].}
@@ -216,18 +240,36 @@ func cliCommandDisplay*(program: string; path: openArray[string]): string =
   if words.len == 0: "the root command"
   else: "'" & words.join(" ") & "'"
 
+func cliRetiredNote*(spelling, retired, replacement: string): string =
+  ## What an unknown spelling's message adds after the command when the
+  ## spelling is retired: `` (a retired spelling; use <replacement>)``, or,
+  ## when the declaration that matched is not the spelling itself (a flag
+  ## retired with one value, ``--mode=legacy``, or a retired letter that
+  ## starts the word), `` ('<retired>' is a retired spelling; use
+  ## <replacement>)``. Empty when ``replacement`` is.
+  if replacement.len == 0: ""
+  elif retired.len == 0 or retired == spelling:
+    " (a retired spelling; use " & replacement & ")"
+  else:
+    " ('" & retired & "' is a retired spelling; use " & replacement & ")"
+
 func cliErrorMessage*(kind: CliErrorKind; program: string;
                       path: openArray[string]; spelling, value, expected,
-                      detail: string; source = ""): string =
+                      detail: string; source = ""; retired = "";
+                      replacement = ""): string =
   ## The one wording of each kind of usage error. Every wording names the
   ## command; an invalid value that did not come from the command line also
-  ## names where it came from (`` (from <source>)``).
+  ## names where it came from (`` (from <source>)``), and an unknown flag
+  ## or subcommand word that is a retired spelling (``retired``) names its
+  ## ``replacement`` (``cliRetiredNote``).
   let command = cliCommandDisplay(program, path)
   case kind
   of cekUnknownFlag:
-    "unknown flag '" & spelling & "' for " & command
+    "unknown flag '" & spelling & "' for " & command &
+      cliRetiredNote(spelling, retired, replacement)
   of cekUnknownSubcommand:
     "unknown subcommand '" & spelling & "' for " & command &
+      cliRetiredNote(spelling, retired, replacement) &
       "; expected one of: " & expected
   of cekMissingSubcommand:
     command & " needs a subcommand; expected one of: " & expected
@@ -252,14 +294,15 @@ proc newCliUsageError*(kind: CliErrorKind; program: string;
                        path: seq[string]; argvIndex: int; spelling: string;
                        value = ""; expected = ""; detail = "";
                        exitCode = DefaultUsageExitCode;
-                       source = ""): ref CliUsageError =
+                       source = ""; retired = "";
+                       replacement = ""): ref CliUsageError =
   ## A usage error with its message filled in from the other fields.
   result = (ref CliUsageError)(kind: kind, program: program,
     commandPath: path, argvIndex: argvIndex, spelling: spelling,
     value: value, expected: expected, detail: detail, source: source,
-    exitCode: exitCode)
+    exitCode: exitCode, retired: retired, replacement: replacement)
   result.msg = cliErrorMessage(kind, program, path, spelling, value,
-    expected, detail, source)
+    expected, detail, source, retired, replacement)
 
 func cliEditDistance*(a, b: string): int =
   ## The Damerau–Levenshtein distance between ``a`` and ``b``: the fewest

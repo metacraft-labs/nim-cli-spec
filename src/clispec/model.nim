@@ -125,7 +125,7 @@
 ## source's own, then ``key``), then the override for the source's
 ## convention, then the conversion (``cliSpelling``, ``cliSourceKey``).
 
-from std/strutils import cmpIgnoreCase, cmpIgnoreStyle
+from std/strutils import cmpIgnoreCase, cmpIgnoreStyle, find, startsWith
 
 type
   CliParamKind* = enum
@@ -378,6 +378,21 @@ type
     command*: string
     help*: string
 
+  CliRetired* = object
+    ## A ``retired "<spelling>", replacement = "<text>"`` statement of a
+    ## command: a spelling the program no longer accepts, and what replaced
+    ## it. The spelling stays unknown to the parser; the error that refuses
+    ## it names the replacement (``CliUsageError.replacement``).
+    spelling*: string
+      ## As declared: a flag (``--old-name``, ``--mode=legacy`` for one
+      ## value of a flag, ``-o``) when it starts with ``-``, else a
+      ## subcommand word (``checkout``).
+    replacement*: string
+      ## What to use instead, as the error shows it
+      ## (``--new-name``, ``tool switch <branch>``).
+    sourceFile*: string
+    sourceLine*: int
+
   NoCliExtension* = object
     ## The empty extension: a model that carries nothing beyond what the
     ## library itself knows.
@@ -543,6 +558,12 @@ type
     examples*: seq[CliExample]
       ## The scope's ``example`` statements, in declaration order. Not
       ## inherited.
+    retired*: seq[CliRetired]
+      ## The scope's ``retired`` statements, in declaration order. Only the
+      ## scope's own: a retired flag also applies to every command nested
+      ## in the scope, which the grammar resolves (``cliRetiredAt``); a
+      ## retired subcommand word applies where the scope expects a
+      ## subcommand word.
     aliases*: seq[string]
       ## ``subcmd "<name>", aliases = ["<other>", ...]:``: further accepted
       ## spellings of the subcommand word.
@@ -620,6 +641,20 @@ type
   PlainCliParam* = CliParam[NoCliExtension]
   PlainCliCommand* = CliCommand[NoCliExtension, NoCliExtension]
   PlainCliModel* = CliModel[NoCliExtension, NoCliExtension]
+
+func cliRetiredIsFlag*(r: CliRetired): bool =
+  ## Whether a retired spelling is a flag (it starts with ``-``) rather than
+  ## a subcommand word.
+  r.spelling.len > 0 and r.spelling[0] == '-'
+
+func cliRetiredFlagParts*(r: CliRetired):
+    tuple[name: string; hasValue: bool; value: string] =
+  ## A retired flag split at its first ``=``: ``--mode=legacy`` is the flag
+  ## ``--mode`` with the value ``legacy``; ``--old`` has no value. Only a
+  ## ``--`` spelling carries a value.
+  let eq = if r.spelling.startsWith("--"): r.spelling.find('=') else: -1
+  if eq < 0: (r.spelling, false, "")
+  else: (r.spelling[0 ..< eq], true, r.spelling[eq + 1 .. ^1])
 
 func isSet*(e: CliExpr): bool =
   ## Whether the expression was given.

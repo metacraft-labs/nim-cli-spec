@@ -74,6 +74,7 @@ const clispecTests = [
   ClispecTest(source: "tests/test_cs_m6_after_separator.nim"),
   ClispecTest(source: "tests/test_tiered_grouped_subcommand_help.nim",
     runsCompiler: true),
+  ClispecTest(source: "tests/test_retired_spellings.nim"),
   ClispecTest(source: "tests/test_suite_lists_agree.nim"),
   ClispecTest(source: "tests/e2e_cs_m5_real_shell_completion.nim",
     runsCompiler: true, realShells: true),

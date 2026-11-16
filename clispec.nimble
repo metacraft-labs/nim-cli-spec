@@ -35,6 +35,7 @@ task test, "Run the test suite":
             "test_type_check_nodes_carry_written_position",
             "test_cs_m6_after_separator",
             "test_tiered_grouped_subcommand_help",
+            "test_retired_spellings",
             "test_suite_lists_agree"]:
     exec "nim c -r --hints:off tests/" & t & ".nim"
 
