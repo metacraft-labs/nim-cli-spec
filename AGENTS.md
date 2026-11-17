@@ -47,6 +47,10 @@ library.
   `cliMerge`, `cliDecide`) plus the conversion helpers generated code calls.
   A library that adds sources replaces `cliMerge` with its own and fills the
   same `CliResolution`.
+- `src/clispec/render.nim`: a parsed command line written back to argv
+  words (`cliArgvOf`, `cliRenderParams`; the generated
+  `Tool.canonicalArgv`): canonical spellings, `--` where a positional
+  needs it, and the words that parse back to the same values.
 - `src/clispec/candidates.nim`: candidates, the values a source supplies for
   a parameter (the command line's with their argv index and spelling).
 - `src/clispec/values.nim`: text to typed values (`parseCliValue`).

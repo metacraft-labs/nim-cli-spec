@@ -39,6 +39,7 @@ task test, "Run the test suite":
             "test_cs_m6_after_separator",
             "test_tiered_grouped_subcommand_help",
             "test_retired_spellings",
+            "test_cs_m6_render_argv",
             "test_suite_lists_agree"]:
     exec "nim c -r --hints:off tests/" & t & ".nim"
 

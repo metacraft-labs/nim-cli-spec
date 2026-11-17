@@ -14,6 +14,6 @@
 ## instantiated over a clispec description, adds them as sources and
 ## delegates the command line to this library.
 import clispec/[model, dsl, errors, values, grammar, help, parser, program,
-  candidates, completers, completion, completion_scripts, styles]
+  candidates, completers, completion, completion_scripts, styles, render]
 export model, dsl, errors, values, grammar, help, parser, program, candidates,
-  completers, completion, completion_scripts, styles
+  completers, completion, completion_scripts, styles, render

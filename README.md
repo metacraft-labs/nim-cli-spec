@@ -473,6 +473,7 @@ Generated for `Tool` (exported when written
 | `Tool.complete(words, cursor = -1)`                                                | the completion candidates for `words[cursor]` (the last word by default)                                                                              |
 | `Tool.completionScript(shell)` / `Tool.completionReply(args)`                      | a shell's completion script; the answer to a script's request                                                                                         |
 | `Tool.cliGrammar` / `Tool.cliModel`                                                | the parser's tables and the model, both constants                                                                                                     |
+| `Tool.canonicalArgv(argv, only = [], group = "", commandWords = true)`             | `argv` written back in canonical form, or just the parameters `only` names (see [Writing a command line back](#writing-a-command-line-back))          |
 
 `CliOptions` sets the program name used in messages, the exit code of usage
 errors (`usageExitCode`, 2 when not set), `disableHelpFlag`, the word
@@ -524,6 +525,95 @@ included, into `CliProgramArgs`).
   at most one list positional per command and no subcommands inside a
   `call:`.
 - `hidden` and `internal` items are accepted like any other.
+
+### Writing a command line back
+
+A program sometimes hands part of its command line to another one: a `test`
+command that runs a `build` passes on the build flags it was given, and a
+front end that re-executes itself elsewhere passes on what it parsed.
+Copying the original words does not work once only some parameters travel
+(a value may be the next word, short flags cluster, a value can look like a
+flag), and writing them by hand repeats the grammar. `cliArgvOf`
+(`clispec/render`) writes them from the grammar and the occurrences the
+parser recorded, and the generated `Tool.canonicalArgv` does it for a
+command line:
+
+```nim
+import clispec
+
+cliProgram(Tool, "tool"):
+  boolFlag verbose is bool, short = 'v', negatable = true
+  flag log is string, default = "info"
+  flag variant is seq[string]
+  boolFlag release is bool, alsoSets = [variant = "buildType=release"]
+  flag jobs is int, default = 1, implies = [verbose = true]
+  subcmd "build", aliases = ["b"]:
+    flag workers is int, short = 'j', default = 4
+    pos targets is seq[string], required = false
+    pos command is seq[string], required = false, afterSeparator = true
+
+let argv = @["-v", "b", "-j8", "--log", "--x", "--release", "app", "--",
+  "make", "-k"]
+let words = Tool.canonicalArgv(argv)
+assert words == @["build", "--verbose", "--workers=8", "--log=--x",
+  "--release", "app", "--", "make", "-k"]
+assert $Tool.load(words) == $Tool.load(argv)
+
+# Some parameters only, without the subcommand words: what a command that
+# shares these flags with another passes on.
+assert Tool.canonicalArgv(argv, only = ["log", "release", "variant"],
+  commandWords = false) == @["--log=--x", "--release"]
+
+# A value an implication or a default gave is not the command line's.
+assert Tool.canonicalArgv(@["--jobs=2", "build"]) == @["build", "--jobs=2"]
+```
+
+The words parse, with the same description, to the same values, and each
+value they supply comes from the command line again; parsed together with
+the same environment and configuration files (confutils), they give the
+same configuration. A value that came from anywhere else (a default, an
+`implies`, an environment variable, a file) is never written, because the
+parser reading the words supplies it again. The spellings:
+
+- every flag in its long spelling, `--<name>`, whatever spelling was used
+  (`-j8`, an alias, a cluster); `hidden` and `internal` flags like any
+  other; a `retired` spelling never, since the parser refuses it;
+- a value attached, `--name=value`, so a value that starts with `-`, is
+  `--` or is empty stays that flag's value (under `parsing
+  equalsTakesNext`, an empty value of a `format = separate` flag is written
+  as two words, `--name` and the empty word);
+- a switch as `--name` or `--no-name` (`--name=false` when it is not
+  negatable), a counted flag once per occurrence, an `optionalValue` flag
+  bare or with `=value`, a list one word per occurrence in order;
+- a value another flag's `alsoSets` gave as that flag, at its position,
+  when that flag is selected, else as the parameter's own value;
+- the subcommand words (canonical names; an alias where `parsing helpWord`
+  or `versionWord` would read the name as a request), then the flags in the
+  order they were given, then the positionals in position order, and the
+  words of an `afterSeparator` positional last, after `--`, exactly as
+  they were;
+- `--` before the positionals when one would otherwise be read as
+  something else (a word that starts with `-`; beside a `call:`, a
+  subcommand word), and after a flag that would take the next word as its
+  value (a bare `acceptsNextWord` flag); where `--` would start an
+  `afterSeparator` positional instead, a flag that can move without
+  changing a value is written after that flag, or else the flags follow
+  the positionals.
+
+`only` names parameters by their declared names (compared as Nim compares
+identifiers) and `group` selects a parameter group; a name the parsed
+command does not hold is skipped, so the flags of one command select the
+same flags of another, while a name no parameter has, or a group with no
+parameters, raises `ValueError`. Two things a selection cannot keep:
+positionals are positional, so select a command's positionals together; and
+a flag whose `alsoSets` gives another parameter a value brings that value
+when the words are read back, selected or not. The words are written from
+the occurrences the parser recorded, not from values, so a configuration
+built or changed in code has no command line to write.
+`cliArgvOf(g, selected, given, params)` is the same over candidates a caller holds (confutils'
+origin object records them for every value; see
+[Configuration files, the environment and origins](#configuration-files-the-environment-and-origins)),
+with `cliRenderParams` for the selection.
 
 ### Command lines from confutils' type-based loader
 
@@ -1819,6 +1909,11 @@ generates everything `cliProgram` does, and adds
   value where it came from (a file's path, line and key, a variable, or the
   argv index and spelling clispec's parser recorded) and every value it
   overrode;
+- `argvOf(origins, only, group, commandWords)` over any command's origin
+  object: the command-line part of the configuration, written back as
+  `canonicalArgv` writes a command line (see
+  [Writing a command line back](#writing-a-command-line-back)), with no
+  value an environment variable, a file, a default or an implication gave;
 - configuration files read through a small format interface, TOML first,
   validated against a schema generated from the description: the
   `configSchema` identifier, the keys as each source's naming convention

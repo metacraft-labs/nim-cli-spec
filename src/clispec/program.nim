@@ -81,6 +81,10 @@
 ##   ``clispec/completion`` and ``clispec/completion_scripts``.
 ## * ``Tool.cliGrammar`` is the grammar and ``Tool.cliModel`` the model, both
 ##   constants.
+## * ``Tool.canonicalArgv(argv, only, group, commandWords)`` parses ``argv``
+##   and writes it back in canonical form (``clispec/render``): the words
+##   that give the selected parameters the values ``argv`` gave them, each
+##   flag in its long spelling, which ``load`` parses to the same values.
 ##
 ## A consumer whose model carries an extension generates the same code from
 ## its own macro with ``cliProgramCode``.
@@ -130,9 +134,9 @@
 import std/[macros, os, strutils]
 
 import ./[model, dsl, grammar, parser, help, completion, completion_scripts,
-  styles]
+  styles, render]
 
-export parser, help, grammar, completion, completion_scripts
+export parser, help, grammar, completion, completion_scripts, render
 
 proc cliCommandLineParams*(): seq[string] =
   ## The process's own arguments, without the program name.
@@ -726,6 +730,7 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
   let completeName = exportedName("complete", exported)
   let completionReplyName = exportedName("completionReply", exported)
   let completionScriptName = exportedName("completionScript", exported)
+  let canonicalArgvName = exportedName("canonicalArgv", exported)
   let modelConst = genSym(nskConst, typeName & "Model")
   result.add(nnkConstSection.newTree(nnkConstDef.newTree(modelConst,
     newEmptyNode(), cliModelValue(model))))
@@ -762,6 +767,21 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
         raises: [CliUsageError, CliHelpRequest].} =
       ## Parses the process's own arguments.
       `loadName`(t, cliCommandLineParams(), options)
+
+    proc `canonicalArgvName`(t: typedesc[`T`]; argv: openArray[string];
+                             only: openArray[string] = []; group = "";
+                             commandWords = true; options = CliOptions()):
+        seq[string] {.raises: [CliUsageError, CliHelpRequest, ValueError].} =
+      ## ``argv`` parsed and written back in canonical form
+      ## (``cliArgvOf``): the words that give the parameters ``only`` names
+      ## (every one when empty), or those of the parameter group ``group``,
+      ## the values ``argv`` gave them, each in its declared long spelling.
+      ## Parsed by ``load``, they give those parameters the same values,
+      ## each from the command line. Without ``commandWords``, the
+      ## subcommand words are left out.
+      let opts = cliWithValueCheck(options, `valueCheck`)
+      let r = cliResolve(`gc`, argv, opts, `colorConst`)
+      cliArgvOf(`gc`, r, only, group, commandWords, opts)
 
     proc `printHelpName`(t: typedesc[`T`]; e: ref CliHelpRequest;
                          stream = stdout) {.raises: [IOError].} =
