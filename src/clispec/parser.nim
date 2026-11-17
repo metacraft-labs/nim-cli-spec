@@ -104,6 +104,22 @@
 ## the flag), which the merge orders with that parameter's own. The rules
 ## that need to know whether a text is a valid value use
 ## ``CliOptions.valueCheck``, which the generated ``load`` supplies.
+##
+## Help requests and the colour configuration
+## ==========================================
+##
+## A ``CliHelpRequest`` carries renderers (``render``, ``renderStyled``)
+## that print its page again for the stream it goes to. They are built here,
+## so what they can draw is decided here: ``cliTokenize`` and
+## ``cliResolve`` take the colour configuration as a ``static`` parameter
+## (``config``, ``cliColorDefaults`` when not given) and are compiled for
+## it. Under ``colors = never`` the renderers render with ``CliPlainStyle``
+## and ignore the style a printer passes, so none of the styling code is in
+## the program; otherwise they render with the style the printer decided.
+## The generated ``load`` passes the program's own configuration (its
+## ``cliProgram`` parameters over the defines), and so does a library that
+## calls these phases for a program (``cliColorConfigName``). The page in
+## ``CliHelpRequest.text`` is always plain.
 
 import std/[options, strutils]
 
@@ -695,12 +711,16 @@ proc cliAcceptsWord*(g: CliGrammar; id: int; text: string;
   text in g.params[id].choices
 
 proc cliTokenize*(g: CliGrammar; argv: openArray[string];
-                  options = CliOptions()): CliTokens {.
-    raises: [CliUsageError, CliHelpRequest].} =
+                  options = CliOptions();
+                  config: static CliColorConfig = cliColorDefaults):
+    CliTokens {.raises: [CliUsageError, CliHelpRequest].} =
   ## Phase 1: reads ``argv`` (the arguments, without the program name).
   ## Raises ``CliUsageError`` for a word it cannot place and
   ## ``CliHelpRequest`` when help is asked for (``CliVersionRequest`` when
-  ## the version is).
+  ## the version is). The help request's renderers are compiled for
+  ## ``config`` (the program's colour configuration; see "Help requests and
+  ## the colour configuration" above): under ``colors = never`` they render
+  ## with ``CliPlainStyle``, so no styling code is compiled.
   let program = effectiveProgram(g, options)
   let exitCode = effectiveExitCode(options)
   var selected = @[0]
@@ -851,7 +871,8 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
         options.versionText.len > 0:
       layout.versionFlag = "Print version"
     let text = if json: cliHelpJson(g, node, program)
-               else: cliHelpText(g, node, program, layout, long, all = all)
+               else: cliHelpText(g, node, program, CliPlainStyle(), layout,
+                      long, all)
     var render: CliHelpRender = nil
     var renderStyled: CliHelpStyledRender = nil
     if not json:
@@ -860,19 +881,36 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
       # only when the program asks for colour.
       let grammar = g
       let command = node
-      let color = options.color
-      renderStyled = proc (width: int; style: CliStyle): string {.closure,
-          gcsafe, raises: [].} =
-        var l = layout
-        if l.style == chsStandard and l.width == 0:
-          l.width = width
-        let paint = if l.style == chsStandard or color == ccmAlways: style
-                    else: CliStyle()
-        cliHelpText(grammar, command, program, paint, l, long, all)
-      let styledRender = renderStyled
-      render = proc (width: int; styled: bool): string {.closure, gcsafe,
-          raises: [].} =
-        styledRender(width, cliStyleOf(styled))
+      when config.colors == ccmNever:
+        # Never styled: the plain renderer alone, whatever style a printer
+        # passes.
+        renderStyled = proc (width: int; style: CliStyle): string {.closure,
+            gcsafe, raises: [].} =
+          var l = layout
+          if l.style == chsStandard and l.width == 0:
+            l.width = width
+          cliHelpText(grammar, command, program, CliPlainStyle(), l, long,
+            all)
+        let plainRender = renderStyled
+        render = proc (width: int; styled: bool): string {.closure, gcsafe,
+            raises: [].} =
+          plainRender(width, CliStyle())
+      else:
+        let color = options.color
+        renderStyled = proc (width: int; style: CliStyle): string {.closure,
+            gcsafe, raises: [].} =
+          var l = layout
+          if l.style == chsStandard and l.width == 0:
+            l.width = width
+          if l.style == chsStandard or color == ccmAlways:
+            cliHelpText(grammar, command, program, style, l, long, all)
+          else:
+            cliHelpText(grammar, command, program, CliPlainStyle(), l, long,
+              all)
+        let styledRender = renderStyled
+        render = proc (width: int; styled: bool): string {.closure, gcsafe,
+            raises: [].} =
+          styledRender(width, cliStyleOf(styled))
     raise (ref CliHelpRequest)(msg: "help requested", commandPath: path,
       json: json, long: long, all: all, text: text, render: render,
       renderStyled: renderStyled, color: options.color,
@@ -1272,10 +1310,12 @@ proc cliDecide*(g: CliGrammar; r: var CliResolution) {.
       raise e
 
 proc cliResolve*(g: CliGrammar; argv: openArray[string];
-                 options = CliOptions()): CliResolution {.
-    raises: [CliUsageError, CliHelpRequest].} =
-  ## Phases 1 to 3, with the command line as the only source.
-  let tokens = cliTokenize(g, argv, options)
+                 options = CliOptions();
+                 config: static CliColorConfig = cliColorDefaults):
+    CliResolution {.raises: [CliUsageError, CliHelpRequest].} =
+  ## Phases 1 to 3, with the command line as the only source; a help
+  ## request's renderers are compiled for ``config`` (``cliTokenize``).
+  let tokens = cliTokenize(g, argv, options, config)
   result = cliMerge(g, tokens, options)
   cliDecide(g, result)
 

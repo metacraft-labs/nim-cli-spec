@@ -422,9 +422,9 @@ proc main(argv: seq[string]): int =
     let conf = Tool.load(argv)
     discard conf # ... run the program ...
   except CliHelpRequest as e:   # help, the version, completion requests
-    cliPrintHelp(e)             # to stdout
+    Tool.printHelp(e)           # to stdout
   except CliUsageError as e:
-    cliPrintError(e)            # to stderr
+    Tool.printError(e)          # to stderr
     return e.exitCode
 
 assert main(@["build", "--jobs", "many", "app"]) == 2
@@ -469,6 +469,7 @@ Generated for `Tool` (exported when written
 | `Tool.load(options = CliOptions())`                                                | parses the process's own arguments                                                                                                                    |
 | `Tool.helpText(path = [], layout, long, styled, all)` / `Tool.helpJson(path = [])` | the help of the command reached by the subcommand words `path` (`long`: the `--help` page; `styled`: in the `portable16` palette; `all`: `secondary` subcommands too; `Tool.helpText(path, style)` renders with a `CliStyle`, see [Colour and width](#colour-and-width)) |
 | `Tool.optionsTable(path = [], layout, group = "", long, styled)`                   | just the rows of that command's options table (see [Help](#help))                                                                                     |
+| `Tool.printHelp(e, stream = stdout)` / `Tool.printError(e, stream = stderr)`       | print a help request or a usage error as `cliPrintHelp` / `cliPrintError` do, under the program's own colour configuration (see [Colour and width](#colour-and-width)) |
 | `Tool.complete(words, cursor = -1)`                                                | the completion candidates for `words[cursor]` (the last word by default)                                                                              |
 | `Tool.completionScript(shell)` / `Tool.completionReply(args)`                      | a shell's completion script; the answer to a script's request                                                                                         |
 | `Tool.cliGrammar` / `Tool.cliModel`                                                | the parser's tables and the model, both constants                                                                                                     |
@@ -484,7 +485,9 @@ which the generated `load` fills in (a library that calls the parser itself
 passes `cliWithValueCheck(options, <the generated check>)`, as confutils
 does). A consumer
 whose model carries an extension generates the same code from its own macro
-with `cliProgramCode(model, typeName, program, exported)`.
+with `cliProgramCode(model, typeName, program, exported, colorConfig)`
+(`cliProgramArgs` reads a `cliProgram`-style call, colour parameters
+included, into `CliProgramArgs`).
 
 ### Accepted forms
 
@@ -1330,9 +1333,13 @@ assert offered == @["init", "build", "graph", "doctor"]
 
 #### Colour and width
 
+`Tool.printHelp(e, stream = stdout)` and `Tool.printError(e, stream =
+stderr)`, which `cliProgram` generates, and the library's
 `cliPrintHelp(e, stream = stdout)` and `cliPrintError(e, stream = stderr)`
 decide, for the stream they write to, whether to style the page, in which
-palette, and how wide it is. Styling never changes the text: the styled
+palette, and how wide it is; the generated ones under the program's own
+colour configuration, the library's under the build's (see *Compile-time
+knobs* below). Styling never changes the text: the styled
 page with its escape sequences removed (`cliStripStyles`) is the plain page,
 byte for byte, so colour never says anything the words do not, and the
 layout, measured on the visible text (`cliVisibleLen`), is the same.
@@ -1415,29 +1422,81 @@ overrides never turn styling on or off:
 `DEPOT_COLORS='heading=1;4:invalid=7:bg=light'`.
 
 **Compile-time knobs.** Each policy can be fixed, and each input switched
-off, for the whole build with a define. A bad value is a compile-time error
-that names the define and lists its allowed values. A knob that is off or
-fixed leaves no code behind: its variables are not read, the query is not
-compiled, and a palette that can never be chosen is not in the program.
+off, for the whole build with a define, or for one program with a parameter
+of its `cliProgram` call. A parameter applies over the define, which
+applies over the default. A bad value is a compile-time error that names
+the define or the parameter and lists its allowed values. A knob that is
+off or fixed leaves no code behind: its variables are not read, the query
+is not compiled, and a palette that can never be chosen is not in the
+program.
 
-| Define | Values | Default | When fixed or off |
-|---|---|---|---|
-| `clispec_colors` | `auto`, `always`, `never` | `auto` | `never`: nothing is styled and `CliOptions.color` is ignored; `always`: no detection (rules 2 to 6), `CliOptions.color` still applies |
-| `clispec_color_env` | on/off | on | rules 2 to 5 are gone, as is `FORCE_COLOR`'s depth |
-| `clispec_color_depth` | `auto`, `16`, `256`, `24` | `auto` | that depth; nothing is read to detect it |
-| `clispec_background` | `auto`, `dark`, `light`, `unknown` | `auto` | that background; no source is read (`unknown`: `portable16` alone) |
-| `clispec_colorfgbg` | on/off | on | `COLORFGBG` is not read |
-| `clispec_background_query` | on/off | on | no query: no terminal I/O beyond the page |
-| `clispec_user_colors` | on/off | **off** | `CLISPEC_COLORS`, `<PROGRAM>_COLORS` and their `bg=` exist only when on |
-| `clispec_palette` | entries as in the users' variables | empty | the developer's restyling, over every palette and under the users' overrides; checked when the program is built (`bg` is refused: use `clispec_background`) |
+| Define | `cliProgram` parameter | Values | Default | When fixed or off |
+|---|---|---|---|---|
+| `clispec_colors` | `colors` | `auto`, `always`, `never` | `auto` | `never`: nothing is styled, no styling or detection code is compiled, and `CliOptions.color` is ignored; `always`: no detection (rules 2 to 6), `CliOptions.color` still applies |
+| `clispec_color_env` | `colorEnv` | on/off | on | rules 2 to 5 are gone, as is `FORCE_COLOR`'s depth |
+| `clispec_color_depth` | `colorDepth` | `auto`, `16`, `256`, `24` | `auto` | that depth; nothing is read to detect it, and only its palettes are compiled |
+| `clispec_background` | `background` | `auto`, `dark`, `light`, `unknown` | `auto` | that background; no source is read, only its palettes are compiled (`unknown`: `portable16` alone, and no depth is detected) |
+| `clispec_colorfgbg` | `colorFgBg` | on/off | on | `COLORFGBG` is not read |
+| `clispec_background_query` | `backgroundQuery` | on/off | on | no query: no terminal I/O beyond the page |
+| `clispec_user_colors` | `userColors` | on/off | **off** | `CLISPEC_COLORS`, `<PROGRAM>_COLORS` and their `bg=` exist only when on |
+| `clispec_palette` | `palette` | entries as in the users' variables | empty | the developer's restyling, over every palette and under the users' overrides; checked when the program is built (`bg` is refused: use `clispec_background` / `background`) |
 
 On/off takes `on`, `yes`, `true`, `1` and `off`, `no`, `false`, `0`,
-`none`. The build's configuration is the constant `cliColorDefaults` (a
+`none`; the enum values are matched in any case. A parameter's value is a
+word, a number or a string literal:
+
+```nim
+import std/strutils
+import clispec
+
+cliProgram(Quiet, "quiet", colors = never):
+  flag level is int, short = 'l', default = 1, help = "How quiet"
+
+cliProgram(Painted, "painted", colorDepth = 24, background = dark,
+           userColors = on, palette = "heading=1;35"):
+  flag level is int, short = 'l', default = 1, help = "How painted"
+
+proc helpOf(argv: seq[string]; options = CliOptions()): ref CliHelpRequest =
+  try:
+    discard Quiet.load(argv, options)
+  except CliHelpRequest as e:
+    return e
+
+# colors = never: plain whatever the program asks for, and the binary holds
+# none of the styling code.
+let quiet = helpOf(@["-h"], CliOptions(color: ccmAlways))
+assert quiet.renderStyled(80, cliPortable16Style) == quiet.text
+assert "\e[" notin quiet.render(80, true)
+```
+
+The build's configuration is the constant `cliColorDefaults` (a
 `CliColorConfig`); `cliPrintHelp`, `cliPrintError`, `cliUseColor`,
-`cliColorStyle` and the decision procs take it as a `static` parameter
-(`config`) defaulting to it, so a call can use another configuration and is
-compiled for it. `CliOptions.color`, `colorDepth` and `background` act only
-where the configuration's policy is `auto`.
+`cliColorStyle`, the parser's `cliTokenize` and `cliResolve` and the
+decision procs take it as a `static` parameter (`config`) defaulting to it,
+so a call can use another configuration and is compiled for it. A program's
+own configuration (its parameters over the defines) is the constant whose
+name `cliColorConfigName` gives; its `load`, `printHelp` and `printError`
+pass it. `CliOptions.color`, `colorDepth` and `background` act only where
+the configuration's policy is `auto`.
+
+**What shrinks.** A configuration acts where it is compiled in, so a
+program that prints only through its generated `printHelp` and `printError`
+carries only the code its own configuration needs: the parser builds a help
+request's renderers for the configuration `load` passes it, and the
+renderers of help and errors have an overload for `CliStyle` and one for
+`CliPlainStyle`. Under `colors = never` only the latter is called, and it
+compiles none of the styling helpers, no palette and no detection: the
+binary holds no `ESC[` sequence and no colour variable's name. `colorEnv = off` removes
+`NO_COLOR`, `FORCE_COLOR`, `CLICOLOR_FORCE` and `CLICOLOR`; `colorFgBg =
+off` `COLORFGBG`; `backgroundQuery = off` the query (`ESC]11;?`,
+`/dev/tty`); `userColors = off` `CLISPEC_COLORS`, `<PROGRAM>_COLORS` and
+their parser; a fixed depth `COLORTERM` and the `TERM` suffix test, and the
+other depth's palettes; `background = unknown` every tuned palette and
+every background source. `test_cs_m5c_compile_time_knobs_shrink` checks
+each of these in a `-d:release --opt:size` build and prints the sizes. A
+program that also calls the library's printers with the build's
+configuration, `cliColorStyle`, or an entry point that takes `styled:
+bool`, carries their code as well.
 
 **Width.** `COLUMNS` when it is set to a positive integer, else the
 terminal's width when the stream is a terminal, else 80; at most 100

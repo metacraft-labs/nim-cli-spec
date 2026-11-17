@@ -104,7 +104,11 @@
 ## literals (flag spellings, command names and aliases, the words of the
 ## usage line and example command lines) and the placeholders get their
 ## element's colour (``clispec/styles``); the text is otherwise the same,
-## character for character.
+## character for character. Each renderer that takes a style has an
+## overload for ``CliStyle`` and one for ``CliPlainStyle``: rendered with
+## ``CliPlainStyle`` (what a program built with ``colors = never`` renders
+## with), a page compiles none of the styling code and is the same as with
+## ``CliStyle()``.
 ##
 ## The classic layout
 ## ==================
@@ -481,49 +485,6 @@ func wrapInto(dest: var seq[string]; text: string; indent, width: int) =
 type HelpRow = tuple[left: string, right: seq[string]]
   ## One row of a table: the left column and the description's paragraphs.
 
-func styleLeft(left: string; names: bool; style: CliStyle): string =
-  ## A row's left column, styled: a list of command names, or flag
-  ## spellings and placeholders.
-  if names: cliStyleNames(left, style) else: cliStyleSpellings(left, style)
-
-func table(rows: seq[HelpRow]; layout: CliHelpLayout; style = CliStyle();
-           names = false): seq[string] =
-  ## Two columns (see ``CliHelpLayout``): by default the left one padded to
-  ## its widest entry (at most 32 characters; a longer entry puts its text
-  ## on the next line), each paragraph of the description on a line of its
-  ## own. Widths are those of the plain text; ``style`` styles the left
-  ## column (``names``: a list of command names).
-  let pad = repeat(' ', layout.indent)
-  var column = layout.column
-  if column <= 0:
-    var width = 0
-    for row in rows:
-      if row.left.len <= layout.maxLeft:
-        width = max(width, row.left.len)
-    column = layout.indent + width + 2
-  for row in rows:
-    var body: seq[string] = @[]
-    for paragraph in row.right:
-      if layout.width > 0:
-        body.wrapInto(paragraph, column, layout.width)
-      else:
-        body.add(repeat(' ', column) & paragraph)
-    let left = pad & row.left
-    let shown = pad & styleLeft(row.left, names, style)
-    let beside = if layout.column <= 0: row.left.len <= layout.maxLeft
-                 else: left.len + 1 < column
-    if body.len == 0:
-      result.add(shown)
-    elif beside:
-      result.add(shown & repeat(' ', column - left.len) &
-        body[0][column .. ^1])
-      for line in body[1 .. ^1]:
-        result.add(line)
-    else:
-      result.add(shown)
-      for line in body:
-        result.add(line)
-
 func helpFlagLeft(g: CliGrammar; command: int): string =
   ## The spellings that request help in ``command`` (``-h, --help``), for
   ## ``CliHelpLayout.helpFlag``; a spelling a flag of the command declares
@@ -606,40 +567,6 @@ func wrapText(text: string; indent, width: int): seq[string] =
   ## Prose wrapped at ``width``, each line indented ``indent`` spaces.
   for line in wrapUnits(text.splitWhitespace(), indent, width):
     result.add(repeat(' ', indent) & line)
-
-func standardTable(rows: seq[StandardRow]; layout: CliHelpLayout;
-                   width: int; style = CliStyle(); names = false):
-    seq[string] =
-  ## Two columns: the description column two spaces after the widest left
-  ## entry of at most ``maxLeft`` characters (a wider entry puts its
-  ## description on the next line); when that leaves fewer than
-  ## ``MinDescription`` columns, every description goes under its row.
-  ## Widths are those of the plain text; ``style`` styles the left column
-  ## (``names``: a list of command names).
-  let indent = layout.indent
-  var widest = 0
-  for row in rows:
-    if row.left.len <= layout.maxLeft:
-      widest = max(widest, row.left.len)
-  var column = indent + widest + 2
-  let nextLine = width - column < MinDescription
-  if nextLine:
-    column = indent + NextLineIndent
-  for row in rows:
-    var body: seq[string] = @[]
-    for paragraph in row.paragraphs:
-      if paragraph.len > 0:
-        body.add(wrapUnits(paragraph, column, width))
-    let head = repeat(' ', indent) & row.left
-    let shown = repeat(' ', indent) & styleLeft(row.left, names, style)
-    var first = 0
-    if body.len > 0 and not nextLine and row.left.len <= layout.maxLeft:
-      result.add(shown & repeat(' ', column - head.len) & body[0])
-      first = 1
-    else:
-      result.add(shown)
-    for k in first ..< body.len:
-      result.add(repeat(' ', column) & body[k])
 
 func quotedDefault(p: CliGrammarParam): string =
   ## A text default is quoted only when it is empty or holds white space.
@@ -750,162 +677,317 @@ func standardOptionRows(g: CliGrammar; holder: int; params: seq[int];
 func commandPathText(g: CliGrammar; holder: int; program: string): string =
   (@[program] & g.commands[holder].path).join(" ")
 
-func heading(text: string; style: CliStyle): string =
-  cliStyled(text, ctsHeading, style)
+template styleRenderers(S: typedesc) {.dirty.} =
+  ## The renderers that take a style, for one style type: expanded here
+  ## for ``CliStyle`` and for ``CliPlainStyle`` (``clispec/styles``), so
+  ## each is an ordinary overload whose symbols are bound in this module,
+  ## and a program that renders only with ``CliPlainStyle`` compiles none
+  ## of the styling helpers.
 
-func standardCommandSections(g: CliGrammar; children: seq[int];
-                             layout: CliHelpLayout; width: int;
-                             style: CliStyle): seq[seq[string]] =
-  ## The command sections of a page: ``Commands:`` (the subcommands in no
-  ## group), then one section per command group in the order the groups
-  ## were first declared, its help under the heading. Each section is a
-  ## table of its own, as each parameter group's is.
-  proc rowsOf(group: string): seq[StandardRow] =
-    for child in children:
-      let c = g.commands[child]
-      if c.group == group:
-        result.add(((@[c.name] & c.aliases).join(", "),
-          @[c.help.splitWhitespace()]))
-  let ungrouped = rowsOf("")
-  if ungrouped.len > 0:
-    result.add(@[heading("Commands:", style)] &
-      standardTable(ungrouped, layout, width, style, names = true))
-  for group in g.groups:
-    let rows = rowsOf(group.name)
-    if rows.len == 0:
-      continue
-    var section = @[heading(group.name & ":", style)]
-    if group.help.strip().len > 0:
-      section.add(wrapText(group.help, layout.indent, width))
-    result.add(section & standardTable(rows, layout, width, style,
-      names = true))
+  func styleLeft(left: string; names: bool; style: S): string =
+    ## A row's left column, styled: a list of command names, or flag
+    ## spellings and placeholders.
+    if names: cliStyleNames(left, style) else: cliStyleSpellings(left, style)
 
-proc standardHelpText(g: CliGrammar; command: int; program: string;
-                      layout: CliHelpLayout; long: bool; style: CliStyle;
-                      all = false): string =
-  let width = pageWidth(layout)
-  let holder = helpHolder(g, command)
-  let cmd = g.commands[holder]
-  let call = cmd.callChild
-  var blocks: seq[seq[string]] = @[]
-  var help = cmd.help
-  if help.len == 0 and call >= 0:
-    help = g.commands[call].help
-  if help.strip().len > 0:
-    blocks.add(wrapText(help, 0, width))
-  if long:
-    var longHelp = cmd.longHelp
-    if longHelp.strip().len == 0 and call >= 0:
-      longHelp = g.commands[call].longHelp
-    for line in longHelp.splitLines():
-      if line.strip().len > 0:
-        blocks.add(wrapText(line, 0, width))
-  blocks.add(@[heading("Usage:", style) & " " &
-    cliStyleUsage(cliUsageLine(g, holder, program), style)])
-  if cmd.aliases.len > 0:
-    blocks.add(@[heading("Aliases:", style) & " " &
-      cliStyleNames(cmd.aliases.join(", "), style)])
-  let children = cliHelpCommands(g, holder)
-  let shown = cliHelpCommandsOfPage(g, holder, all)
-  blocks.add(standardCommandSections(g, shown, layout, width, style))
-  let params = cliHelpParams(g, holder)
-  var positional: seq[StandardRow] = @[]
-  let target = if call >= 0: call else: holder
-  for id in cliPositionals(g, target):
-    if id in params:
-      positional.add((positionalLeft(g.params[id]),
-        standardParagraphs(g.params[id], layout, long)))
-  if positional.len > 0:
-    blocks.add(@[heading("Arguments:", style)] &
-      standardTable(positional, layout, width, style))
-  let own = standardOptionRows(g, holder, params, ssOwn, "", layout, long)
-  if own.len > 0:
-    blocks.add(@[heading("Options:", style)] &
-      standardTable(own, layout, width, style))
-  for group in g.groups:
-    let rows = standardOptionRows(g, holder, params, ssGroup, group.name,
-      layout, long)
-    if rows.len == 0:
-      continue
-    var section = @[heading(group.name & ":", style)]
-    if group.help.strip().len > 0:
-      section.add(wrapText(group.help, layout.indent, width))
-    blocks.add(section & standardTable(rows, layout, width, style))
-  let global = standardOptionRows(g, holder, params, ssGlobal, "", layout,
-    long)
-  if global.len > 0:
-    blocks.add(@[heading("Global Options:", style)] &
-      standardTable(global, layout, width, style))
-  var examples = cmd.examples
-  if call >= 0:
-    examples.add(g.commands[call].examples)
-  if examples.len > 0:
-    var section = @[heading("Examples:", style)]
-    for k, example in examples:
-      if k > 0:
-        section.add("")
-      section.add(wrapText(example.help, layout.indent, width))
-      section.add(repeat(' ', layout.indent + 2) &
-        cliStyled(example.command, ctsLiteral, style))
-    blocks.add(section)
-  let path = commandPathText(g, holder, program)
-  if shown.len < children.len:
-    # Some subcommands are ``secondary`` and this page leaves them out: say
-    # how many ``--help-all`` lists, which is every listed one. The line is
-    # wrapped at the page width like prose, but each quoted command line is
-    # one unit, never broken, and is styled once wrapped.
-    let allLine = path & " --help-all"
-    let oneLine = path & " <command> --help"
-    var units = @["Run", "'" & allLine & "'"]
-    units.add(("to list all " & $children.len &
-      (if children.len == 1: " command," else: " commands,") &
-      " or").splitWhitespace())
-    units.add("'" & oneLine & "'")
-    units.add(@["for", "details."])
-    var footer: seq[string] = @[]
-    for line in wrapUnits(units, 0, width):
-      footer.add(line.multiReplace(
-        ("'" & allLine & "'", "'" & cliStyleUsage(allLine, style) & "'"),
-        ("'" & oneLine & "'", "'" & cliStyleUsage(oneLine, style) & "'")))
-    blocks.add(footer)
-  elif children.len > 0:
-    blocks.add(@["Run '" & cliStyleUsage(path & " <command> --help",
-      style) & "' for more on a command."])
-  var lines: seq[string] = @[]
-  for k, b in blocks:
-    if k > 0:
-      lines.add("")
-    lines.add(b)
-  lines.join("\n") & "\n"
+  func table(rows: seq[HelpRow]; layout: CliHelpLayout; style: S;
+             names = false): seq[string] =
+    ## Two columns (see ``CliHelpLayout``): by default the left one padded to
+    ## its widest entry (at most 32 characters; a longer entry puts its text
+    ## on the next line), each paragraph of the description on a line of its
+    ## own. Widths are those of the plain text; ``style`` styles the left
+    ## column (``names``: a list of command names).
+    let pad = repeat(' ', layout.indent)
+    var column = layout.column
+    if column <= 0:
+      var width = 0
+      for row in rows:
+        if row.left.len <= layout.maxLeft:
+          width = max(width, row.left.len)
+      column = layout.indent + width + 2
+    for row in rows:
+      var body: seq[string] = @[]
+      for paragraph in row.right:
+        if layout.width > 0:
+          body.wrapInto(paragraph, column, layout.width)
+        else:
+          body.add(repeat(' ', column) & paragraph)
+      let left = pad & row.left
+      let shown = pad & styleLeft(row.left, names, style)
+      let beside = if layout.column <= 0: row.left.len <= layout.maxLeft
+                   else: left.len + 1 < column
+      if body.len == 0:
+        result.add(shown)
+      elif beside:
+        result.add(shown & repeat(' ', column - left.len) &
+          body[0][column .. ^1])
+        for line in body[1 .. ^1]:
+          result.add(line)
+      else:
+        result.add(shown)
+        for line in body:
+          result.add(line)
 
-proc cliOptionsTable*(g: CliGrammar; command: int; style: CliStyle;
-                      layout = cliDefaultHelpLayout; group = "";
-                      long = false): string =
-  ## Just the rows of the options table of ``command``'s help, laid out by
-  ## ``layout``: the flags of the section ``group`` (empty: the flags in no
-  ## group, under ``Options:``, followed by the help flag's row when
-  ## ``layout.helpFlag`` is set), one line per output line, each ending
-  ## with a newline. Empty when the section has no rows. In the standard
-  ## style the ungrouped section is the command's own flags (inherited ones
-  ## are its ``Global Options:``), and ``long`` selects the long page's
-  ## rows (parameters' ``longHelp``, the help row's wording); the classic
-  ## style always shows ``longHelp`` and ignores ``long``. ``style`` styles
-  ## the left column (``CliStyle()``: plain).
-  let holder = helpHolder(g, command)
-  if layout.style == chsStandard:
+  func standardTable(rows: seq[StandardRow]; layout: CliHelpLayout;
+                     width: int; style: S; names = false):
+      seq[string] =
+    ## Two columns: the description column two spaces after the widest left
+    ## entry of at most ``maxLeft`` characters (a wider entry puts its
+    ## description on the next line); when that leaves fewer than
+    ## ``MinDescription`` columns, every description goes under its row.
+    ## Widths are those of the plain text; ``style`` styles the left column
+    ## (``names``: a list of command names).
+    let indent = layout.indent
+    var widest = 0
+    for row in rows:
+      if row.left.len <= layout.maxLeft:
+        widest = max(widest, row.left.len)
+    var column = indent + widest + 2
+    let nextLine = width - column < MinDescription
+    if nextLine:
+      column = indent + NextLineIndent
+    for row in rows:
+      var body: seq[string] = @[]
+      for paragraph in row.paragraphs:
+        if paragraph.len > 0:
+          body.add(wrapUnits(paragraph, column, width))
+      let head = repeat(' ', indent) & row.left
+      let shown = repeat(' ', indent) & styleLeft(row.left, names, style)
+      var first = 0
+      if body.len > 0 and not nextLine and row.left.len <= layout.maxLeft:
+        result.add(shown & repeat(' ', column - head.len) & body[0])
+        first = 1
+      else:
+        result.add(shown)
+      for k in first ..< body.len:
+        result.add(repeat(' ', column) & body[k])
+
+  func heading(text: string; style: S): string =
+    cliStyled(text, ctsHeading, style)
+
+  func standardCommandSections(g: CliGrammar; children: seq[int];
+                               layout: CliHelpLayout; width: int;
+                               style: S): seq[seq[string]] =
+    ## The command sections of a page: ``Commands:`` (the subcommands in no
+    ## group), then one section per command group in the order the groups
+    ## were first declared, its help under the heading. Each section is a
+    ## table of its own, as each parameter group's is.
+    proc rowsOf(group: string): seq[StandardRow] =
+      for child in children:
+        let c = g.commands[child]
+        if c.group == group:
+          result.add(((@[c.name] & c.aliases).join(", "),
+            @[c.help.splitWhitespace()]))
+    let ungrouped = rowsOf("")
+    if ungrouped.len > 0:
+      result.add(@[heading("Commands:", style)] &
+        standardTable(ungrouped, layout, width, style, names = true))
+    for group in g.groups:
+      let rows = rowsOf(group.name)
+      if rows.len == 0:
+        continue
+      var section = @[heading(group.name & ":", style)]
+      if group.help.strip().len > 0:
+        section.add(wrapText(group.help, layout.indent, width))
+      result.add(section & standardTable(rows, layout, width, style,
+        names = true))
+
+  proc standardHelpText(g: CliGrammar; command: int; program: string;
+                        layout: CliHelpLayout; long: bool; style: S;
+                        all = false): string =
+    let width = pageWidth(layout)
+    let holder = helpHolder(g, command)
+    let cmd = g.commands[holder]
+    let call = cmd.callChild
+    var blocks: seq[seq[string]] = @[]
+    var help = cmd.help
+    if help.len == 0 and call >= 0:
+      help = g.commands[call].help
+    if help.strip().len > 0:
+      blocks.add(wrapText(help, 0, width))
+    if long:
+      var longHelp = cmd.longHelp
+      if longHelp.strip().len == 0 and call >= 0:
+        longHelp = g.commands[call].longHelp
+      for line in longHelp.splitLines():
+        if line.strip().len > 0:
+          blocks.add(wrapText(line, 0, width))
+    blocks.add(@[heading("Usage:", style) & " " &
+      cliStyleUsage(cliUsageLine(g, holder, program), style)])
+    if cmd.aliases.len > 0:
+      blocks.add(@[heading("Aliases:", style) & " " &
+        cliStyleNames(cmd.aliases.join(", "), style)])
+    let children = cliHelpCommands(g, holder)
+    let shown = cliHelpCommandsOfPage(g, holder, all)
+    blocks.add(standardCommandSections(g, shown, layout, width, style))
     let params = cliHelpParams(g, holder)
-    let rows = if group.len == 0:
-                 standardOptionRows(g, holder, params, ssOwn, "", layout,
-                   long)
-               else:
-                 standardOptionRows(g, holder, params, ssGroup, group,
-                   layout, long)
-    for line in standardTable(rows, layout, pageWidth(layout), style):
+    var positional: seq[StandardRow] = @[]
+    let target = if call >= 0: call else: holder
+    for id in cliPositionals(g, target):
+      if id in params:
+        positional.add((positionalLeft(g.params[id]),
+          standardParagraphs(g.params[id], layout, long)))
+    if positional.len > 0:
+      blocks.add(@[heading("Arguments:", style)] &
+        standardTable(positional, layout, width, style))
+    let own = standardOptionRows(g, holder, params, ssOwn, "", layout, long)
+    if own.len > 0:
+      blocks.add(@[heading("Options:", style)] &
+        standardTable(own, layout, width, style))
+    for group in g.groups:
+      let rows = standardOptionRows(g, holder, params, ssGroup, group.name,
+        layout, long)
+      if rows.len == 0:
+        continue
+      var section = @[heading(group.name & ":", style)]
+      if group.help.strip().len > 0:
+        section.add(wrapText(group.help, layout.indent, width))
+      blocks.add(section & standardTable(rows, layout, width, style))
+    let global = standardOptionRows(g, holder, params, ssGlobal, "", layout,
+      long)
+    if global.len > 0:
+      blocks.add(@[heading("Global Options:", style)] &
+        standardTable(global, layout, width, style))
+    var examples = cmd.examples
+    if call >= 0:
+      examples.add(g.commands[call].examples)
+    if examples.len > 0:
+      var section = @[heading("Examples:", style)]
+      for k, example in examples:
+        if k > 0:
+          section.add("")
+        section.add(wrapText(example.help, layout.indent, width))
+        section.add(repeat(' ', layout.indent + 2) &
+          cliStyled(example.command, ctsLiteral, style))
+      blocks.add(section)
+    let path = commandPathText(g, holder, program)
+    if shown.len < children.len:
+      # Some subcommands are ``secondary`` and this page leaves them out: say
+      # how many ``--help-all`` lists, which is every listed one. The line is
+      # wrapped at the page width like prose, but each quoted command line is
+      # one unit, never broken, and is styled once wrapped.
+      let allLine = path & " --help-all"
+      let oneLine = path & " <command> --help"
+      var units = @["Run", "'" & allLine & "'"]
+      units.add(("to list all " & $children.len &
+        (if children.len == 1: " command," else: " commands,") &
+        " or").splitWhitespace())
+      units.add("'" & oneLine & "'")
+      units.add(@["for", "details."])
+      var footer: seq[string] = @[]
+      for line in wrapUnits(units, 0, width):
+        footer.add(line.multiReplace(
+          ("'" & allLine & "'", "'" & cliStyleUsage(allLine, style) & "'"),
+          ("'" & oneLine & "'", "'" & cliStyleUsage(oneLine, style) & "'")))
+      blocks.add(footer)
+    elif children.len > 0:
+      blocks.add(@["Run '" & cliStyleUsage(path & " <command> --help",
+        style) & "' for more on a command."])
+    var lines: seq[string] = @[]
+    for k, b in blocks:
+      if k > 0:
+        lines.add("")
+      lines.add(b)
+    lines.join("\n") & "\n"
+
+  proc cliOptionsTable*(g: CliGrammar; command: int; style: S;
+                        layout = cliDefaultHelpLayout; group = "";
+                        long = false): string =
+    ## Just the rows of the options table of ``command``'s help, laid out by
+    ## ``layout``: the flags of the section ``group`` (empty: the flags in no
+    ## group, under ``Options:``, followed by the help flag's row when
+    ## ``layout.helpFlag`` is set), one line per output line, each ending
+    ## with a newline. Empty when the section has no rows. In the standard
+    ## style the ungrouped section is the command's own flags (inherited ones
+    ## are its ``Global Options:``), and ``long`` selects the long page's
+    ## rows (parameters' ``longHelp``, the help row's wording); the classic
+    ## style always shows ``longHelp`` and ignores ``long``. ``style`` styles
+    ## the left column (``CliStyle()`` or ``CliPlainStyle()``: plain).
+    let holder = helpHolder(g, command)
+    if layout.style == chsStandard:
+      let params = cliHelpParams(g, holder)
+      let rows = if group.len == 0:
+                   standardOptionRows(g, holder, params, ssOwn, "", layout,
+                     long)
+                 else:
+                   standardOptionRows(g, holder, params, ssGroup, group,
+                     layout, long)
+      for line in standardTable(rows, layout, pageWidth(layout), style):
+        result.add(line & "\n")
+      return
+    let rows = optionRows(g, holder, cliHelpParams(g, holder), group, layout)
+    for line in table(rows, layout, style):
       result.add(line & "\n")
-    return
-  let rows = optionRows(g, holder, cliHelpParams(g, holder), group, layout)
-  for line in table(rows, layout, style):
-    result.add(line & "\n")
+
+  proc cliHelpText*(g: CliGrammar; command: int; program: string;
+                    style: S; layout = cliDefaultHelpLayout;
+                    long = false; all = false): string =
+    ## The human-readable help of ``command`` (see the module documentation),
+    ## laid out by ``layout``: by default the standard page, its short form
+    ## (``-h``) or with ``long`` its long one (``--help``); ``all`` lists the
+    ## ``secondary`` subcommands too (``--help-all``, with ``long``). The
+    ## classic style has one form, lists every subcommand under
+    ## ``Commands:`` and ignores ``long`` and ``all``. ``style`` adds the
+    ## escape sequences of its palette (``clispec/styles``) and changes
+    ## nothing else; ``CliStyle()`` and ``CliPlainStyle()`` give the plain
+    ## page (the latter without compiling any styling code).
+    if layout.style == chsStandard:
+      return standardHelpText(g, command, program, layout, long, style, all)
+    let holder = helpHolder(g, command)
+    let cmd = g.commands[holder]
+    var lines = @[heading("Usage:", style) & " " &
+      cliStyleUsage(cliUsageLine(g, holder, program), style)]
+    var help = cmd.help
+    if help.len == 0 and cmd.callChild >= 0:
+      help = g.commands[cmd.callChild].help
+    if help.len > 0:
+      lines.add("")
+      lines.add(help)
+    if cmd.aliases.len > 0:
+      lines.add("")
+      lines.add(heading("Aliases:", style) & " " &
+        cliStyleNames(cmd.aliases.join(", "), style))
+    let children = cliHelpCommands(g, holder)
+    if children.len > 0:
+      var rows: seq[HelpRow] = @[]
+      for child in children:
+        let c = g.commands[child]
+        rows.add(((@[c.name] & c.aliases).join(", "),
+          (if c.help.len > 0: @[c.help] else: @[])))
+      lines.add("")
+      lines.add(heading("Commands:", style))
+      lines.add(table(rows, layout, style, names = true))
+    let params = cliHelpParams(g, holder)
+    var positional: seq[HelpRow] = @[]
+    let target = if cmd.callChild >= 0: cmd.callChild else: holder
+    for id in cliPositionals(g, target):
+      if id in params:
+        positional.add((positionalLeft(g.params[id]),
+          paragraphs(g.params[id], layout)))
+    if positional.len > 0:
+      lines.add("")
+      lines.add(heading("Arguments:", style))
+      lines.add(table(positional, layout, style))
+    # Ungrouped flags, then each group in declaration order.
+    var sections = @[""]
+    for group in g.groups:
+      sections.add(group.name)
+    for section in sections:
+      let rows = optionRows(g, holder, params, section, layout)
+      if rows.len == 0:
+        continue
+      lines.add("")
+      if section.len == 0:
+        lines.add(heading("Options:", style))
+      else:
+        lines.add(heading(section & ":", style))
+        for group in g.groups:
+          if group.name == section and group.help.len > 0:
+            lines.add(repeat(' ', layout.indent) & group.help)
+      lines.add(table(rows, layout, style))
+    lines.join("\n") & "\n"
+
+styleRenderers(CliStyle)
+styleRenderers(CliPlainStyle)
 
 proc cliOptionsTable*(g: CliGrammar; command: int;
                       layout = cliDefaultHelpLayout; group = "";
@@ -913,73 +995,6 @@ proc cliOptionsTable*(g: CliGrammar; command: int;
   ## ``cliOptionsTable`` plain, or in the ``portable16`` palette when
   ## ``styled`` (no detection).
   cliOptionsTable(g, command, cliStyleOf(styled), layout, group, long)
-
-proc cliHelpText*(g: CliGrammar; command: int; program: string;
-                  style: CliStyle; layout = cliDefaultHelpLayout;
-                  long = false; all = false): string =
-  ## The human-readable help of ``command`` (see the module documentation),
-  ## laid out by ``layout``: by default the standard page, its short form
-  ## (``-h``) or with ``long`` its long one (``--help``); ``all`` lists the
-  ## ``secondary`` subcommands too (``--help-all``, with ``long``). The
-  ## classic style has one form, lists every subcommand under
-  ## ``Commands:`` and ignores ``long`` and ``all``. ``style`` adds the
-  ## escape sequences of its palette (``clispec/styles``) and changes
-  ## nothing else; ``CliStyle()`` is the plain page.
-  if layout.style == chsStandard:
-    return standardHelpText(g, command, program, layout, long, style, all)
-  let holder = helpHolder(g, command)
-  let cmd = g.commands[holder]
-  var lines = @[heading("Usage:", style) & " " &
-    cliStyleUsage(cliUsageLine(g, holder, program), style)]
-  var help = cmd.help
-  if help.len == 0 and cmd.callChild >= 0:
-    help = g.commands[cmd.callChild].help
-  if help.len > 0:
-    lines.add("")
-    lines.add(help)
-  if cmd.aliases.len > 0:
-    lines.add("")
-    lines.add(heading("Aliases:", style) & " " &
-      cliStyleNames(cmd.aliases.join(", "), style))
-  let children = cliHelpCommands(g, holder)
-  if children.len > 0:
-    var rows: seq[HelpRow] = @[]
-    for child in children:
-      let c = g.commands[child]
-      rows.add(((@[c.name] & c.aliases).join(", "),
-        (if c.help.len > 0: @[c.help] else: @[])))
-    lines.add("")
-    lines.add(heading("Commands:", style))
-    lines.add(table(rows, layout, style, names = true))
-  let params = cliHelpParams(g, holder)
-  var positional: seq[HelpRow] = @[]
-  let target = if cmd.callChild >= 0: cmd.callChild else: holder
-  for id in cliPositionals(g, target):
-    if id in params:
-      positional.add((positionalLeft(g.params[id]),
-        paragraphs(g.params[id], layout)))
-  if positional.len > 0:
-    lines.add("")
-    lines.add(heading("Arguments:", style))
-    lines.add(table(positional, layout, style))
-  # Ungrouped flags, then each group in declaration order.
-  var sections = @[""]
-  for group in g.groups:
-    sections.add(group.name)
-  for section in sections:
-    let rows = optionRows(g, holder, params, section, layout)
-    if rows.len == 0:
-      continue
-    lines.add("")
-    if section.len == 0:
-      lines.add(heading("Options:", style))
-    else:
-      lines.add(heading(section & ":", style))
-      for group in g.groups:
-        if group.name == section and group.help.len > 0:
-          lines.add(repeat(' ', layout.indent) & group.help)
-    lines.add(table(rows, layout, style))
-  lines.join("\n") & "\n"
 
 proc cliHelpText*(g: CliGrammar; command: int; program: string;
                   layout = cliDefaultHelpLayout; long = false;

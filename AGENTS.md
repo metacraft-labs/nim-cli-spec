@@ -60,10 +60,14 @@ library.
   over `CliColorInputs`, the real `cliStreamStyle`; the background query
   `cliQueryTerminal`, POSIX only), the users' overrides
   (`cliParseColors`), the compile-time knobs (`clispec_*` defines, collected
-  in `cliColorDefaults`, a `static` parameter of every proc that decides),
-  the styling helpers (`cliStripStyles`) and the page width
-  (`cliOutputWidth`). A knob that is off or fixed must leave no code: gate
-  each part behind `when` on the configuration.
+  in `cliColorDefaults`, a `static` parameter of every proc that decides;
+  `cliColorParameter` reads `cliProgram`'s colour parameters), the styling
+  helpers (`cliStripStyles`; `CliPlainStyle`, the style that compiles no
+  styling code: each renderer of help and errors has an overload for it)
+  and the page width (`cliOutputWidth`). A knob that is off or fixed must leave no code:
+  gate each part behind `when` on the configuration, and pass the
+  configuration (a `static` parameter) to wherever it is needed, as the
+  parser's `cliTokenize` builds a help request's renderers for it.
 - `src/clispec/help.nim`: human-readable help and the `clispec-help/1` JSON.
 - `src/clispec/completers.nim`: the completer type (`CliCompleter`,
   `CliCompletionContext`, `CliCompletion`), the check `cliModelTypeChecks`
@@ -79,8 +83,10 @@ library.
 - `src/clispec/program.nim`: `cliProgram` / `cliProgramCode`, the generator,
   and the names and shapes it generates (`cliGeneratedNames`,
   `cliShapedTypeDecls`, `cliShapedBuilderProc`, `cliShapedVisitorProc`,
-  `cliFieldBare`, `cliFieldAllowed`, `cliProgramArgs`) for a library that
-  generates code beside it (confutils does).
+  `cliFieldBare`, `cliFieldAllowed`, `cliProgramArgs`,
+  `cliColorConfigName`) for a library that generates code beside it
+  (confutils does). `cliProgram` also takes the colour parameters
+  (`colors = never`, ...) and generates `printHelp` / `printError`.
 - `tests/`: `test_dsl_model.nim` (every construct of the language parses into
   the model), `test_extension.nim` (a consumer extension, driven through
   the real parser), `test_cs_m2_model_round_trip.nim` (every named argument a
@@ -141,6 +147,14 @@ library.
   compares the pages in every palette and with users' overrides with the
   goldens in `tests/fixtures/cs_m5c_colour/goldens/`, which are written
   only by running the test with `CLISPEC_REGENERATE_GOLDENS=1`.
+  `test_cs_m5c_compile_time_knobs_shrink` builds the fixture
+  `tests/fixtures/cs_m5c_colour/knobs.nim` (the `depot` description with
+  `cliProgram` colour parameters from `-d:knobs_params`, printing only
+  through the generated `printHelp`/`printError`) in release mode with each
+  knob on, and off or fixed by a define or a parameter: each build ignores
+  what its knobs drop, its binary holds none of their marker strings and is
+  smaller, and the enabled build holds every marker and honours every input
+  (the negative control). It prints the sizes.
 - `tests/test_tiered_grouped_subcommand_help.nim` pins command
   groups and tiers: the fixture `tests/fixtures/tiered_help/kit_cli.nim`
   and its golden pages, JSON and completion beside it (`-h`, `--help`,

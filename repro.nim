@@ -74,6 +74,8 @@ const clispecTests = [
     runsCompiler: true),
   ClispecTest(source: "tests/test_cs_m5c_styled_goldens.nim",
     runsCompiler: true),
+  ClispecTest(source: "tests/test_cs_m5c_compile_time_knobs_shrink.nim",
+    runsCompiler: true),
   ClispecTest(source: "tests/test_type_check_nodes_carry_written_position.nim"),
   ClispecTest(source: "tests/test_cs_m6_after_separator.nim"),
   ClispecTest(source: "tests/test_tiered_grouped_subcommand_help.nim",

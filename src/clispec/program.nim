@@ -65,8 +65,13 @@
 ##   process's own arguments. It raises ``CliUsageError`` for a command line
 ##   it rejects and ``CliHelpRequest`` when help is asked for (its subtype
 ##   ``CliVersionRequest`` when the version is); it never ends the process.
-##   A program prints them with ``cliPrintHelp(e)`` and ``cliPrintError(e)``
-##   (``clispec/errors``), which decide colour and width for the stream.
+##   A program prints them with ``Tool.printHelp(e)`` and
+##   ``Tool.printError(e)``.
+## * ``Tool.printHelp(e, stream = stdout)`` and ``Tool.printError(e, stream
+##   = stderr)`` print a help request and a usage error as
+##   ``cliPrintHelp`` and ``cliPrintError`` (``clispec/errors``) do,
+##   deciding colour and width for the stream, under the program's own
+##   colour configuration (below).
 ## * ``Tool.helpText(path)`` and ``Tool.helpJson(path)`` render the help of
 ##   the command reached by the subcommand words ``path`` (see
 ##   ``clispec/help``; ``helpText(path, long = true)`` is the long page
@@ -79,6 +84,32 @@
 ##
 ## A consumer whose model carries an extension generates the same code from
 ## its own macro with ``cliProgramCode``.
+##
+## Colour parameters
+## =================
+##
+## The colour knobs of ``clispec/styles`` can be fixed for one program with
+## named arguments before the body, named as the knobs' parameters:
+## ``colors``, ``colorEnv``, ``colorDepth``, ``background``, ``colorFgBg``,
+## ``backgroundQuery``, ``userColors`` and ``palette``, with the values the
+## ``clispec_*`` defines take (a word, a number or a string literal):
+##
+## .. code-block:: nim
+##   cliProgram(Tool, "tool", colors = auto, colorDepth = 24,
+##              userColors = on, palette = "heading=1;35"):
+##     flag jobs is int, default = 4
+##
+## A parameter applies over its define, which applies over the default; a
+## value the knob does not allow is a compile-time error naming the
+## parameter and listing the allowed values. The program's configuration
+## (``CliProgramArgs.colorConfig``) is a constant
+## (``cliColorConfigName``) that ``load`` passes to the parser, which builds
+## a help request's renderers for it, and that ``printHelp`` and
+## ``printError`` pass to the library's printers. A program that prints
+## only through them carries only the code its configuration needs: with
+## ``colors = never``, none of the styling or detection code; with a knob
+## off or fixed, none of that knob's code (see "Compile-time knobs" in
+## ``clispec/styles``).
 ##
 ## Configuration files and the environment
 ## =======================================
@@ -93,8 +124,8 @@
 ## library that generates such code beside ``cliProgramCode``'s, the names
 ## and shapes it generates are exported: ``cliGeneratedNames``,
 ## ``cliObjectHolds``, ``cliHasObject``, ``cliBranches``,
-## ``cliBuilderName``, ``cliCompletersName``, ``cliFieldBare`` and
-## ``cliFieldAllowed``.
+## ``cliBuilderName``, ``cliCompletersName``, ``cliColorConfigName``,
+## ``cliFieldBare`` and ``cliFieldAllowed``.
 
 import std/[macros, os, strutils]
 
@@ -235,6 +266,15 @@ proc cliCompletersName*(names: CliGeneratedNames): NimNode =
   ## The generated ``proc (): seq[CliCompleter]`` that builds the
   ## completers, by parameter id (not exported).
   ident("cliCompletersOf" & names.typeName)
+
+proc cliColorConfigName*(names: CliGeneratedNames): NimNode =
+  ## The generated constant holding the program's colour configuration (a
+  ## ``CliColorConfig``: its ``cliProgram`` parameters over the defines;
+  ## not exported). The generated ``load``, ``printHelp`` and
+  ## ``printError`` pass it as their ``config``; a library that calls the
+  ## parser or the printers for the program passes it too, so the program
+  ## carries only the code its configuration needs.
+  ident("cliColorConfigOf" & names.typeName)
 
 proc cliValueCheckName*(names: CliGeneratedNames): NimNode =
   ## The generated ``CliValueCheck`` of the description (not exported):
@@ -595,13 +635,17 @@ proc valueCheckProc[P](ctx: GenContext; decls: seq[CliParam[P]]): NimNode =
     nnkBracket.newTree()))
 
 proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
-                           exported: bool): NimNode =
+                           exported: bool;
+                           colorConfig = cliColorDefaults): NimNode =
   ## The code ``cliProgram`` generates, for a consumer macro that builds its
   ## own model (with an extension): the model's type checks, the
   ## configuration object types, the grammar constant and the ``load``,
-  ## ``helpText``, ``helpJson``, ``cliGrammar`` and ``cliModel`` procedures for
-  ## ``typeName``. ``program`` is the name help and errors use. Place the
-  ## result at the description's scope, which must import ``clispec``.
+  ## ``helpText``, ``helpJson``, ``printHelp``, ``printError``,
+  ## ``cliGrammar`` and ``cliModel`` procedures for ``typeName``.
+  ## ``program`` is the name help and errors use; ``colorConfig`` the
+  ## program's colour configuration (``CliProgramArgs.colorConfig``), which
+  ## ``load`` and the printers are compiled for. Place the result at the
+  ## description's scope, which must import ``clispec``.
   var problems: seq[CliGrammarProblem] = @[]
   var decls: seq[CliParam[P]] = @[]
   let g = cliGrammarOf(model, program, problems, decls)
@@ -686,6 +730,11 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
   result.add(nnkConstSection.newTree(nnkConstDef.newTree(modelConst,
     newEmptyNode(), cliModelValue(model))))
   let valueCheck = cliValueCheckName(ctx.names)
+  let colorConst = cliColorConfigName(ctx.names)
+  let printHelpName = exportedName("printHelp", exported)
+  let printErrorName = exportedName("printError", exported)
+  result.add(nnkConstSection.newTree(nnkConstDef.newTree(colorConst,
+    newEmptyNode(), newLit(colorConfig))))
   result.add quote do:
     proc `grammarName`(t: typedesc[`T`]): CliGrammar =
       ## The command line's grammar.
@@ -706,13 +755,27 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
       let opts = cliWithValueCheck(options, `valueCheck`)
       if cliIsCompletionRequest(argv, opts):
         cliCompletionCheck(`gc`, `completersName`(), argv, opts)
-      var r = cliResolve(`gc`, argv, opts)
+      var r = cliResolve(`gc`, argv, opts, `colorConst`)
       `rootBuilder`(`gc`, r)
 
     proc `loadName`(t: typedesc[`T`]; options = CliOptions()): `T` {.
         raises: [CliUsageError, CliHelpRequest].} =
       ## Parses the process's own arguments.
       `loadName`(t, cliCommandLineParams(), options)
+
+    proc `printHelpName`(t: typedesc[`T`]; e: ref CliHelpRequest;
+                         stream = stdout) {.raises: [IOError].} =
+      ## Writes a help request ``load`` raised to ``stream``
+      ## (``cliPrintHelp``), styled under the program's own colour
+      ## configuration.
+      cliPrintHelp(e, stream, `colorConst`)
+
+    proc `printErrorName`(t: typedesc[`T`]; e: ref CliUsageError;
+                          stream = stderr) {.raises: [IOError].} =
+      ## Writes a usage error ``load`` raised to ``stream``
+      ## (``cliPrintError``), styled under the program's own colour
+      ## configuration.
+      cliPrintError(e, stream, `colorConst`)
 
     proc `helpTextName`(t: typedesc[`T`]; path: openArray[string] = [];
                         program = `prog`; layout = cliDefaultHelpLayout;
@@ -782,12 +845,18 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
 type
   CliProgramArgs* = object
     ## The arguments of a ``cliProgram``-style macro call:
-    ## ``(<Type>[, "<program name>"][, exported = true]): <description>``.
+    ## ``(<Type>[, "<program name>"][, exported = true][, <colour
+    ## parameters>]): <description>``.
     typeName*: string
     program*: string
       ## The program's name in help and errors (the type's name when not
       ## given).
     exported*: bool
+    colorConfig*: CliColorConfig
+      ## The program's colour configuration: ``cliColorDefaults`` (the
+      ## defines) with the colour parameters written in the call
+      ## (``colors = never``, ``colorDepth = 24``, ...; see
+      ## ``cliColorParameter``) applied over it.
     body*: NimNode
       ## The ``cli:`` description.
 
@@ -798,11 +867,15 @@ proc cliProgramArgs*(args: NimNode; macroName = "cliProgram"):
   ## same form. Errors name ``macroName``.
   if args.len < 2 or args[^1].kind != nnkStmtList:
     error("clispec: " & macroName & " is written " & macroName &
-      "(<Type>[, \"<name>\"][, exported = true]): <description>", args)
+      "(<Type>[, \"<name>\"][, exported = true][, <colour parameters>]): " &
+      "<description>", args)
   var head = args[0]
   var positional: seq[NimNode] = @[]
+  result.colorConfig = cliColorDefaults
   for i in 1 ..< args.len - 1:
     let arg = args[i]
+    if cliColorParameter(result.colorConfig, arg):
+      continue
     if arg.kind == nnkExprEqExpr and arg[0].eqIdent("exported"):
       if arg[1].eqIdent("true"): result.exported = true
       elif arg[1].eqIdent("false"): result.exported = false
@@ -823,7 +896,8 @@ proc cliProgramArgs*(args: NimNode; macroName = "cliProgram"):
     result.program = cliStrLit(positional[0], "program name")
   elif positional.len > 1:
     error("clispec: " & macroName & " takes a type name, an optional " &
-      "program name, `exported = true` and a body", args)
+      "program name, `exported = true`, colour parameters (" &
+      cliColorParameters.join(", ") & ") and a body", args)
   result.body = args[^1]
 
 macro cliProgram*(args: varargs[untyped]): untyped =
@@ -835,11 +909,13 @@ macro cliProgram*(args: varargs[untyped]): untyped =
   ##     flag jobs is int, default = 4
   ##
   ## The second argument is the program's name in help and errors; it
-  ## defaults to the type's name. ``exported = true`` (last, before the
-  ## body) exports the generated types and procedures, so the description
-  ## can live in a module of its own:
-  ## ``cliProgram(Tool, "tool", exported = true):``.
+  ## defaults to the type's name. ``exported = true`` (before the body)
+  ## exports the generated types and procedures, so the description can
+  ## live in a module of its own:
+  ## ``cliProgram(Tool, "tool", exported = true):``. The colour parameters
+  ## (``colors = never``, ``colorDepth = 24``, ...; see "Colour parameters"
+  ## in the module documentation) fix the program's colour configuration.
   let a = cliProgramArgs(args)
   let model = parseCliModel[NoCliExtension, NoCliExtension](a.body,
     NoCliExtension())
-  cliProgramCode(model, a.typeName, a.program, a.exported)
+  cliProgramCode(model, a.typeName, a.program, a.exported, a.colorConfig)

@@ -24,18 +24,23 @@
 ## (for help) how wide the page is (``clispec/styles``). Both decide with
 ## the build's colour configuration (``cliColorDefaults``, from the
 ## ``clispec_*`` defines) unless given another as their ``config``
-## parameter:
+## parameter. The ``printHelp`` and ``printError`` that ``cliProgram``
+## generates for a type call them with the program's own configuration
+## (its colour parameters over the defines):
 ##
 ## .. code-block:: nim
 ##   try:
 ##     let conf = Tool.load()
 ##     ...
 ##   except CliHelpRequest as e:
-##     cliPrintHelp(e)
+##     Tool.printHelp(e)    # or cliPrintHelp(e): the build's configuration
 ##     quit 0
 ##   except CliUsageError as e:
-##     cliPrintError(e)
+##     Tool.printError(e)   # or cliPrintError(e)
 ##     quit e.exitCode
+##
+## Under ``colors = never`` a printer renders with ``CliPlainStyle``
+## (``clispec/styles``), so it compiles none of the styling code.
 ##
 ## A usage error is printed as a block (``cliErrorText``)::
 ##
@@ -197,15 +202,19 @@ type
     ## columns when the layout leaves the width to the printer (a standard
     ## layout whose ``width`` is 0), styled in the ``portable16`` palette
     ## when ``styled`` (a classic layout only when the program set
-    ## ``CliOptions.color`` to ``ccmAlways``). Kept for the programs that
-    ## call it; ``CliHelpStyledRender`` takes the decided style.
+    ## ``CliOptions.color`` to ``ccmAlways``); always plain when the parser
+    ## that made it was compiled for ``colors = never``. Kept for the
+    ## programs that call it; ``CliHelpStyledRender`` takes the decided
+    ## style.
 
   CliHelpStyledRender* = proc (width: int; style: CliStyle): string {.
       closure, gcsafe, raises: [].}
     ## Renders a help request's page again for a printer, as
     ## ``CliHelpRender`` does, with ``style`` (``cliStreamStyle``,
     ## ``cliColorStyle``); a classic layout is plain unless the program set
-    ## ``CliOptions.color`` to ``ccmAlways``.
+    ## ``CliOptions.color`` to ``ccmAlways``, and every page is plain when
+    ## the parser that made it was compiled for ``colors = never`` (it then
+    ## holds no styling code).
 
   CliHelpRequest* = object of CatchableError
     ## ``--help`` (or ``-h``) was given. Not a failure: ``text`` holds the
@@ -416,57 +425,66 @@ func suggestionNoun(kind: CliErrorKind): string =
   of cekUnknownFlag: "flag"
   else: "value"
 
-func cliTipText*(kind: CliErrorKind; suggestions: openArray[string];
-                 style: CliStyle): string =
-  ## The tip after ``tip:`` (``a similar flag exists: '--jobs'``), empty
-  ## when there are no suggestions; each suggestion a literal.
-  if suggestions.len == 0:
-    return ""
-  var quoted: seq[string] = @[]
-  for s in suggestions:
-    quoted.add("'" & cliStyled(s, ctsLiteral, style) & "'")
-  let noun = suggestionNoun(kind)
-  if suggestions.len == 1:
-    "a similar " & noun & " exists: " & quoted[0]
-  else:
-    "some similar " & noun & "s exist: " & quoted.join(", ")
+func offendingWord(e: CliUsageError): string =
+  case e.kind
+  of cekInvalidValue: e.value
+  else: e.spelling
+
+template styleRenderers(S: typedesc) {.dirty.} =
+  ## The error block's renderers for one style type, expanded for
+  ## ``CliStyle`` and for ``CliPlainStyle`` (see ``clispec/help``): ordinary
+  ## overloads, so a printer compiled for ``colors = never`` holds none of
+  ## the styling helpers.
+
+  func cliTipText*(kind: CliErrorKind; suggestions: openArray[string];
+                   style: S): string =
+    ## The tip after ``tip:`` (``a similar flag exists: '--jobs'``), empty
+    ## when there are no suggestions; each suggestion a literal.
+    if suggestions.len == 0:
+      return ""
+    var quoted: seq[string] = @[]
+    for s in suggestions:
+      quoted.add("'" & cliStyled(s, ctsLiteral, style) & "'")
+    let noun = suggestionNoun(kind)
+    if suggestions.len == 1:
+      "a similar " & noun & " exists: " & quoted[0]
+    else:
+      "some similar " & noun & "s exist: " & quoted.join(", ")
+
+  func cliErrorText*(e: ref CliUsageError; style: S): string =
+    ## The block ``cliPrintError`` writes (see "Printing them" above) with
+    ## ``style``: ``error:`` as the ``error`` element, the offending word as
+    ## ``invalid``, ``tip:`` as ``tip``, ``Usage:`` as a heading, the usage
+    ## line and the command lines as in help. Plain (``CliStyle()``) it is
+    ## the same text without escape sequences. No line is broken.
+    var message = e.msg
+    let word = offendingWord(e[])
+    if style.on and word.len > 0:
+      let quoted = "'" & word & "'"
+      let at = message.find(quoted)
+      if at >= 0:
+        message = message[0 .. at] & cliStyled(word, ctsOffending, style) &
+          message[at + quoted.len - 1 .. ^1]
+    var blocks = @[cliStyled("error:", ctsError, style) & " " & message]
+    let tip = cliTipText(e.kind, e.suggestions, style)
+    if tip.len > 0:
+      blocks.add("  " & cliStyled("tip:", ctsTip, style) & " " & tip)
+    if e.usage.len > 0:
+      blocks.add(cliStyled("Usage:", ctsHeading, style) & " " &
+        cliStyleUsage(e.usage, style))
+    if e.helpCommand.len > 0:
+      blocks.add("For more information, try '" &
+        cliStyleUsage(e.helpCommand, style) & "'.")
+    blocks.join("\n\n") & "\n"
+
+styleRenderers(CliStyle)
+styleRenderers(CliPlainStyle)
 
 func cliTipText*(kind: CliErrorKind; suggestions: openArray[string];
                  styled = false): string =
   ## ``cliTipText`` plain, or in the ``portable16`` palette when
   ## ``styled`` (no detection).
   cliTipText(kind, suggestions, cliStyleOf(styled))
-
-func offendingWord(e: CliUsageError): string =
-  case e.kind
-  of cekInvalidValue: e.value
-  else: e.spelling
-
-func cliErrorText*(e: ref CliUsageError; style: CliStyle): string =
-  ## The block ``cliPrintError`` writes (see "Printing them" above) with
-  ## ``style``: ``error:`` as the ``error`` element, the offending word as
-  ## ``invalid``, ``tip:`` as ``tip``, ``Usage:`` as a heading, the usage
-  ## line and the command lines as in help. Plain (``CliStyle()``) it is
-  ## the same text without escape sequences. No line is broken.
-  var message = e.msg
-  let word = offendingWord(e[])
-  if style.on and word.len > 0:
-    let quoted = "'" & word & "'"
-    let at = message.find(quoted)
-    if at >= 0:
-      message = message[0 .. at] & cliStyled(word, ctsOffending, style) &
-        message[at + quoted.len - 1 .. ^1]
-  var blocks = @[cliStyled("error:", ctsError, style) & " " & message]
-  let tip = cliTipText(e.kind, e.suggestions, style)
-  if tip.len > 0:
-    blocks.add("  " & cliStyled("tip:", ctsTip, style) & " " & tip)
-  if e.usage.len > 0:
-    blocks.add(cliStyled("Usage:", ctsHeading, style) & " " &
-      cliStyleUsage(e.usage, style))
-  if e.helpCommand.len > 0:
-    blocks.add("For more information, try '" &
-      cliStyleUsage(e.helpCommand, style) & "'.")
-  blocks.join("\n\n") & "\n"
 
 func cliErrorText*(e: ref CliUsageError; styled = false): string =
   ## ``cliErrorText`` plain, or in the ``portable16`` palette when
@@ -489,7 +507,7 @@ proc cliPrintError*(e: ref CliUsageError; stream = stderr;
   ## decided for it (``cliErrorStyle``: whether to style, the depth, the
   ## background and the users' overrides, under ``config``).
   when config.colors == ccmNever:
-    stream.write(cliErrorText(e, CliStyle()))
+    stream.write(cliErrorText(e, CliPlainStyle()))
   else:
     stream.write(cliErrorText(e, cliErrorStyle(e, stream, config)))
 

@@ -138,40 +138,64 @@
 ## ------------------
 ##
 ## Each policy above can be fixed, and each run-time input switched off, at
-## compile time with a define (validated when the program is built; a bad
-## value is an error naming the define and its allowed values). A knob that
-## is off or fixed leaves no code: no read of its variables, no query, no
-## palette table that can never be chosen.
+## compile time: for the whole build with a define, or for one program with
+## a parameter of its ``cliProgram`` call (``cliProgram(Tool, "tool",
+## colors = auto, colorDepth = 24, userColors = on, palette =
+## "heading=1;35"):``), which applies over the define, which applies over
+## the default. Both are validated when the program is built: a bad value
+## is an error naming the define or the parameter and its allowed values. A
+## knob that is off or fixed leaves no code: no read of its variables, no
+## query, no palette table that can never be chosen.
 ##
-## ============================  ===========================  ===========  ===============================================
-## Define                        Values                       Default      When fixed or off
-## ============================  ===========================  ===========  ===============================================
-## ``clispec_colors``            ``auto always never``        ``auto``     ``never``: nothing is styled and
-##                                                                         ``CliOptions.color`` is ignored; ``always``: no
-##                                                                         detection (rules 2 to 6), ``CliOptions.color``
-##                                                                         still applies
-## ``clispec_color_env``         on/off                       on           rules 2 to 5 and ``FORCE_COLOR``'s depth are gone
-## ``clispec_color_depth``       ``auto 16 256 24``           ``auto``     that depth, nothing read to detect it
-## ``clispec_background``        ``auto dark light unknown``  ``auto``     that background, no source read; ``unknown``
-##                                                                         keeps ``portable16`` alone
-## ``clispec_colorfgbg``         on/off                       on           source 3 is gone
-## ``clispec_background_query``  on/off                       on           source 4 is gone: no terminal I/O beyond the page
-## ``clispec_user_colors``       on/off                       **off**      ``CLISPEC_COLORS``, ``<PROGRAM>_COLORS`` and
-##                                                                         source 1 exist only when it is on
-## ``clispec_palette``           entries as the users'        empty        the developer's restyling, over every palette and
-##                                                                         under the users' overrides; checked at compile
-##                                                                         time (``bg`` is not accepted: that is
-##                                                                         ``clispec_background``)
-## ============================  ===========================  ===========  ===============================================
+## ============================  ===================  ===========================  ===========  ===============================================
+## Define                        Parameter            Values                       Default      When fixed or off
+## ============================  ===================  ===========================  ===========  ===============================================
+## ``clispec_colors``            ``colors``           ``auto always never``        ``auto``     ``never``: nothing is styled, no styling code
+##                                                                                              at all, and ``CliOptions.color`` is ignored;
+##                                                                                              ``always``: no detection (rules 2 to 6),
+##                                                                                              ``CliOptions.color`` still applies
+## ``clispec_color_env``         ``colorEnv``         on/off                       on           rules 2 to 5 and ``FORCE_COLOR``'s depth are gone
+## ``clispec_color_depth``       ``colorDepth``       ``auto 16 256 24``           ``auto``     that depth, nothing read to detect it, and only
+##                                                                                              that depth's tables
+## ``clispec_background``        ``background``       ``auto dark light unknown``  ``auto``     that background, no source read, and only that
+##                                                                                              background's tables; ``unknown`` keeps
+##                                                                                              ``portable16`` alone and reads no depth either
+## ``clispec_colorfgbg``         ``colorFgBg``        on/off                       on           source 3 is gone
+## ``clispec_background_query``  ``backgroundQuery``  on/off                       on           source 4 is gone: no terminal I/O beyond the page
+## ``clispec_user_colors``       ``userColors``       on/off                       **off**      ``CLISPEC_COLORS``, ``<PROGRAM>_COLORS`` and
+##                                                                                              source 1 exist only when it is on
+## ``clispec_palette``           ``palette``          entries as the users'        empty        the developer's restyling, over every palette and
+##                                                                                              under the users' overrides; checked at compile
+##                                                                                              time (``bg`` is not accepted: that is
+##                                                                                              ``clispec_background``)
+## ============================  ===================  ===========================  ===========  ===============================================
 ##
 ## On/off values are ``on``, ``yes``, ``true``, ``1`` and ``off``, ``no``,
-## ``false``, ``0``, ``none``. ``cliColorDefaults`` holds the build's
-## configuration (``CliColorConfig``); every proc that decides takes it as a
-## ``static`` parameter defaulting to it, so a caller can decide with
-## another configuration, instantiated for it. ``CliOptions.color``,
-## ``colorDepth`` and ``background`` act only where the configuration's
-## policy is ``auto``.
+## ``false``, ``0``, ``none``; enum values are matched in any case. A fixed
+## depth of 16 or an unknown background needs neither the depth nor the
+## background, so neither is looked for. ``cliColorDefaults`` holds the
+## build's configuration (``CliColorConfig``); every proc that decides
+## takes it as a ``static`` parameter defaulting to it, so a caller can
+## decide with another configuration, instantiated for it.
+## ``CliOptions.color``, ``colorDepth`` and ``background`` act only where
+## the configuration's policy is ``auto``.
 ##
+## Where the configuration reaches
+## -------------------------------
+##
+## A configuration acts where it is compiled in. ``cliPrintHelp`` and
+## ``cliPrintError`` use the build's (the defines) unless given another; the
+## ``printHelp`` and ``printError`` that ``cliProgram`` generates for its
+## type, and its ``load``, use the program's own (its parameters over the
+## defines; ``cliColorConfigName``). The parser builds a help request's
+## renderers for the configuration ``load`` passes it (``cliTokenize``'s
+## ``config``), and each renderer of help and errors has an overload for
+## ``CliStyle`` and one for ``CliPlainStyle``: under ``colors = never`` only
+## the latter is called, and it compiles none of the styling helpers. So a
+## program that prints only through its generated printers carries only the
+## code its own configuration needs; one that also calls the library's
+## printers, or the procs that take ``styled: bool``, carries theirs too.
+
 ## Deciding
 ## --------
 ##
@@ -256,6 +280,13 @@ type
     depth*: CliColorDepth
     background*: CliBackground
     sgr*: CliPalette
+
+  CliPlainStyle* = object
+    ## A style that is always plain. Rendering with it (``cliHelpText(...,
+    ## CliPlainStyle())``, ``cliErrorText(e, CliPlainStyle())``) compiles
+    ## none of the styling code: each renderer has an overload for it that
+    ## only joins the words. Its pages are byte-identical to
+    ## ``CliStyle()``'s.
 
   CliColorOverrides* = object
     ## Entries of an override variable (or of ``clispec_palette``):
@@ -400,39 +431,46 @@ const
   clispec_user_colors {.strdefine.} = "off"
   clispec_palette {.strdefine.} = ""
 
-proc cliOnOffOption*(name, value: string): bool {.compileTime.} =
+proc cliOnOffOption*(name, value: string; at: NimNode = nil): bool {.
+    compileTime.} =
   ## An on/off knob's value, as chronicles takes it; a compile-time error
-  ## naming ``name`` for anything else.
+  ## naming ``name`` (at ``at`` when given) for anything else.
   case value.toLowerAscii()
   of "on", "yes", "true", "1": true
   of "off", "no", "false", "0", "none": false
   else:
     error("clispec: '" & value & "' is not a value of '" & name &
-      "'; allowed values are on, yes, true, 1 and off, no, false, 0, none")
+      "'; allowed values are on, yes, true, 1 and off, no, false, 0, none",
+      at)
 
-proc cliEnumOption*[E: enum](name, value: string): E {.compileTime.} =
-  ## An enum knob's value (one of ``E``'s strings); a compile-time error
-  ## naming ``name`` and the allowed values for anything else.
+proc cliEnumOption*[E: enum](name, value: string; at: NimNode = nil): E {.
+    compileTime.} =
+  ## An enum knob's value (one of ``E``'s strings, any case); a
+  ## compile-time error naming ``name`` (at ``at`` when given) and the
+  ## allowed values for anything else.
   var allowed: seq[string] = @[]
   for v in E:
     if value.toLowerAscii() == $v:
       return v
     allowed.add($v)
   error("clispec: '" & value & "' is not a value of '" & name &
-    "'; allowed values are " & allowed.join(", "))
+    "'; allowed values are " & allowed.join(", "), at)
 
-proc cliPaletteOption*(name, value: string): string {.compileTime.} =
-  ## A developer palette (``clispec_palette``): ``value`` when every entry
-  ## is well formed, else a compile-time error naming ``name`` and the
-  ## entry. A ``bg`` entry is refused: the background is fixed with
-  ## ``clispec_background``.
+proc cliPaletteOption*(name, value: string; at: NimNode = nil): string {.
+    compileTime.} =
+  ## A developer palette (``clispec_palette``, the ``palette`` parameter):
+  ## ``value`` when every entry is well formed, else a compile-time error
+  ## naming ``name`` (at ``at`` when given) and the entry. A ``bg`` entry
+  ## is refused: the background is fixed with ``clispec_background`` (the
+  ## ``background`` parameter).
   var parsed = CliColorOverrides()
   let problems = cliParseColors(value, parsed)
   if problems.len > 0:
-    error("clispec: '" & name & "': " & problems[0])
+    error("clispec: '" & name & "': " & problems[0], at)
   if parsed.background != cbAuto:
     error("clispec: '" & name & "': a bg entry is not accepted here; " &
-      "fix the background with clispec_background")
+      "fix the background with clispec_background or the background " &
+      "parameter", at)
   value
 
 const cliColorDefaults* = CliColorConfig(
@@ -449,6 +487,50 @@ const cliColorDefaults* = CliColorConfig(
   palette: cliPaletteOption("clispec_palette", clispec_palette))
   ## The build's colour configuration, from the defines.
 
+const cliColorParameters* = ["colors", "colorEnv", "colorDepth",
+  "background", "colorFgBg", "backgroundQuery", "userColors", "palette"]
+  ## The names of the colour parameters of ``cliProgram`` (and of a macro
+  ## written like it, ``cliColorParameter``), one per field of
+  ## ``CliColorConfig``.
+
+proc cliColorParameter*(config: var CliColorConfig; arg: NimNode): bool {.
+    compileTime.} =
+  ## When ``arg`` is a colour parameter (``colors = never``,
+  ## ``colorDepth = 24``, ``userColors = on``, ``palette = "heading=1;35"``:
+  ## a name of ``cliColorParameters`` and a word, a number or a string
+  ## literal), sets that field of ``config`` and returns true; a value its
+  ## knob does not allow is a compile-time error naming the parameter and
+  ## the allowed values. False for any other argument.
+  if arg.kind != nnkExprEqExpr or arg[0].kind notin {nnkIdent, nnkSym}:
+    return false
+  var name = ""
+  for known in cliColorParameters:
+    if arg[0].eqIdent(known):
+      name = known
+  if name.len == 0:
+    return false
+  let v = arg[1]
+  let text =
+    case v.kind
+    of nnkIdent, nnkSym: $v
+    of nnkStrLit .. nnkTripleStrLit: v.strVal
+    of nnkIntLit .. nnkUInt64Lit: $v.intVal
+    else:
+      error("clispec: '" & name & "' takes a word, a number or a string, " &
+        "got: " & v.repr, v)
+  case name
+  of "colors": config.colors = cliEnumOption[CliColorMode](name, text, v)
+  of "colorEnv": config.colorEnv = cliOnOffOption(name, text, v)
+  of "colorDepth":
+    config.colorDepth = cliEnumOption[CliColorDepth](name, text, v)
+  of "background":
+    config.background = cliEnumOption[CliBackground](name, text, v)
+  of "colorFgBg": config.colorFgBg = cliOnOffOption(name, text, v)
+  of "backgroundQuery": config.backgroundQuery = cliOnOffOption(name, text, v)
+  of "userColors": config.userColors = cliOnOffOption(name, text, v)
+  of "palette": config.palette = cliPaletteOption(name, text, v)
+  true
+
 # ---------------------------------------------------------------------------
 # Styling text.
 # ---------------------------------------------------------------------------
@@ -460,6 +542,15 @@ func cliStyled*(text: string; element: CliTextStyle; style: CliStyle): string =
     "\e[" & style.sgr[element] & "m" & text & CliStyleReset
   else:
     text
+
+func on*(style: CliPlainStyle): bool {.inline.} =
+  ## Always false: a ``CliPlainStyle`` never styles.
+  false
+
+func cliStyled*(text: string; element: CliTextStyle;
+                style: CliPlainStyle): string {.inline.} =
+  ## ``text`` itself.
+  text
 
 func cliStyleOf*(styled: bool): CliStyle =
   ## ``cliPortable16Style`` when ``styled``, else plain.
@@ -508,6 +599,10 @@ func cliStyleUsage*(text: string; style: CliStyle): string =
                                 else: ctsLiteral), style))
     i = j
 
+func cliStyleUsage*(text: string; style: CliPlainStyle): string {.inline.} =
+  ## ``text`` itself.
+  text
+
 func cliStyleUsage*(text: string; on: bool): string =
   ## ``cliStyleUsage`` in the ``portable16`` palette when ``on``.
   cliStyleUsage(text, cliStyleOf(on))
@@ -521,6 +616,10 @@ func cliStyleNames*(text: string; style: CliStyle): string =
   for name in text.split(", "):
     parts.add(cliStyled(name, ctsLiteral, style))
   parts.join(", ")
+
+func cliStyleNames*(text: string; style: CliPlainStyle): string {.inline.} =
+  ## ``text`` itself.
+  text
 
 func cliStyleNames*(text: string; on: bool): string =
   ## ``cliStyleNames`` in the ``portable16`` palette when ``on``.
@@ -572,6 +671,10 @@ func cliStyleSpellings*(text: string; style: CliStyle): string =
       plain.add(c)
       inc i
   flush()
+
+func cliStyleSpellings*(text: string; style: CliPlainStyle): string {.inline.} =
+  ## ``text`` itself.
+  text
 
 func cliStyleSpellings*(text: string; on: bool): string =
   ## ``cliStyleSpellings`` in the ``portable16`` palette when ``on``.
@@ -738,9 +841,17 @@ proc cliDecideStyle*(color: CliColorMode; colorDepth: CliColorDepth;
     result.on = true
     when config.userColors:
       let user = cliUserColors(inputs)
-    var depth = cliColorDepthOf(colorDepth, inputs, config)
+    # A fixed depth of 16 or an unknown background is portable16 whatever
+    # the other inputs say: neither the depth nor the background is looked
+    # for, so their sources are not compiled.
+    when config.colorDepth == ccd16 or config.background == cbUnknown:
+      var depth = ccd16
+    else:
+      var depth = cliColorDepthOf(colorDepth, inputs, config)
     var bg = cbUnknown
-    when config.background == cbAuto:
+    when config.colorDepth == ccd16 or config.background == cbUnknown:
+      discard
+    elif config.background == cbAuto:
       if depth != ccd16:
         bg = cbAuto
         when config.userColors:
@@ -761,7 +872,7 @@ proc cliDecideStyle*(color: CliColorMode; colorDepth: CliColorDepth;
             bg = cliParseBackgroundAnswer(inputs.queryBackground())
         if bg == cbAuto:
           bg = cbUnknown
-    elif config.background != cbUnknown:
+    else:
       bg = config.background
     if bg == cbUnknown:
       depth = ccd16

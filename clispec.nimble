@@ -34,6 +34,7 @@ task test, "Run the test suite":
             "test_cs_m5b_no_color_and_not_a_terminal",
             "test_cs_m5c_colour_detection",
             "test_cs_m5c_styled_goldens",
+            "test_cs_m5c_compile_time_knobs_shrink",
             "test_type_check_nodes_carry_written_position",
             "test_cs_m6_after_separator",
             "test_tiered_grouped_subcommand_help",
