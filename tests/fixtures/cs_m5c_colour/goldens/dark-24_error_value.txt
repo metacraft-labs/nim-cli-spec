@@ -1,0 +1,7 @@
+ESC[1;38;2;255;147;139merror:ESC[0m invalid value 'ESC[38;2;227;168;1mrelaseESC[0m' for '--profile' of 'depot build'; expected one of: debug, release
+
+  ESC[1;38;2;82;198;137mtip:ESC[0m a similar value exists: 'ESC[1;38;2;83;192;210mreleaseESC[0m'
+
+ESC[1;38;2;82;198;137mUsage:ESC[0m ESC[1;38;2;83;192;210mdepotESC[0m ESC[1;38;2;83;192;210mbuildESC[0m ESC[38;2;150;183;189m[options]ESC[0m ESC[38;2;150;183;189m[<packages>...]ESC[0m
+
+For more information, try 'ESC[1;38;2;83;192;210mdepotESC[0m ESC[1;38;2;83;192;210mbuildESC[0m ESC[1;38;2;83;192;210m--helpESC[0m'.

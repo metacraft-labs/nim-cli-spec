@@ -200,8 +200,8 @@ suite "test_tiered_grouped_subcommand_help":
       rootAll50
     check Kit.helpText(styled = true) == rootShortStyled
     check cliStripStyles(rootShortStyled) == rootShort
-    check "\e[1;92mBuild Commands:\e[0m\n" in rootShortStyled
-    check "'\e[1;96mkit\e[0m \e[1;96m--help-all\e[0m'" in rootShortStyled
+    check "\e[1;34mBuild Commands:\e[0m\n" in rootShortStyled
+    check "'\e[1mkit\e[0m \e[1m--help-all\e[0m'" in rootShortStyled
     check cliStripStyles(Kit.helpText(long = true, all = true,
       styled = true)) == rootAll
     # The classic page has no groups and no tiers: every listed subcommand

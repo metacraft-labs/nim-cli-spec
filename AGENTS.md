@@ -54,9 +54,16 @@ library.
   wording per kind in `cliErrorMessage`) and `CliHelpRequest`; the
   suggestions (`cliEditDistance`, `cliSuggest`), the error block
   (`cliErrorText`) and the printers `cliPrintError` / `cliPrintHelp`.
-- `src/clispec/styles.nim`: whether to style help and errors for a stream
-  (`CliColorMode`, `cliUseColor`), the palette and styling helpers
-  (`cliStripStyles`), and the page width for a stream (`cliOutputWidth`).
+- `src/clispec/styles.nim`: colour and width for a stream. The palettes
+  (`cliPortable16`, `cliDark24`, ...), the resolved `CliStyle` rendering
+  takes, the decision (`cliColorOn`, `cliColorDepthOf`, `cliDecideStyle`
+  over `CliColorInputs`, the real `cliStreamStyle`; the background query
+  `cliQueryTerminal`, POSIX only), the users' overrides
+  (`cliParseColors`), the compile-time knobs (`clispec_*` defines, collected
+  in `cliColorDefaults`, a `static` parameter of every proc that decides),
+  the styling helpers (`cliStripStyles`) and the page width
+  (`cliOutputWidth`). A knob that is off or fixed must leave no code: gate
+  each part behind `when` on the configuration.
 - `src/clispec/help.nim`: human-readable help and the `clispec-help/1` JSON.
 - `src/clispec/completers.nim`: the completer type (`CliCompleter`,
   `CliCompletionContext`, `CliCompletion`), the check `cliModelTypeChecks`
@@ -124,6 +131,16 @@ library.
   through pipes: colour (`NO_COLOR`, `TERM=dumb`, `CliOptions.color`) and
   width (`COLUMNS`, the terminal's size, the cap at 100). The `depot`
   description both use is `tests/fixtures/cs_m5b_help/depot_cli.nim`.
+- The `test_cs_m5c_*` tests cover colour, running the same `depot` fixture
+  through `tests/colour_harness.nim` (fixture builds with `-d:` defines, a
+  pseudo-terminal that answers or ignores the background query, pipes with
+  an exact environment). `test_cs_m5c_colour_detection` checks every input
+  of the decision through the decision procs and in real runs, the knobs,
+  the compile-time errors for bad define values and a negative control
+  (builds that drop a rule fail its cases). `test_cs_m5c_styled_goldens`
+  compares the pages in every palette and with users' overrides with the
+  goldens in `tests/fixtures/cs_m5c_colour/goldens/`, which are written
+  only by running the test with `CLISPEC_REGENERATE_GOLDENS=1`.
 - `tests/test_tiered_grouped_subcommand_help.nim` pins command
   groups and tiers: the fixture `tests/fixtures/tiered_help/kit_cli.nim`
   and its golden pages, JSON and completion beside it (`-h`, `--help`,

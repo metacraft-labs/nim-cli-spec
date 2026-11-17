@@ -1,0 +1,7 @@
+ESC[1;38;5;217merror:ESC[0m unknown subcommand 'ESC[38;5;178mbiuldESC[0m' for 'depot'; expected one of: build, remote
+
+  ESC[1;38;5;42mtip:ESC[0m a similar subcommand exists: 'ESC[1;38;5;44mbuildESC[0m'
+
+ESC[1;38;5;42mUsage:ESC[0m ESC[1;38;5;44mdepotESC[0m ESC[38;5;152m[options]ESC[0m ESC[38;5;152m<command>ESC[0m
+
+For more information, try 'ESC[1;38;5;44mdepotESC[0m ESC[1;38;5;44m--helpESC[0m'.

@@ -1,0 +1,18 @@
+Build and publish packages
+
+ESC[1;34mUsage:ESC[0m ESC[1mdepotESC[0m ESC[35m[options]ESC[0m ESC[35m<command>ESC[0m
+
+ESC[1;34mCommands:ESC[0m
+  ESC[1mbuildESC[0m, ESC[1mbESC[0m         Build packages in the workspace
+  ESC[1mremoteESC[0m, ESC[1mremotesESC[0m  Manage the remotes packages are published to
+
+ESC[1;34mOptions:ESC[0m
+  ESC[1m-vESC[0m, ESC[1m--verbose...ESC[0m     Print more output; repeat for more detail
+  ESC[1m-qESC[0m, ESC[1m--quietESC[0m          Print only errors
+      ESC[1m--colorESC[0m ESC[35m<WHEN>ESC[0m   When to colour the output [default: auto]
+                       [possible values: auto, always, never] [env: DEPOT_COLOR]
+  ESC[1m-CESC[0m, ESC[1m--configESC[0m ESC[35m<PATH>ESC[0m  Read configuration from PATH instead of the workspace's
+                       depot.toml [env: DEPOT_CONFIG]
+  ESC[1m-hESC[0m, ESC[1m--helpESC[0m           Print help
+
+Run 'ESC[1mdepotESC[0m ESC[35m<command>ESC[0m ESC[1m--helpESC[0m' for more on a command.

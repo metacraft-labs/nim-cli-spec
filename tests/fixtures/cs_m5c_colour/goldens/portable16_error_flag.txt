@@ -1,0 +1,7 @@
+ESC[1;31merror:ESC[0m unknown flag 'ESC[4;35m--jobESC[0m' for 'depot build'
+
+  ESC[1;34mtip:ESC[0m a similar flag exists: 'ESC[1m--jobsESC[0m'
+
+ESC[1;34mUsage:ESC[0m ESC[1mdepotESC[0m ESC[1mbuildESC[0m ESC[35m[options]ESC[0m ESC[35m[<packages>...]ESC[0m
+
+For more information, try 'ESC[1mdepotESC[0m ESC[1mbuildESC[0m ESC[1m--helpESC[0m'.

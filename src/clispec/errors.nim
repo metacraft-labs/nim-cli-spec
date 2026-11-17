@@ -20,8 +20,11 @@
 ##
 ## ``cliPrintHelp(e)`` writes a help request to standard output and
 ## ``cliPrintError(e)`` a usage error to standard error, each deciding for
-## the stream it writes to whether to style the text and (for help) how wide
-## the page is (``clispec/styles``):
+## the stream it writes to whether to style the text, in which palette, and
+## (for help) how wide the page is (``clispec/styles``). Both decide with
+## the build's colour configuration (``cliColorDefaults``, from the
+## ``clispec_*`` defines) unless given another as their ``config``
+## parameter:
 ##
 ## .. code-block:: nim
 ##   try:
@@ -175,6 +178,10 @@ type
       ## off, or the error was made without its grammar).
     color*: CliColorMode
       ## The program's ``CliOptions.color``, for ``cliPrintError``.
+    colorDepth*: CliColorDepth
+      ## The program's ``CliOptions.colorDepth``, for ``cliPrintError``.
+    background*: CliBackground
+      ## The program's ``CliOptions.background``, for ``cliPrintError``.
     retired*: string
       ## For an unknown flag or subcommand word the description declares
       ## retired, the declared spelling that matched (``--old``, or
@@ -188,9 +195,17 @@ type
       gcsafe, raises: [].}
     ## Renders a help request's page again for a printer: at ``width``
     ## columns when the layout leaves the width to the printer (a standard
-    ## layout whose ``width`` is 0), styled when ``styled`` (a classic
-    ## layout only when the program set ``CliOptions.color`` to
-    ## ``ccmAlways``).
+    ## layout whose ``width`` is 0), styled in the ``portable16`` palette
+    ## when ``styled`` (a classic layout only when the program set
+    ## ``CliOptions.color`` to ``ccmAlways``). Kept for the programs that
+    ## call it; ``CliHelpStyledRender`` takes the decided style.
+
+  CliHelpStyledRender* = proc (width: int; style: CliStyle): string {.
+      closure, gcsafe, raises: [].}
+    ## Renders a help request's page again for a printer, as
+    ## ``CliHelpRender`` does, with ``style`` (``cliStreamStyle``,
+    ## ``cliColorStyle``); a classic layout is plain unless the program set
+    ## ``CliOptions.color`` to ``ccmAlways``.
 
   CliHelpRequest* = object of CatchableError
     ## ``--help`` (or ``-h``) was given. Not a failure: ``text`` holds the
@@ -214,8 +229,19 @@ type
       ## Renders the page for the stream it is printed to (see
       ## ``CliHelpRender``); nil when ``text`` is printed as it is (JSON,
       ## the version text, a completion answer).
+    renderStyled*: CliHelpStyledRender
+      ## The same with the decided style, which ``cliPrintHelp`` calls;
+      ## nil when ``render`` is (or when a library that made the request
+      ## set only ``render``, which ``cliPrintHelp`` then calls).
     color*: CliColorMode
       ## The program's ``CliOptions.color``, for ``cliPrintHelp``.
+    colorDepth*: CliColorDepth
+      ## The program's ``CliOptions.colorDepth``, for ``cliPrintHelp``.
+    background*: CliBackground
+      ## The program's ``CliOptions.background``, for ``cliPrintHelp``.
+    program*: string
+      ## The program's name, for its ``<PROGRAM>_COLORS`` variable (empty:
+      ## only ``CLISPEC_COLORS`` is read).
 
   CliVersionRequest* = object of CliHelpRequest
     ## ``--version`` (or, under ``parsing versionWord``, the word
@@ -391,66 +417,107 @@ func suggestionNoun(kind: CliErrorKind): string =
   else: "value"
 
 func cliTipText*(kind: CliErrorKind; suggestions: openArray[string];
-                 styled = false): string =
+                 style: CliStyle): string =
   ## The tip after ``tip:`` (``a similar flag exists: '--jobs'``), empty
-  ## when there are no suggestions.
+  ## when there are no suggestions; each suggestion a literal.
   if suggestions.len == 0:
     return ""
   var quoted: seq[string] = @[]
   for s in suggestions:
-    quoted.add("'" & cliStyled(s, ctsLiteral, styled) & "'")
+    quoted.add("'" & cliStyled(s, ctsLiteral, style) & "'")
   let noun = suggestionNoun(kind)
   if suggestions.len == 1:
     "a similar " & noun & " exists: " & quoted[0]
   else:
     "some similar " & noun & "s exist: " & quoted.join(", ")
 
+func cliTipText*(kind: CliErrorKind; suggestions: openArray[string];
+                 styled = false): string =
+  ## ``cliTipText`` plain, or in the ``portable16`` palette when
+  ## ``styled`` (no detection).
+  cliTipText(kind, suggestions, cliStyleOf(styled))
+
 func offendingWord(e: CliUsageError): string =
   case e.kind
   of cekInvalidValue: e.value
   else: e.spelling
 
-func cliErrorText*(e: ref CliUsageError; styled = false): string =
-  ## The block ``cliPrintError`` writes (see "Printing them" above), styled
-  ## when ``styled``: ``error:`` in bold bright red, the offending word in
-  ## yellow, ``tip:`` in bold bright green, the usage line and the command
-  ## lines as in help. Without ``styled`` it is the same text without
-  ## escape sequences. No line is broken.
+func cliErrorText*(e: ref CliUsageError; style: CliStyle): string =
+  ## The block ``cliPrintError`` writes (see "Printing them" above) with
+  ## ``style``: ``error:`` as the ``error`` element, the offending word as
+  ## ``invalid``, ``tip:`` as ``tip``, ``Usage:`` as a heading, the usage
+  ## line and the command lines as in help. Plain (``CliStyle()``) it is
+  ## the same text without escape sequences. No line is broken.
   var message = e.msg
   let word = offendingWord(e[])
-  if styled and word.len > 0:
+  if style.on and word.len > 0:
     let quoted = "'" & word & "'"
     let at = message.find(quoted)
     if at >= 0:
-      message = message[0 .. at] & cliStyled(word, ctsOffending, true) &
+      message = message[0 .. at] & cliStyled(word, ctsOffending, style) &
         message[at + quoted.len - 1 .. ^1]
-  var blocks = @[cliStyled("error:", ctsError, styled) & " " & message]
-  let tip = cliTipText(e.kind, e.suggestions, styled)
+  var blocks = @[cliStyled("error:", ctsError, style) & " " & message]
+  let tip = cliTipText(e.kind, e.suggestions, style)
   if tip.len > 0:
-    blocks.add("  " & cliStyled("tip:", ctsTip, styled) & " " & tip)
+    blocks.add("  " & cliStyled("tip:", ctsTip, style) & " " & tip)
   if e.usage.len > 0:
-    blocks.add(cliStyled("Usage:", ctsHeading, styled) & " " &
-      cliStyleUsage(e.usage, styled))
+    blocks.add(cliStyled("Usage:", ctsHeading, style) & " " &
+      cliStyleUsage(e.usage, style))
   if e.helpCommand.len > 0:
     blocks.add("For more information, try '" &
-      cliStyleUsage(e.helpCommand, styled) & "'.")
+      cliStyleUsage(e.helpCommand, style) & "'.")
   blocks.join("\n\n") & "\n"
 
-proc cliPrintError*(e: ref CliUsageError; stream = stderr) {.
-    raises: [IOError].} =
-  ## Writes ``cliErrorText(e)`` to ``stream``, styled when
-  ## ``cliUseColor(stream, e.color)`` says so.
-  stream.write(cliErrorText(e, cliUseColor(stream, e.color)))
+func cliErrorText*(e: ref CliUsageError; styled = false): string =
+  ## ``cliErrorText`` plain, or in the ``portable16`` palette when
+  ## ``styled`` (no detection: ``cliPrintError`` decides the style for its
+  ## stream).
+  cliErrorText(e, cliStyleOf(styled))
 
-proc cliPrintHelp*(e: ref CliHelpRequest; stream = stdout) {.
+proc cliErrorStyle*(e: ref CliUsageError; stream = stderr;
+                    config: static CliColorConfig = cliColorDefaults):
+    CliStyle =
+  ## The style ``cliPrintError`` renders ``e`` with on ``stream``: the
+  ## program's choices ``e`` carries, decided under ``config``.
+  cliStreamStyle(stream, e.color, e.colorDepth, e.background, e.program,
+    config)
+
+proc cliPrintError*(e: ref CliUsageError; stream = stderr;
+                    config: static CliColorConfig = cliColorDefaults) {.
+    raises: [IOError].} =
+  ## Writes ``cliErrorText(e, style)`` to ``stream``, with the style
+  ## decided for it (``cliErrorStyle``: whether to style, the depth, the
+  ## background and the users' overrides, under ``config``).
+  when config.colors == ccmNever:
+    stream.write(cliErrorText(e, CliStyle()))
+  else:
+    stream.write(cliErrorText(e, cliErrorStyle(e, stream, config)))
+
+proc cliHelpStyle*(e: ref CliHelpRequest; stream = stdout;
+                   config: static CliColorConfig = cliColorDefaults):
+    CliStyle =
+  ## The style ``cliPrintHelp`` renders ``e`` with on ``stream``: the
+  ## program's choices ``e`` carries, decided under ``config``.
+  cliStreamStyle(stream, e.color, e.colorDepth, e.background, e.program,
+    config)
+
+proc cliPrintHelp*(e: ref CliHelpRequest; stream = stdout;
+                   config: static CliColorConfig = cliColorDefaults) {.
     raises: [IOError].} =
   ## Writes the page of a help request to ``stream``: rendered again
-  ## (``render``) at ``cliOutputWidth(stream)`` and styled when
-  ## ``cliUseColor(stream, e.color)`` says so, or ``text`` as it is when the
-  ## request carries no renderer (JSON help, a version request, a
-  ## completion answer).
-  if e.render.isNil:
+  ## (``renderStyled``) at ``cliOutputWidth(stream)`` with the style
+  ## decided for it (``cliHelpStyle``, under ``config``), or ``text`` as it
+  ## is when the request carries no renderer (JSON help, a version request,
+  ## a completion answer). A request that carries only ``render`` (made by
+  ## another library) is rendered with it, styled in the ``portable16``
+  ## palette when the decided style is on.
+  if e.renderStyled.isNil and e.render.isNil:
     stream.write(e.text)
   else:
-    stream.write(e.render(cliOutputWidth(stream),
-      cliUseColor(stream, e.color)))
+    let style =
+      when config.colors == ccmNever: CliStyle()
+      else: cliHelpStyle(e, stream, config)
+    if e.renderStyled.isNil:
+      stream.write(e.render(cliOutputWidth(stream), style.on))
+    else:
+      stream.write(e.renderStyled(cliOutputWidth(stream), style))

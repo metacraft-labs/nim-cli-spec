@@ -98,7 +98,8 @@
 
 import std/[macros, os, strutils]
 
-import ./[model, dsl, grammar, parser, help, completion, completion_scripts]
+import ./[model, dsl, grammar, parser, help, completion, completion_scripts,
+  styles]
 
 export parser, help, grammar, completion, completion_scripts
 
@@ -722,10 +723,20 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
       ## words ``path``, laid out by ``layout``: the short page (``-h``),
       ## or with ``long`` the long one (``--help``); ``all`` lists the
       ## ``secondary`` subcommands too (``--help-all`` is ``long`` and
-      ## ``all``); ``styled`` adds the escape sequences of
-      ## ``clispec/styles``.
+      ## ``all``); ``styled`` adds the escape sequences of the
+      ## ``portable16`` palette of ``clispec/styles`` (no detection).
       cliHelpText(`gc`, cliHelpCommand(`gc`, path, program), program,
         layout, long, styled, all)
+
+    proc `helpTextName`(t: typedesc[`T`]; path: openArray[string];
+                        style: CliStyle; program = `prog`;
+                        layout = cliDefaultHelpLayout; long = false;
+                        all = false): string {.
+        raises: [CliUsageError].} =
+      ## The same page rendered with ``style`` (``cliColorStyle``, or a
+      ## ``CliStyle`` with a palette of ``clispec/styles``).
+      cliHelpText(`gc`, cliHelpCommand(`gc`, path, program), program,
+        style, layout, long, all)
 
     proc `optionsTableName`(t: typedesc[`T`]; path: openArray[string] = [];
                             layout = cliDefaultHelpLayout; group = "";

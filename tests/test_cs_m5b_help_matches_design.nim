@@ -533,58 +533,58 @@ Options:
   # The styled pages: ESC stands for the escape character.
   rootShort80Styled = """Build and publish packages
 
-ESC[1;92mUsage:ESC[0m ESC[1;96mdepotESC[0m ESC[36m[options]ESC[0m ESC[36m<command>ESC[0m
+ESC[1;34mUsage:ESC[0m ESC[1mdepotESC[0m ESC[35m[options]ESC[0m ESC[35m<command>ESC[0m
 
-ESC[1;92mCommands:ESC[0m
-  ESC[1;96mbuildESC[0m, ESC[1;96mbESC[0m         Build packages in the workspace
-  ESC[1;96mremoteESC[0m, ESC[1;96mremotesESC[0m  Manage the remotes packages are published to
+ESC[1;34mCommands:ESC[0m
+  ESC[1mbuildESC[0m, ESC[1mbESC[0m         Build packages in the workspace
+  ESC[1mremoteESC[0m, ESC[1mremotesESC[0m  Manage the remotes packages are published to
 
-ESC[1;92mOptions:ESC[0m
-  ESC[1;96m-vESC[0m, ESC[1;96m--verbose...ESC[0m     Print more output; repeat for more detail
-  ESC[1;96m-qESC[0m, ESC[1;96m--quietESC[0m          Print only errors
-      ESC[1;96m--colorESC[0m ESC[36m<WHEN>ESC[0m   When to colour the output [default: auto]
+ESC[1;34mOptions:ESC[0m
+  ESC[1m-vESC[0m, ESC[1m--verbose...ESC[0m     Print more output; repeat for more detail
+  ESC[1m-qESC[0m, ESC[1m--quietESC[0m          Print only errors
+      ESC[1m--colorESC[0m ESC[35m<WHEN>ESC[0m   When to colour the output [default: auto]
                        [possible values: auto, always, never] [env: DEPOT_COLOR]
-  ESC[1;96m-CESC[0m, ESC[1;96m--configESC[0m ESC[36m<PATH>ESC[0m  Read configuration from PATH instead of the workspace's
+  ESC[1m-CESC[0m, ESC[1m--configESC[0m ESC[35m<PATH>ESC[0m  Read configuration from PATH instead of the workspace's
                        depot.toml [env: DEPOT_CONFIG]
-  ESC[1;96m-hESC[0m, ESC[1;96m--helpESC[0m           Print help
+  ESC[1m-hESC[0m, ESC[1m--helpESC[0m           Print help
 
-Run 'ESC[1;96mdepotESC[0m ESC[36m<command>ESC[0m ESC[1;96m--helpESC[0m' for more on a command.
+Run 'ESC[1mdepotESC[0m ESC[35m<command>ESC[0m ESC[1m--helpESC[0m' for more on a command.
 """.replace("ESC", "\e")
 
   buildShort80Styled = """Build packages in the workspace
 
-ESC[1;92mUsage:ESC[0m ESC[1;96mdepotESC[0m ESC[1;96mbuildESC[0m ESC[36m[options]ESC[0m ESC[36m[<packages>...]ESC[0m
+ESC[1;34mUsage:ESC[0m ESC[1mdepotESC[0m ESC[1mbuildESC[0m ESC[35m[options]ESC[0m ESC[35m[<packages>...]ESC[0m
 
-ESC[1;92mAliases:ESC[0m ESC[1;96mbESC[0m
+ESC[1;34mAliases:ESC[0m ESC[1mbESC[0m
 
-ESC[1;92mArguments:ESC[0m
-  ESC[36m[<packages>...]ESC[0m  Packages to build (default: every package)
+ESC[1;34mArguments:ESC[0m
+  ESC[35m[<packages>...]ESC[0m  Packages to build (default: every package)
 
-ESC[1;92mOptions:ESC[0m
-  ESC[1;96m-jESC[0m, ESC[1;96m--jobsESC[0m ESC[36m<N>ESC[0m                 Number of parallel jobs [default: 4]
+ESC[1;34mOptions:ESC[0m
+  ESC[1m-jESC[0m, ESC[1m--jobsESC[0m ESC[35m<N>ESC[0m                 Number of parallel jobs [default: 4]
                                  [env: DEPOT_JOBS]
-      ESC[1;96m--profileESC[0m ESC[36m<debug|release>ESC[0m  Build profile [default: debug]
-  ESC[1;96m-FESC[0m, ESC[1;96m--featureESC[0m ESC[36m<NAME>...ESC[0m        Enable a feature; may be given more than once
-      ESC[1;96m--reportESC[0m[=ESC[36m<PATH>ESC[0m]          Write a build report (to build-report.json when
+      ESC[1m--profileESC[0m ESC[35m<debug|release>ESC[0m  Build profile [default: debug]
+  ESC[1m-FESC[0m, ESC[1m--featureESC[0m ESC[35m<NAME>...ESC[0m        Enable a feature; may be given more than once
+      ESC[1m--reportESC[0m[=ESC[35m<PATH>ESC[0m]          Write a build report (to build-report.json when
                                  no PATH is given)
-      ESC[1;96m--target-dirESC[0m ESC[36m<DIR>ESC[0m         Directory for build outputs [default: target]
+      ESC[1m--target-dirESC[0m ESC[35m<DIR>ESC[0m         Directory for build outputs [default: target]
                                  [env: DEPOT_TARGET_DIR]
-  ESC[1;96m-hESC[0m, ESC[1;96m--helpESC[0m                     Print help (see more with '--help')
+  ESC[1m-hESC[0m, ESC[1m--helpESC[0m                     Print help (see more with '--help')
 
-ESC[1;92mGlobal Options:ESC[0m
-  ESC[1;96m-vESC[0m, ESC[1;96m--verbose...ESC[0m     Print more output; repeat for more detail
-  ESC[1;96m-qESC[0m, ESC[1;96m--quietESC[0m          Print only errors
-      ESC[1;96m--colorESC[0m ESC[36m<WHEN>ESC[0m   When to colour the output [default: auto]
+ESC[1;34mGlobal Options:ESC[0m
+  ESC[1m-vESC[0m, ESC[1m--verbose...ESC[0m     Print more output; repeat for more detail
+  ESC[1m-qESC[0m, ESC[1m--quietESC[0m          Print only errors
+      ESC[1m--colorESC[0m ESC[35m<WHEN>ESC[0m   When to colour the output [default: auto]
                        [possible values: auto, always, never] [env: DEPOT_COLOR]
-  ESC[1;96m-CESC[0m, ESC[1;96m--configESC[0m ESC[36m<PATH>ESC[0m  Read configuration from PATH instead of the workspace's
+  ESC[1m-CESC[0m, ESC[1m--configESC[0m ESC[35m<PATH>ESC[0m  Read configuration from PATH instead of the workspace's
                        depot.toml [env: DEPOT_CONFIG]
 
-ESC[1;92mExamples:ESC[0m
+ESC[1;34mExamples:ESC[0m
   Build two packages in release mode
-    ESC[1;96mdepot build -j 8 --profile release app libESC[0m
+    ESC[1mdepot build -j 8 --profile release app libESC[0m
 
   Build everything with TLS and write a report
-    ESC[1;96mdepot build --feature tls --reportESC[0m
+    ESC[1mdepot build --feature tls --reportESC[0m
 """.replace("ESC", "\e")
 
   # The error blocks: an unknown subcommand and a missing value as the
@@ -623,22 +623,22 @@ Usage: depot build [options] [<packages>...]
 For more information, try 'depot build --help'.
 """
 
-  errBiuldStyled = """ESC[1;91merror:ESC[0m unknown subcommand 'ESC[33mbiuldESC[0m' for 'depot'; expected one of: build, remote
+  errBiuldStyled = """ESC[1;31merror:ESC[0m unknown subcommand 'ESC[4;35mbiuldESC[0m' for 'depot'; expected one of: build, remote
 
-  ESC[1;92mtip:ESC[0m a similar subcommand exists: 'ESC[1;96mbuildESC[0m'
+  ESC[1;34mtip:ESC[0m a similar subcommand exists: 'ESC[1mbuildESC[0m'
 
-ESC[1;92mUsage:ESC[0m ESC[1;96mdepotESC[0m ESC[36m[options]ESC[0m ESC[36m<command>ESC[0m
+ESC[1;34mUsage:ESC[0m ESC[1mdepotESC[0m ESC[35m[options]ESC[0m ESC[35m<command>ESC[0m
 
-For more information, try 'ESC[1;96mdepotESC[0m ESC[1;96m--helpESC[0m'.
+For more information, try 'ESC[1mdepotESC[0m ESC[1m--helpESC[0m'.
 """.replace("ESC", "\e")
 
-  errProfileStyled = """ESC[1;91merror:ESC[0m invalid value 'ESC[33mrelaseESC[0m' for '--profile' of 'depot build'; expected one of: debug, release
+  errProfileStyled = """ESC[1;31merror:ESC[0m invalid value 'ESC[4;35mrelaseESC[0m' for '--profile' of 'depot build'; expected one of: debug, release
 
-  ESC[1;92mtip:ESC[0m a similar value exists: 'ESC[1;96mreleaseESC[0m'
+  ESC[1;34mtip:ESC[0m a similar value exists: 'ESC[1mreleaseESC[0m'
 
-ESC[1;92mUsage:ESC[0m ESC[1;96mdepotESC[0m ESC[1;96mbuildESC[0m ESC[36m[options]ESC[0m ESC[36m[<packages>...]ESC[0m
+ESC[1;34mUsage:ESC[0m ESC[1mdepotESC[0m ESC[1mbuildESC[0m ESC[35m[options]ESC[0m ESC[35m[<packages>...]ESC[0m
 
-For more information, try 'ESC[1;96mdepotESC[0m ESC[1;96mbuildESC[0m ESC[1;96m--helpESC[0m'.
+For more information, try 'ESC[1mdepotESC[0m ESC[1mbuildESC[0m ESC[1m--helpESC[0m'.
 """.replace("ESC", "\e")
 
 func width(w: int): CliHelpLayout =

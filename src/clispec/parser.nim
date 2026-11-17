@@ -107,7 +107,7 @@
 
 import std/[options, strutils]
 
-import ./[model, grammar, errors, values, help, candidates]
+import ./[model, grammar, errors, values, help, candidates, styles]
 
 export errors, values, candidates
 
@@ -156,10 +156,20 @@ type
       ## The generated ``load`` fills it in when it is nil.
     color*: CliColorMode
       ## Whether ``cliPrintHelp`` and ``cliPrintError`` style what they
-      ## print (``clispec/styles``): ``ccmAuto`` (the default) when the
-      ## stream is a terminal, ``NO_COLOR`` is unset or empty and ``TERM``
-      ## is not ``dumb``; ``ccmAlways``; ``ccmNever``. The help requests
-      ## and usage errors the parser raises carry it.
+      ## print (``clispec/styles``): ``ccmAuto`` (the default) as the
+      ## environment and the stream say; ``ccmAlways``; ``ccmNever``.
+      ## Ignored when the build fixes ``clispec_colors``. The help requests
+      ## and usage errors the parser raises carry it, as they carry
+      ## ``colorDepth`` and ``background``.
+    colorDepth*: CliColorDepth
+      ## The colour depth to style with (``ccd16``, ``ccd256``, ``ccd24``);
+      ## ``ccdAuto`` (the default) detects it. Ignored when the build fixes
+      ## ``clispec_color_depth``.
+    background*: CliBackground
+      ## The terminal's background (``cbDark``, ``cbLight``, or
+      ## ``cbUnknown`` for the ``portable16`` palette); ``cbAuto`` (the
+      ## default) learns it. Ignored when the build fixes
+      ## ``clispec_background``.
 
   CliTokens* = object
     ## What ``cliTokenize`` read from argv.
@@ -198,9 +208,25 @@ type
     color*: CliColorMode
       ## ``CliOptions.color``, for the usage errors raised after
       ## tokenizing.
+    colorDepth*: CliColorDepth
+      ## ``CliOptions.colorDepth``, likewise.
+    background*: CliBackground
+      ## ``CliOptions.background``, likewise.
     disableHelpFlag*: bool
       ## ``CliOptions.disableHelpFlag``, likewise (an error then names no
       ## help command).
+
+proc cliColorStyle*(stream: File; options: CliOptions;
+                    program = options.program;
+                    config: static CliColorConfig = cliColorDefaults):
+    CliStyle =
+  ## The style a page the program prints itself to ``stream`` is rendered
+  ## with (``cliHelpText(..., style)``, ``cliErrorText(e, style)``): the
+  ## program's ``color``, ``colorDepth`` and ``background`` and its name
+  ## (for ``<PROGRAM>_COLORS``), decided under ``config`` (the build's
+  ## configuration unless given; see ``clispec/styles``).
+  cliStreamStyle(stream, options.color, options.colorDepth,
+    options.background, program, config)
 
 func cliWithValueCheck*(options: CliOptions;
                         check: CliValueCheck): CliOptions =
@@ -484,12 +510,14 @@ func cliAddErrorContext*(e: ref CliUsageError; g: CliGrammar; command: int;
                          options = CliOptions()) =
   ## Fills in what ``cliErrorText`` prints besides the message: the usage
   ## line of ``command``, the command line that prints its help and the
-  ## program's ``color``. The parser calls it for every error it raises; a
-  ## library that raises its own usage errors (another source's) calls it
-  ## too.
+  ## program's ``color``, ``colorDepth`` and ``background``. The parser
+  ## calls it for every error it raises; a library that raises its own
+  ## usage errors (another source's) calls it too.
   e.usage = cliUsageLine(g, command, e.program)
   e.helpCommand = cliHelpCommandLine(g, command, e.program, options)
   e.color = options.color
+  e.colorDepth = options.colorDepth
+  e.background = options.background
 
 func dashless(spelling: string): string =
   var k = 0
@@ -825,6 +853,7 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
     let text = if json: cliHelpJson(g, node, program)
                else: cliHelpText(g, node, program, layout, long, all = all)
     var render: CliHelpRender = nil
+    var renderStyled: CliHelpStyledRender = nil
     if not json:
       # The page again, for the stream it is printed to: a standard layout
       # whose width is 0 takes the printer's width; a classic one is styled
@@ -832,17 +861,23 @@ proc cliTokenize*(g: CliGrammar; argv: openArray[string];
       let grammar = g
       let command = node
       let color = options.color
-      render = proc (width: int; styled: bool): string {.closure, gcsafe,
-          raises: [].} =
+      renderStyled = proc (width: int; style: CliStyle): string {.closure,
+          gcsafe, raises: [].} =
         var l = layout
         if l.style == chsStandard and l.width == 0:
           l.width = width
-        let paint = styled and (l.style == chsStandard or
-          color == ccmAlways)
-        cliHelpText(grammar, command, program, l, long, paint, all)
+        let paint = if l.style == chsStandard or color == ccmAlways: style
+                    else: CliStyle()
+        cliHelpText(grammar, command, program, paint, l, long, all)
+      let styledRender = renderStyled
+      render = proc (width: int; styled: bool): string {.closure, gcsafe,
+          raises: [].} =
+        styledRender(width, cliStyleOf(styled))
     raise (ref CliHelpRequest)(msg: "help requested", commandPath: path,
       json: json, long: long, all: all, text: text, render: render,
-      color: options.color)
+      renderStyled: renderStyled, color: options.color,
+      colorDepth: options.colorDepth, background: options.background,
+      program: program)
 
   proc requestVersion() {.raises: [CliUsageError, CliVersionRequest].} =
     checkValuesBeforeHelp()
@@ -1171,6 +1206,8 @@ func cliNewResolution*(g: CliGrammar; tokens: CliTokens;
   result.program = effectiveProgram(g, options)
   result.exitCode = effectiveExitCode(options)
   result.color = options.color
+  result.colorDepth = options.colorDepth
+  result.background = options.background
   result.disableHelpFlag = options.disableHelpFlag
   result.merged = newSeq[seq[CliCandidate]](g.params.len)
   result.overridden = newSeq[seq[CliCandidate]](g.params.len)
@@ -1230,6 +1267,7 @@ proc cliDecide*(g: CliGrammar; r: var CliResolution) {.
         g.commands[p.declaredBy].path, -1, cliDisplayName(p),
         exitCode = r.exitCode)
       e.cliAddErrorContext(g, p.declaredBy, CliOptions(color: r.color,
+        colorDepth: r.colorDepth, background: r.background,
         disableHelpFlag: r.disableHelpFlag))
       raise e
 
@@ -1260,6 +1298,7 @@ proc invalid(g: CliGrammar; r: CliResolution; id: int; c: CliCandidate;
     g.commands[p.declaredBy].path, index, spelling, text, expected,
     exitCode = r.exitCode, source = c.described)
   e.cliAddErrorContext(g, p.declaredBy, CliOptions(color: r.color,
+    colorDepth: r.colorDepth, background: r.background,
     disableHelpFlag: r.disableHelpFlag))
   e.suggestions = cliValueSuggestions(p, text)
   raise e

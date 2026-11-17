@@ -467,7 +467,7 @@ Generated for `Tool` (exported when written
 | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Tool.load(argv, options = CliOptions())`                                          | parses `argv` (without the program name)                                                                                                              |
 | `Tool.load(options = CliOptions())`                                                | parses the process's own arguments                                                                                                                    |
-| `Tool.helpText(path = [], layout, long, styled, all)` / `Tool.helpJson(path = [])` | the help of the command reached by the subcommand words `path` (`long`: the `--help` page; `styled`: with colour; `all`: `secondary` subcommands too) |
+| `Tool.helpText(path = [], layout, long, styled, all)` / `Tool.helpJson(path = [])` | the help of the command reached by the subcommand words `path` (`long`: the `--help` page; `styled`: in the `portable16` palette; `all`: `secondary` subcommands too; `Tool.helpText(path, style)` renders with a `CliStyle`, see [Colour and width](#colour-and-width)) |
 | `Tool.optionsTable(path = [], layout, group = "", long, styled)`                   | just the rows of that command's options table (see [Help](#help))                                                                                     |
 | `Tool.complete(words, cursor = -1)`                                                | the completion candidates for `words[cursor]` (the last word by default)                                                                              |
 | `Tool.completionScript(shell)` / `Tool.completionReply(args)`                      | a shell's completion script; the answer to a script's request                                                                                         |
@@ -1331,39 +1331,139 @@ assert offered == @["init", "build", "graph", "doctor"]
 #### Colour and width
 
 `cliPrintHelp(e, stream = stdout)` and `cliPrintError(e, stream = stderr)`
-decide, for the stream they write to:
+decide, for the stream they write to, whether to style the page, in which
+palette, and how wide it is. Styling never changes the text: the styled
+page with its escape sequences removed (`cliStripStyles`) is the plain page,
+byte for byte, so colour never says anything the words do not, and the
+layout, measured on the visible text (`cliVisibleLen`), is the same.
 
-- **Colour.** The text is styled only when the stream is a terminal (on
-  Windows, a console on which virtual terminal processing is or can be
-  turned on), `NO_COLOR` is unset or empty and `TERM` is not `dumb`, unless
-  the program forces it with `CliOptions(color: ccmAlways)` or `ccmNever`
-  (the default is `ccmAuto`, that rule; `cliUseColor(stream, mode)`). The colours follow
-  cargo: headings bold bright green (`ESC[1;92m`); flag spellings, command
-  names and aliases, the program name, the words of a usage line, example
-  command lines and suggestions bold bright cyan (`ESC[1;96m`);
-  placeholders (`<N>`, `[options]`, `[<packages>...]`) cyan (`ESC[36m`); in
-  an error, `error:` bold bright red (`ESC[1;91m`), the offending word
-  yellow (`ESC[33m`) and `tip:` bold bright green; each span ends with
-  `ESC[0m`. Descriptions and notes are not styled. The styled text is the
-  plain text with escape sequences added and nothing else changed
-  (`cliStripStyles` gives the plain text back), so the layout, measured on
-  the visible text (`cliVisibleLen`), is the same.
-- **Width.** `COLUMNS` when it is set to a positive integer, else the
-  terminal's width when the stream is a terminal, else 80; at most 100
-  (`cliOutputWidth(stream)`). A layout whose `width` is set keeps it.
+**What is styled.** Six elements and nothing else: `heading` (section
+headings and `Usage:`), `literal` (flag spellings, command names and
+aliases, the program name, the words of a usage line, example command lines
+and suggestions), `placeholder` (`<N>` with a list's `...`, and the
+bracketed words of a usage line: `[options]`, `[<packages>...]`), `error`
+(the word `error:`), `invalid` (the offending word in an error) and `tip`
+(the word `tip:`). Descriptions, notes and prose are never styled. Only bold
+is used, and underline in `portable16`'s `invalid`; each span is
+`ESC[<parameters>m`, the text, `ESC[0m`.
+
+**On or off.** The first rule that applies decides (`cliColorOn`,
+`cliUseColor(stream, mode)`):
+
+1. `CliOptions.color`: `ccmAlways` or `ccmNever` (the default, `ccmAuto`,
+   goes on to the next rules);
+2. `NO_COLOR` set and not empty: off;
+3. `FORCE_COLOR` set: `0` or `false` off, anything else (`1`, `2`, `3`,
+   `true`, empty) on;
+4. `CLICOLOR_FORCE` set, not empty and not `0`: on;
+5. `CLICOLOR=0`: off;
+6. otherwise on exactly when the stream is a terminal and either `TERM` is
+   set (not empty) and not `dumb`, or `CI` is set. On Windows the stream
+   must be a console on which virtual terminal processing is or can be
+   turned on (clispec turns it on), and an unset `TERM` counts as usable.
+
+**Depth.** When styling is on: `CliOptions.colorDepth` when the program
+sets it (`ccd16`, `ccd256`, `ccd24`); else 256 colours for `FORCE_COLOR=2`
+and 24-bit for `FORCE_COLOR=3`; else 24-bit when `COLORTERM` is `truecolor`
+or `24bit`; else 256 when `TERM` ends in `-256color` or `256`; else 16. The
+depth is 16 whenever the background is unknown.
+
+**Background.** The 256-colour and 24-bit palettes are tuned for a dark or
+a light background, learned from the first source that answers: the users'
+`bg=` (below); `CliOptions.background` (`cbDark`, `cbLight`, or `cbUnknown`
+to keep `portable16`); `COLORFGBG`, whose last field is the background's
+palette index (0 to 6 and 8 dark, 7 and 9 to 15 light); and last a query of
+the terminal. The query is made at most once per process, only when the
+depth would be 256 or 24-bit and the stream is a terminal, never under a
+`TERM` of `dumb`, `screen*` or `tmux*`, never when the process is not in the
+terminal's foreground process group, and not on Windows. It opens
+`/dev/tty`, turns off canonical mode and echo, writes `ESC]11;?`,
+`ESC]10;?` and `ESC[c` (every terminal answers the last, so its answer ends
+the wait), reads for at most 100 ms and restores the terminal. The
+background is dark when its relative luminance (WCAG) is below the
+foreground's, or below 0.5 when no foreground is reported. With no answer,
+the background is unknown and the page gets `portable16`.
+
+**Palettes.** SGR parameters (`cliPortable16`, `cliDark24`, `cliDark256`,
+`cliLight24`, `cliLight256`):
+
+| Element | portable16 | dark, 24-bit | dark, 256 | light, 24-bit | light, 256 |
+|---|---|---|---|---|---|
+| `heading` | `1;34` | `1;38;2;82;198;137` | `1;38;5;42` | `1;38;2;18;129;81` | `1;38;5;22` |
+| `literal` | `1` | `1;38;2;83;192;210` | `1;38;5;44` | `1;38;2;9;125;140` | `1;38;5;23` |
+| `placeholder` | `35` | `38;2;150;183;189` | `38;5;152` | `38;2;87;118;124` | `38;5;242` |
+| `error` | `1;31` | `1;38;2;255;147;139` | `1;38;5;217` | `1;38;2;214;47;53` | `1;38;5;160` |
+| `invalid` | `4;35` | `38;2;227;168;1` | `38;5;178` | `38;2;145;107;2` | `38;5;94` |
+| `tip` | `1;34` | `1;38;2;82;198;137` | `1;38;5;42` | `1;38;2;18;129;81` | `1;38;5;22` |
+
+`portable16` (depth 16, or the background unknown) uses only 16-colour
+codes that read on dark and light backgrounds alike. The tuned palettes
+keep cargo's hues (green headings, cyan literals and placeholders, red
+errors, amber offending words) at a lightness chosen for contrast: at least
+7:1 on common dark terminal backgrounds and 4.5:1 on light ones.
+
+**Users' overrides.** Only in a program built with
+`-d:clispec_user_colors=on` (they are off by default): `CLISPEC_COLORS` and
+`<PROGRAM>_COLORS` (the program's name upper-cased, every character other
+than a letter or digit written `_`, so `DEPOT_COLORS`) hold `name=value`
+entries separated by `:`. `name` is an element or `bg`; an element's value
+is SGR parameters (digits and `;`), used at every depth, and an empty value
+leaves the element unstyled; `bg` is `dark` or `light`. The program's
+variable applies over `CLISPEC_COLORS`, which applies over the palette. A
+malformed entry is ignored on its own, so a page always prints, and the
+overrides never turn styling on or off:
+`DEPOT_COLORS='heading=1;4:invalid=7:bg=light'`.
+
+**Compile-time knobs.** Each policy can be fixed, and each input switched
+off, for the whole build with a define. A bad value is a compile-time error
+that names the define and lists its allowed values. A knob that is off or
+fixed leaves no code behind: its variables are not read, the query is not
+compiled, and a palette that can never be chosen is not in the program.
+
+| Define | Values | Default | When fixed or off |
+|---|---|---|---|
+| `clispec_colors` | `auto`, `always`, `never` | `auto` | `never`: nothing is styled and `CliOptions.color` is ignored; `always`: no detection (rules 2 to 6), `CliOptions.color` still applies |
+| `clispec_color_env` | on/off | on | rules 2 to 5 are gone, as is `FORCE_COLOR`'s depth |
+| `clispec_color_depth` | `auto`, `16`, `256`, `24` | `auto` | that depth; nothing is read to detect it |
+| `clispec_background` | `auto`, `dark`, `light`, `unknown` | `auto` | that background; no source is read (`unknown`: `portable16` alone) |
+| `clispec_colorfgbg` | on/off | on | `COLORFGBG` is not read |
+| `clispec_background_query` | on/off | on | no query: no terminal I/O beyond the page |
+| `clispec_user_colors` | on/off | **off** | `CLISPEC_COLORS`, `<PROGRAM>_COLORS` and their `bg=` exist only when on |
+| `clispec_palette` | entries as in the users' variables | empty | the developer's restyling, over every palette and under the users' overrides; checked when the program is built (`bg` is refused: use `clispec_background`) |
+
+On/off takes `on`, `yes`, `true`, `1` and `off`, `no`, `false`, `0`,
+`none`. The build's configuration is the constant `cliColorDefaults` (a
+`CliColorConfig`); `cliPrintHelp`, `cliPrintError`, `cliUseColor`,
+`cliColorStyle` and the decision procs take it as a `static` parameter
+(`config`) defaulting to it, so a call can use another configuration and is
+compiled for it. `CliOptions.color`, `colorDepth` and `background` act only
+where the configuration's policy is `auto`.
+
+**Width.** `COLUMNS` when it is set to a positive integer, else the
+terminal's width when the stream is a terminal, else 80; at most 100
+(`cliOutputWidth(stream)`). A layout whose `width` is set keeps it.
 
 `load` still fills `CliHelpRequest.text` with the plain page at the
 layout's width (80 for the default), so a program that captures it gets the
-same text everywhere. The request also carries `render(width, styled)`,
-which renders the page again (nil for JSON help, the version text and
-completion answers, which are printed as they are), and the program's
-`color`; `cliPrintHelp` calls it. `cliHelpText(..., styled = true)` and
-`Tool.helpText(styled = true)` render a styled page directly. The classic
-layout is printed as it is: its width never changes, and it is styled
-only under `ccmAlways`.
+same text everywhere. The request also carries `renderStyled(width,
+style)`, which renders the page again (nil for JSON help, the version text
+and completion answers, which are printed as they are), and the program's
+`color`, `colorDepth`, `background` and name; `cliPrintHelp` calls it with
+the style it decides (`cliHelpStyle`). A program that prints pages itself
+asks `cliColorStyle(stream, options)` for the `CliStyle` (on or off, the
+SGR parameters of each element) and renders with
+`Tool.helpText(path, style)`, `cliHelpText(g, command, program, style)` or
+`cliErrorText(e, style)`; `cliDecideStyle` is the same decision over inputs
+the caller provides (an environment lookup, whether the stream is a
+terminal, the terminal's answer). The older entry points that take
+`styled: bool` (`render(width, styled)`, `cliHelpText(..., styled = true)`,
+`Tool.helpText(styled = true)`, `cliErrorText(e, styled = true)`) still
+work: `true` is the `portable16` palette, with no detection. The classic
+layout is printed as it is: its width never changes, and it is styled only
+under `ccmAlways`.
 
 ```nim
-import std/strutils
+import std/[os, strutils]
 import clispec
 
 cliProgram(Hue, "hue"):
@@ -1378,11 +1478,29 @@ proc helpOf(argv: seq[string]; options = CliOptions()): ref CliHelpRequest =
 
 let e = helpOf(@["-h"], CliOptions(color: ccmAlways))
 assert e.text == Hue.helpText()                 # plain, 80 columns
-let styled = e.render(80, true)
-assert "\e[1;92mUsage:\e[0m" in styled
-assert "\e[1;96m--shade\e[0m \e[36m<NAME>\e[0m" in styled
+let styled = e.render(80, true)                 # portable16
+assert "\e[1;34mUsage:\e[0m" in styled
+assert "\e[1m--shade\e[0m \e[35m<NAME>\e[0m" in styled
 assert cliStripStyles(styled) == e.text
 assert styled == Hue.helpText(styled = true)
+
+# A dark terminal at 256 colours, chosen by the program.
+let dark = CliStyle(on: true, depth: ccd256, background: cbDark,
+                    sgr: cliDark256)
+let page = e.renderStyled(80, dark)
+assert "\e[1;38;5;42mUsage:\e[0m" in page
+assert cliStripStyles(page) == e.text
+assert page == Hue.helpText([], dark)
+
+# A program that prints to a file itself, forcing colour, a depth and a
+# background.
+let path = getTempDir() / "hue-help.txt"
+let log = open(path, fmWrite)
+let forced = cliColorStyle(log, CliOptions(color: ccmAlways,
+  colorDepth: ccd24, background: cbLight))
+assert forced.sgr == cliLight24
+log.close()
+removeFile(path)
 ```
 
 #### The machine-readable form

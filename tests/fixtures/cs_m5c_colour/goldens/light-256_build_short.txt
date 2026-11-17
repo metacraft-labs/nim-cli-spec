@@ -1,0 +1,34 @@
+Build packages in the workspace
+
+ESC[1;38;5;22mUsage:ESC[0m ESC[1;38;5;23mdepotESC[0m ESC[1;38;5;23mbuildESC[0m ESC[38;5;242m[options]ESC[0m ESC[38;5;242m[<packages>...]ESC[0m
+
+ESC[1;38;5;22mAliases:ESC[0m ESC[1;38;5;23mbESC[0m
+
+ESC[1;38;5;22mArguments:ESC[0m
+  ESC[38;5;242m[<packages>...]ESC[0m  Packages to build (default: every package)
+
+ESC[1;38;5;22mOptions:ESC[0m
+  ESC[1;38;5;23m-jESC[0m, ESC[1;38;5;23m--jobsESC[0m ESC[38;5;242m<N>ESC[0m                 Number of parallel jobs [default: 4]
+                                 [env: DEPOT_JOBS]
+      ESC[1;38;5;23m--profileESC[0m ESC[38;5;242m<debug|release>ESC[0m  Build profile [default: debug]
+  ESC[1;38;5;23m-FESC[0m, ESC[1;38;5;23m--featureESC[0m ESC[38;5;242m<NAME>...ESC[0m        Enable a feature; may be given more than once
+      ESC[1;38;5;23m--reportESC[0m[=ESC[38;5;242m<PATH>ESC[0m]          Write a build report (to build-report.json when
+                                 no PATH is given)
+      ESC[1;38;5;23m--target-dirESC[0m ESC[38;5;242m<DIR>ESC[0m         Directory for build outputs [default: target]
+                                 [env: DEPOT_TARGET_DIR]
+  ESC[1;38;5;23m-hESC[0m, ESC[1;38;5;23m--helpESC[0m                     Print help (see more with '--help')
+
+ESC[1;38;5;22mGlobal Options:ESC[0m
+  ESC[1;38;5;23m-vESC[0m, ESC[1;38;5;23m--verbose...ESC[0m     Print more output; repeat for more detail
+  ESC[1;38;5;23m-qESC[0m, ESC[1;38;5;23m--quietESC[0m          Print only errors
+      ESC[1;38;5;23m--colorESC[0m ESC[38;5;242m<WHEN>ESC[0m   When to colour the output [default: auto]
+                       [possible values: auto, always, never] [env: DEPOT_COLOR]
+  ESC[1;38;5;23m-CESC[0m, ESC[1;38;5;23m--configESC[0m ESC[38;5;242m<PATH>ESC[0m  Read configuration from PATH instead of the workspace's
+                       depot.toml [env: DEPOT_CONFIG]
+
+ESC[1;38;5;22mExamples:ESC[0m
+  Build two packages in release mode
+    ESC[1;38;5;23mdepot build -j 8 --profile release app libESC[0m
+
+  Build everything with TLS and write a report
+    ESC[1;38;5;23mdepot build --feature tls --reportESC[0m

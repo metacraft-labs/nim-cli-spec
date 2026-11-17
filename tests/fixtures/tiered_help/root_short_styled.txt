@@ -1,26 +1,26 @@
 Develop, build and ship projects
 
-ESC[1;92mUsage:ESC[0m ESC[1;96mkitESC[0m ESC[36m[options]ESC[0m ESC[36m<command>ESC[0m
+ESC[1;34mUsage:ESC[0m ESC[1mkitESC[0m ESC[35m[options]ESC[0m ESC[35m<command>ESC[0m
 
-ESC[1;92mCommands:ESC[0m
-  ESC[1;96minitESC[0m  Create a new project
+ESC[1;34mCommands:ESC[0m
+  ESC[1minitESC[0m  Create a new project
 
-ESC[1;92mBuild Commands:ESC[0m
+ESC[1;34mBuild Commands:ESC[0m
   Turn sources into artifacts
-  ESC[1;96mbuildESC[0m, ESC[1;96mbESC[0m  Build the project
-  ESC[1;96mtestESC[0m      Run the tests
+  ESC[1mbuildESC[0m, ESC[1mbESC[0m  Build the project
+  ESC[1mtestESC[0m      Run the tests
 
-ESC[1;92mWorkspace Commands:ESC[0m
-  ESC[1;96msyncESC[0m  Fetch and fast-forward every repository
-  ESC[1;96mrepoESC[0m  Manage the repositories
+ESC[1;34mWorkspace Commands:ESC[0m
+  ESC[1msyncESC[0m  Fetch and fast-forward every repository
+  ESC[1mrepoESC[0m  Manage the repositories
 
-ESC[1;92mOptions:ESC[0m
-  ESC[1;96m-vESC[0m, ESC[1;96m--verboseESC[0m  Print more output
-  ESC[1;96m-hESC[0m, ESC[1;96m--helpESC[0m     Print help
+ESC[1;34mOptions:ESC[0m
+  ESC[1m-vESC[0m, ESC[1m--verboseESC[0m  Print more output
+  ESC[1m-hESC[0m, ESC[1m--helpESC[0m     Print help
 
-ESC[1;92mOutput:ESC[0m
+ESC[1;34mOutput:ESC[0m
   How results are shown
-  ESC[1;96m--colorESC[0m ESC[36m<auto|always|never>ESC[0m  When to colour the output [default: auto]
+  ESC[1m--colorESC[0m ESC[35m<auto|always|never>ESC[0m  When to colour the output [default: auto]
 
-Run 'ESC[1;96mkitESC[0m ESC[1;96m--help-allESC[0m' to list all 8 commands, or 'ESC[1;96mkitESC[0m ESC[36m<command>ESC[0m ESC[1;96m--helpESC[0m' for
+Run 'ESC[1mkitESC[0m ESC[1m--help-allESC[0m' to list all 8 commands, or 'ESC[1mkitESC[0m ESC[35m<command>ESC[0m ESC[1m--helpESC[0m' for
 details.

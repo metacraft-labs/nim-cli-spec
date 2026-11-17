@@ -171,8 +171,9 @@ proc throughPipes(args: openArray[string];
   # without what decides colour and width or sets the fixture's flags.
   let table = newStringTable(modeCaseSensitive)
   for k, v in envPairs():
-    if k.toUpperAscii() in ["NO_COLOR", "TERM", "COLUMNS"] or
-        k.toUpperAscii().startsWith("DEPOT_"):
+    if k.toUpperAscii() in ["NO_COLOR", "TERM", "COLUMNS", "FORCE_COLOR",
+        "CLICOLOR", "CLICOLOR_FORCE", "COLORTERM", "COLORFGBG", "CI",
+        "CLISPEC_COLORS"] or k.toUpperAscii().startsWith("DEPOT_"):
       continue
     table[k] = v
   for (k, v) in env:

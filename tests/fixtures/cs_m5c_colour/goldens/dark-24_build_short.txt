@@ -1,0 +1,34 @@
+Build packages in the workspace
+
+ESC[1;38;2;82;198;137mUsage:ESC[0m ESC[1;38;2;83;192;210mdepotESC[0m ESC[1;38;2;83;192;210mbuildESC[0m ESC[38;2;150;183;189m[options]ESC[0m ESC[38;2;150;183;189m[<packages>...]ESC[0m
+
+ESC[1;38;2;82;198;137mAliases:ESC[0m ESC[1;38;2;83;192;210mbESC[0m
+
+ESC[1;38;2;82;198;137mArguments:ESC[0m
+  ESC[38;2;150;183;189m[<packages>...]ESC[0m  Packages to build (default: every package)
+
+ESC[1;38;2;82;198;137mOptions:ESC[0m
+  ESC[1;38;2;83;192;210m-jESC[0m, ESC[1;38;2;83;192;210m--jobsESC[0m ESC[38;2;150;183;189m<N>ESC[0m                 Number of parallel jobs [default: 4]
+                                 [env: DEPOT_JOBS]
+      ESC[1;38;2;83;192;210m--profileESC[0m ESC[38;2;150;183;189m<debug|release>ESC[0m  Build profile [default: debug]
+  ESC[1;38;2;83;192;210m-FESC[0m, ESC[1;38;2;83;192;210m--featureESC[0m ESC[38;2;150;183;189m<NAME>...ESC[0m        Enable a feature; may be given more than once
+      ESC[1;38;2;83;192;210m--reportESC[0m[=ESC[38;2;150;183;189m<PATH>ESC[0m]          Write a build report (to build-report.json when
+                                 no PATH is given)
+      ESC[1;38;2;83;192;210m--target-dirESC[0m ESC[38;2;150;183;189m<DIR>ESC[0m         Directory for build outputs [default: target]
+                                 [env: DEPOT_TARGET_DIR]
+  ESC[1;38;2;83;192;210m-hESC[0m, ESC[1;38;2;83;192;210m--helpESC[0m                     Print help (see more with '--help')
+
+ESC[1;38;2;82;198;137mGlobal Options:ESC[0m
+  ESC[1;38;2;83;192;210m-vESC[0m, ESC[1;38;2;83;192;210m--verbose...ESC[0m     Print more output; repeat for more detail
+  ESC[1;38;2;83;192;210m-qESC[0m, ESC[1;38;2;83;192;210m--quietESC[0m          Print only errors
+      ESC[1;38;2;83;192;210m--colorESC[0m ESC[38;2;150;183;189m<WHEN>ESC[0m   When to colour the output [default: auto]
+                       [possible values: auto, always, never] [env: DEPOT_COLOR]
+  ESC[1;38;2;83;192;210m-CESC[0m, ESC[1;38;2;83;192;210m--configESC[0m ESC[38;2;150;183;189m<PATH>ESC[0m  Read configuration from PATH instead of the workspace's
+                       depot.toml [env: DEPOT_CONFIG]
+
+ESC[1;38;2;82;198;137mExamples:ESC[0m
+  Build two packages in release mode
+    ESC[1;38;2;83;192;210mdepot build -j 8 --profile release app libESC[0m
+
+  Build everything with TLS and write a report
+    ESC[1;38;2;83;192;210mdepot build --feature tls --reportESC[0m
