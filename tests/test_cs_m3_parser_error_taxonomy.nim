@@ -68,8 +68,7 @@ const cases: array[CliErrorKind, Case] = [
     message: "unknown flag '--nope' for 'tx build'",
     path: @["build"], argvIndex: 1),
   cekUnknownSubcommand: Case(argv: @["frob"],
-    message: "unknown subcommand 'frob' for 'tx'; expected one of: " &
-      "build, remote",
+    message: "unknown subcommand 'frob' for 'tx'",
     path: @[], argvIndex: 0),
   cekMissingSubcommand: Case(argv: @["remote", "--url", "u"],
     message: "'tx remote' needs a subcommand; expected one of: add",
@@ -198,8 +197,7 @@ suite "test_cs_m3_parser_error_taxonomy":
     check not e.isNil
     if not e.isNil:
       check e.kind == cekUnknownSubcommand
-      check e.msg == "unknown subcommand 'biuld' for 'ty'; expected one " &
-        "of: build, clean"
+      check e.msg == "unknown subcommand 'biuld' for 'ty'"
       check e.commandPath.len == 0
       check e.argvIndex == 0
     # The word is reported before a flag after it that nothing declares.

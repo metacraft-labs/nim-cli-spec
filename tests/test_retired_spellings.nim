@@ -201,8 +201,7 @@ suite "test_retired_spellings":
     check e.retired == "checkout"
     check e.replacement == "tool switch <branch>"
     check e.msg == "unknown subcommand 'checkout' for 'tool' (a retired " &
-      "spelling; use tool switch <branch>); expected one of: branch, " &
-      "switch, workspace, run"
+      "spelling; use tool switch <branch>)"
     check e.suggestions.len == 0
     check usageErrorOf(@["co", "main"]).retired == "co"
 

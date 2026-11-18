@@ -152,12 +152,19 @@ proc cliSelectedChild*(g: CliGrammar; r: CliResolution; command: int): int =
 proc cliHelpCommand*(g: CliGrammar; path: openArray[string];
                      program: string): int {.raises: [CliUsageError].} =
   ## The command reached by the subcommand words ``path``, or a usage error
-  ## (unknown subcommand) naming the command that does not know the word,
-  ## with its suggestions.
+  ## naming the command that does not know the word: an unknown subcommand,
+  ## with its suggestions, or, below a command that has no subcommands at
+  ## all, an unexpected argument (the parser's kind for a word it cannot
+  ## place), since there is no subcommand the word could have meant.
   result = 0
   var walked: seq[string] = @[]
   for word in path:
     let next = cliChildNamed(g, result, word)
+    if next < 0 and g.commands[result].children.len == 0:
+      let e = newCliUsageError(cekUnexpectedPositional, program, walked, -1,
+        word)
+      e.cliAddErrorContext(g, result)
+      raise e
     if next < 0:
       let e = newCliUsageError(cekUnknownSubcommand, program, walked, -1,
         word, expected = cliSubcommandWords(g, result).join(", "))

@@ -44,7 +44,7 @@
 ##
 ## A usage error is printed as a block (``cliErrorText``)::
 ##
-##   error: unknown subcommand 'biuld' for 'tool'; expected one of: build, run
+##   error: unknown subcommand 'biuld' for 'tool'
 ##
 ##     tip: a similar subcommand exists: 'build'
 ##
@@ -52,7 +52,12 @@
 ##
 ##   For more information, try 'tool --help'.
 ##
-## The first line is ``msg``, the kind's one wording. The tip is there when
+## The first line is ``msg``, the kind's one wording. An unknown subcommand's
+## wording does not list the command's subcommands: the tip offers the close
+## ones and the last line points at the help that lists them all (the list
+## stays in the error's ``expected``). A missing subcommand's wording does
+## list them (``'tool' needs a subcommand; expected one of: build, run``),
+## since nothing was typed to suggest from. The tip is there when
 ## the error has ``suggestions``: for an unknown subcommand ``a similar
 ## subcommand exists: 'build'``, for an unknown flag ``a similar flag
 ## exists: '--jobs'`` and for a value outside a closed set ``a similar value
@@ -157,7 +162,8 @@ type
     expected*: string
       ## What would have been accepted: ``an integer``,
       ## ``one of: red, green``, ``no value``, or for a subcommand error the
-      ## list of subcommand words. For a missing value, the flag's declared
+      ## list of subcommand words (which only a missing subcommand's
+      ## wording shows). For a missing value, the flag's declared
       ## ``valueName`` (``path``), or empty when it declares none.
     detail*: string
       ## The sources in conflict (``cekConflictingSources``).
@@ -303,9 +309,10 @@ func cliErrorMessage*(kind: CliErrorKind; program: string;
     "unknown flag '" & spelling & "' for " & command &
       cliRetiredNote(spelling, retired, replacement)
   of cekUnknownSubcommand:
+    # The subcommands are not listed here: the tip names the close ones
+    # and the help the last line of the block points at lists them all.
     "unknown subcommand '" & spelling & "' for " & command &
-      cliRetiredNote(spelling, retired, replacement) &
-      "; expected one of: " & expected
+      cliRetiredNote(spelling, retired, replacement)
   of cekMissingSubcommand:
     command & " needs a subcommand; expected one of: " & expected
   of cekMissingValue:

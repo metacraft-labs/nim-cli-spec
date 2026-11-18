@@ -349,7 +349,7 @@ suite "test_cs_m5b_no_color_and_not_a_terminal":
     check r.code == 2
     check r.output == ""
     checkPlain(r.errors)
-    check r.errors == """error: unknown subcommand 'biuld' for 'depot'; expected one of: build, remote
+    check r.errors == """error: unknown subcommand 'biuld' for 'depot'
 
   tip: a similar subcommand exists: 'build'
 

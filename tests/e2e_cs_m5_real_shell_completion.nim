@@ -98,8 +98,7 @@ const
       expected: "ARGV:<build><--note><my file.txt> OK"),
   ]
   control = Case(typed: "shx bui",
-    expected: "ARGV:<bui> ERROR unknown subcommand 'bui' for 'shx'; " &
-      "expected one of: build, remote")
+    expected: "ARGV:<bui> ERROR unknown subcommand 'bui' for 'shx'")
 
 var scratch = ""
 var binDir = ""

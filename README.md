@@ -956,7 +956,7 @@ wording, and every wording names the command (`'tool build'`):
 | Kind                      | Wording                                                                                                                                   |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `cekUnknownFlag`          | `unknown flag '--nope' for 'tool build'`                                                                                                  |
-| `cekUnknownSubcommand`    | `unknown subcommand 'frob' for 'tool'; expected one of: build, run`                                                                       |
+| `cekUnknownSubcommand`    | `unknown subcommand 'frob' for 'tool'`                                                                                                    |
 | `cekMissingSubcommand`    | `'tool' needs a subcommand; expected one of: build, run`                                                                                  |
 | `cekMissingValue`         | `flag '--jobs' of 'tool build' needs a value`                                                                                             |
 | `cekInvalidValue`         | `invalid value 'many' for '--jobs' of 'tool build'; expected an integer`                                                                  |
@@ -964,6 +964,14 @@ wording, and every wording names the command (`'tool build'`):
 | `cekMissingRequired`      | `missing required parameter '<target>' of 'tool build'`                                                                                   |
 | `cekSwitchFalseValue`     | `switch '--split' of 'tool build' takes no false value (got '--split=off'); it is on when given and off when omitted`                     |
 | `cekConflictingSources`   | `conflicting values for '--jobs' of 'tool build': '4' from /etc/tool.toml:3 (layer 'system') and '8' from environment variable TOOL_JOBS` |
+
+An unknown subcommand's wording does not list the command's subcommands:
+the tip offers the close ones and the block's last line points at the help
+that lists them all (`expected` still holds the list). A missing
+subcommand's wording lists them, since there is nothing to suggest from.
+The help procedures (`helpText(path)`) report a word below a command that
+has no subcommands at all as `cekUnexpectedPositional` (`unexpected
+argument 'x' for 'tool build'`) rather than as an unknown subcommand.
 
 An unknown flag or subcommand word that the description declares retired
 adds its replacement to the wording (`unknown flag '--old' for 'tool
@@ -991,7 +999,7 @@ write to (see [Colour and width](#colour-and-width)). `cliPrintError`
 writes the block `cliErrorText(e, styled = false)` renders:
 
 ```text
-error: unknown subcommand 'biuld' for 'tool'; expected one of: build, run
+error: unknown subcommand 'biuld' for 'tool'
 
   tip: a similar subcommand exists: 'build'
 
@@ -1139,7 +1147,7 @@ assert word.exitCode == 2
 assert word.retired == "checkout"
 assert word.replacement == "vcs switch <branch>"
 assert word.msg == "unknown subcommand 'checkout' for 'vcs' (a retired " &
-  "spelling; use vcs switch <branch>); expected one of: switch, log"
+  "spelling; use vcs switch <branch>)"
 
 # A root flag is retired in every subcommand too.
 let flag = errorOf(@["log", "--threads", "2"])

@@ -589,7 +589,7 @@ ESC[1;34mExamples:ESC[0m
 
   # The error blocks: an unknown subcommand and a missing value as the
   # design gives them, an unknown flag and a value outside a closed set.
-  errBiuld = """error: unknown subcommand 'biuld' for 'depot'; expected one of: build, remote
+  errBiuld = """error: unknown subcommand 'biuld' for 'depot'
 
   tip: a similar subcommand exists: 'build'
 
@@ -623,7 +623,7 @@ Usage: depot build [options] [<packages>...]
 For more information, try 'depot build --help'.
 """
 
-  errBiuldStyled = """ESC[1;31merror:ESC[0m unknown subcommand 'ESC[4;35mbiuldESC[0m' for 'depot'; expected one of: build, remote
+  errBiuldStyled = """ESC[1;31merror:ESC[0m unknown subcommand 'ESC[4;35mbiuldESC[0m' for 'depot'
 
   ESC[1;34mtip:ESC[0m a similar subcommand exists: 'ESC[1mbuildESC[0m'
 
@@ -912,7 +912,7 @@ suite "test_cs_m5b_help_matches_design":
     let biuld = errorOf(["biuld"])
     check biuld.suggestions == @["build"]
     check biuld.msg ==
-      "unknown subcommand 'biuld' for 'depot'; expected one of: build, remote"
+      "unknown subcommand 'biuld' for 'depot'"
     check biuld.usage == "depot [options] <command>"
     check biuld.helpCommand == "depot --help"
     check cliErrorText(biuld) == errBiuld
@@ -1024,6 +1024,33 @@ suite "test_cs_m5b_help_matches_design":
     except CliUsageError as e:
       check e.suggestions == @["build"]
       check cliErrorText(e) == errBiuld
+
+  test "a word below a command without subcommands is an unexpected argument":
+    # ``build`` has no subcommands, so there is no list to expect from and
+    # no subcommand the word could have meant: the help lookup reports it
+    # as the parser reports a word it cannot place.
+    try:
+      discard Depot.helpText(["build", "somewhere"])
+      check false
+    except CliUsageError as e:
+      check e.kind == cekUnexpectedPositional
+      check e.msg == "unexpected argument 'somewhere' for 'depot build'"
+      check e.suggestions.len == 0
+      check cliErrorText(e) == """error: unexpected argument 'somewhere' for 'depot build'
+
+Usage: depot build [options] [<packages>...]
+
+For more information, try 'depot build --help'.
+"""
+    # A word below a command that has subcommands is still an unknown
+    # subcommand, worded without the list.
+    try:
+      discard Depot.helpText(["remote", "ad"])
+      check false
+    except CliUsageError as e:
+      check e.kind == cekUnknownSubcommand
+      check e.msg == "unknown subcommand 'ad' for 'depot remote'"
+      check e.expected.len > 0
 
   test "negative control: the classic layout does not give these pages":
     let pages = [

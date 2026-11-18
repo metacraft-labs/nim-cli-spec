@@ -1,4 +1,4 @@
-ESC[1;38;2;214;47;53merror:ESC[0m unknown subcommand 'ESC[38;2;145;107;2mbiuldESC[0m' for 'depot'; expected one of: build, remote
+ESC[1;38;2;214;47;53merror:ESC[0m unknown subcommand 'ESC[38;2;145;107;2mbiuldESC[0m' for 'depot'
 
   ESC[1;38;2;18;129;81mtip:ESC[0m a similar subcommand exists: 'ESC[1;38;2;9;125;140mbuildESC[0m'
 
