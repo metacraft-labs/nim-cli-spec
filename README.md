@@ -1017,6 +1017,10 @@ An unknown subcommand's wording does not list the command's subcommands:
 the tip offers the close ones and the block's last line points at the help
 that lists them all (`expected` still holds the list). A missing
 subcommand's wording lists them, since there is nothing to suggest from.
+In both, "the subcommands" are the ones the command's help lists in
+either tier: never a `hidden` one, and an `internal` one only below the
+root. Where that leaves none, the missing-subcommand wording ends at `'tool ns' needs a
+subcommand`, without an empty `expected one of:`.
 The help procedures (`helpText(path)`) report a word below a command that
 has no subcommands at all as `cekUnexpectedPositional` (`unexpected
 argument 'x' for 'tool build'`) rather than as an unknown subcommand.

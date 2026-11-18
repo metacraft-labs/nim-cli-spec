@@ -126,7 +126,7 @@
 
 import std/[base64, options, strutils]
 
-import ./[model, grammar, errors, help, parser, completers]
+import ./[model, grammar, errors, parser, completers]
 
 export completers
 

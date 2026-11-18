@@ -297,13 +297,6 @@ func helpHolder(g: CliGrammar; command: int): int =
   ## The command whose help documents ``command``: a call:'s holder.
   if g.commands[command].isCall: g.commands[command].parent else: command
 
-func cliListsCommand*(g: CliGrammar; holder, child: int): bool =
-  ## Whether the help of ``holder`` lists its subcommand ``child``.
-  case g.commands[child].visibility
-  of cvShown: true
-  of cvHidden: false
-  of cvInternal: holder != 0
-
 func cliListsParam*(g: CliGrammar; holder, id: int;
                     machineReadable = false): bool =
   ## Whether the help of ``holder`` lists parameter ``id``: a ``shown`` one

@@ -50,6 +50,28 @@ cliProgram(Ty, "ty"):
   call:
     boolFlag version is bool, short = 'V'
 
+# Namespaces whose subcommands are not all listed (issue
+# reprobuild-pm/issues/2026-11-18-clispec-missing-subcommand-error-lists-nothing-when-every-subcommand-is-unlisted.md):
+# one whose only subcommand is hidden, one whose only subcommand is internal
+# (listed in its help, since it is not the root), one with both kinds beside
+# a shown one, and an internal subcommand of the root (listed nowhere).
+cliProgram(Tw, "tw"):
+  subcmd "ns":
+    subcmd "ghost", visibility = hidden:
+      pos x is string
+  subcmd "ops":
+    subcmd "debug", visibility = internal:
+      pos x is string
+  subcmd "mix":
+    subcmd "run":
+      pos x is string
+    subcmd "trace", visibility = internal:
+      pos x is string
+    subcmd "ghost", visibility = hidden:
+      pos x is string
+  subcmd "dump", visibility = internal:
+    pos x is string
+
 cliProgram(Tz, "tz"):
   subcmd "build":
     pos target is string
@@ -244,3 +266,49 @@ suite "test_cs_m3_parser_error_taxonomy":
     check not h.isNil
     check h.commandPath == @["build"]
     check h.text.startsWith("Usage: tx build ")
+
+  test "a missing subcommand lists what the command's help lists, or nothing":
+    # The list is the subcommands the command's help lists (an internal one
+    # below the root, never a hidden one); where that is none, the
+    # "expected one of" clause is left out rather than ending empty.
+    proc twError(argv: seq[string]): ref CliUsageError =
+      try:
+        discard Tw.load(argv)
+      except CliUsageError as e:
+        return e
+      except CliHelpRequest:
+        discard
+      nil
+    let h = twError(@["ns"])
+    check not h.isNil
+    if not h.isNil:
+      check h.kind == cekMissingSubcommand
+      check h.msg == "'tw ns' needs a subcommand"
+      check h.expected == ""
+    let i = twError(@["ops"])
+    check not i.isNil
+    if not i.isNil:
+      check i.kind == cekMissingSubcommand
+      check i.msg == "'tw ops' needs a subcommand; expected one of: debug"
+    let m = twError(@["mix"])
+    check not m.isNil
+    if not m.isNil:
+      check m.msg == "'tw mix' needs a subcommand; expected one of: run, trace"
+    # The root's help lists no internal subcommand, so neither does this.
+    let r = twError(@[])
+    check not r.isNil
+    if not r.isNil:
+      check r.msg == "'tw' needs a subcommand; expected one of: ns, ops, mix"
+    # An unknown subcommand carries the same list as its ``expected``.
+    let u = twError(@["mix", "nope"])
+    check not u.isNil
+    if not u.isNil:
+      check u.kind == cekUnknownSubcommand
+      check u.expected == "run, trace"
+    for argv in [@["ns"], @["ops"], @["mix"], @[]]:
+      let e = twError(argv)
+      if not e.isNil:
+        checkpoint(e.msg)
+        check not e.msg.endsWith(": ")
+    check Tw.load(@["ns", "ghost", "a"]).ns.ghost.x == "a"
+    check Tw.load(@["dump", "a"]).dump.x == "a"

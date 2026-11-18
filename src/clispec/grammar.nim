@@ -535,12 +535,23 @@ func cliChildNamed*(g: CliGrammar; command: int; word: string): int =
           return child
   -1
 
+func cliListsCommand*(g: CliGrammar; holder, child: int): bool =
+  ## Whether the help of ``holder`` lists its subcommand ``child`` (in
+  ## either tier): a ``shown`` one always, an ``internal`` one below the
+  ## root (index 0) only, a ``hidden`` one never. Help, completion,
+  ## suggestions and the subcommand lists of usage errors all follow it.
+  case g.commands[child].visibility
+  of cvShown: true
+  of cvHidden: false
+  of cvInternal: holder != 0
+
 func cliSubcommandWords*(g: CliGrammar; command: int): seq[string] =
   ## The names of the subcommands of ``command`` that are advertised in
-  ## messages: ``shown`` ones only (hidden and internal subcommands are
-  ## accepted but not offered).
+  ## messages: the ones its help lists in either tier (``cliListsCommand``),
+  ## so ``shown`` ones and, below the root, ``internal`` ones;
+  ## ``hidden`` subcommands are accepted but never offered.
   for child in g.commands[command].children:
-    if g.commands[child].visibility == cvShown:
+    if cliListsCommand(g, command, child):
       result.add(g.commands[child].name)
 
 type

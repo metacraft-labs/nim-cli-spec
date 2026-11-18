@@ -57,7 +57,10 @@
 ## ones and the last line points at the help that lists them all (the list
 ## stays in the error's ``expected``). A missing subcommand's wording does
 ## list them (``'tool' needs a subcommand; expected one of: build, run``),
-## since nothing was typed to suggest from. The tip is there when
+## since nothing was typed to suggest from. Both lists are the subcommands
+## the command's help lists in either tier (``cliListsCommand``); where that is
+## none, the missing-subcommand wording ends at ``'tool ns' needs a
+## subcommand``. The tip is there when
 ## the error has ``suggestions``: for an unknown subcommand ``a similar
 ## subcommand exists: 'build'``, for an unknown flag ``a similar flag
 ## exists: '--jobs'`` and for a value outside a closed set ``a similar value
@@ -314,7 +317,10 @@ func cliErrorMessage*(kind: CliErrorKind; program: string;
     "unknown subcommand '" & spelling & "' for " & command &
       cliRetiredNote(spelling, retired, replacement)
   of cekMissingSubcommand:
-    command & " needs a subcommand; expected one of: " & expected
+    # Where the command's help lists none of its subcommands (all hidden,
+    # or internal ones of the root) the clause is left out, not left empty.
+    command & " needs a subcommand" &
+      (if expected.len > 0: "; expected one of: " & expected else: "")
   of cekMissingValue:
     "flag '" & spelling & "' of " & command & " needs a value"
   of cekInvalidValue:
