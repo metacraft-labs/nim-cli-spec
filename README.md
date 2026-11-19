@@ -1876,12 +1876,47 @@ and the user installs it:
 | Fish       | save it as `~/.config/fish/completions/tool.fish`                                                                |
 | PowerShell | `tool completion powershell \| Out-String \| Invoke-Expression` in `$PROFILE`                                    |
 
+**Install locations.** `clispec/completion_install` is the table of where
+each shell loads an installed script from, for a program's own installer
+(a `completion install` command, a package build, an install script). It is
+data and pure functions: it reads no environment variable and writes no
+file, so an installer and its tests compute the same paths.
+
+- `cliCompletionFileName(shell, program)`: `tool`, `_tool`, `tool.fish`,
+  `tool.ps1`.
+- `cliUserCompletionTargets(shell, program, env)`: what a per-user install
+  writes, the script and the rc or profile blocks that load it, from a
+  `CliInstallEnv` (`cliInstallEnv(lookup)` fills it from `HOME`,
+  `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `ZDOTDIR`, `BASH_COMPLETION_USER_DIR`
+  and `LOCALAPPDATA`; `windows = true` for Windows' PowerShell profiles).
+- `cliSystemCompletionTargets(shell, program, family, prefix, psHome)` and
+  `cliSystemCompletionDirs`: the system-wide directories for the local
+  administrator (`cpfLocal`, `/usr/local`) and for each kind of package
+  (Debian, rpm, Arch, FreeBSD, OpenBSD and NetBSD, Homebrew, a macOS
+  installer package, Nix, Windows).
+- `cliProfileBlockBody(shell, program, script)`: the text of the block that
+  loads an installed script, every name and path quoted.
+- `cliBashCompletionLoaders()`: where bash-completion's loader is looked
+  for (without it, the per-user Bash file needs the `~/.bashrc` block).
+- `cliIsGeneratedCompletionScript(content, shell, program)`: whether a file
+  is a clispec script for that program, so an installer replaces only its
+  own files.
+
+| Shell      | Per user                                                                                                     | System-wide (`cpfLocal`)                                   |
+| ---------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| Bash       | `${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-~/.local/share}/bash-completion}/completions/tool`; without bash-completion, also a `~/.bashrc` block that sources it | `/usr/local/share/bash-completion/completions/tool`       |
+| Zsh        | `${XDG_DATA_HOME:-~/.local/share}/zsh/site-functions/_tool`, and a `${ZDOTDIR:-~}/.zshrc` block that puts it on `$fpath` | `/usr/local/share/zsh/site-functions/_tool`               |
+| Fish       | `${XDG_CONFIG_HOME:-~/.config}/fish/completions/tool.fish`                                                   | `/usr/local/share/fish/vendor_completions.d/tool.fish`    |
+| PowerShell | `${XDG_DATA_HOME:-~/.local/share}/tool/completions/tool.ps1` (`%LOCALAPPDATA%\tool\completions\tool.ps1` on Windows), loaded by a block in `$PROFILE.CurrentUserAllHosts` | the script under the prefix, loaded by a block in `$PSHOME/profile.ps1` |
+
+The module's documentation cites each shell's own documentation for these.
+
 **PowerShell and the execution policy.** On Windows, PowerShell's
 [execution policy](https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_execution_policies)
 decides which script files may run, and `$PROFILE` is a script file. The
 clispec script itself is not: `Invoke-Expression` runs the text the program
-printed as commands, which no policy blocks, so the script never needs
-signing and is never written to disk. What the policy governs is whether
+printed (or the text of the file an installer saved it to) as commands, which
+no policy blocks, so the script never needs signing. What the policy governs is whether
 PowerShell loads `$PROFILE` at all:
 
 - `Restricted` runs no script files, the profile included. It is Windows

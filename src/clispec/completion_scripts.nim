@@ -13,19 +13,24 @@
 ## and the program's answer is read line by line as data; nothing it prints
 ## is evaluated.
 ##
-## How each script is installed:
+## How each script is installed by hand:
 ##
 ## * **Bash**: ``source <(tool completion bash)`` in ``~/.bashrc``, or the
 ##   script saved as ``~/.local/share/bash-completion/completions/tool``.
 ## * **Zsh**: the script saved as ``_tool`` in a directory of ``$fpath``
-##   before ``compinit`` runs; or ``source <(tool completion zsh)`` after
+##   before ``compinit`` runs (``~/.local/share/zsh/site-functions``, put on
+##   ``$fpath`` in ``~/.zshrc``); or ``source <(tool completion zsh)`` after
 ##   ``compinit`` in ``~/.zshrc``.
 ## * **Fish**: the script saved as ``~/.config/fish/completions/tool.fish``.
 ## * **PowerShell**: ``tool completion powershell | Out-String |
 ##   Invoke-Expression`` in ``$PROFILE``.
 ##
+## ``clispec/completion_install`` gives every per-user and system-wide
+## location, per shell and platform, for a program's own installer.
+##
 ## The PowerShell script is meant to be evaluated with ``Invoke-Expression``,
-## not saved and dot-sourced: on Windows the execution policy governs script
+## not dot-sourced (an installer that saves it evaluates the file's text the
+## same way): on Windows the execution policy governs script
 ## files (the profile among them) but not commands, so the generated text
 ## needs no signature under any policy; only ``$PROFILE`` itself must be
 ## allowed to load (``Restricted``, the effective policy on a Windows client
@@ -135,6 +140,10 @@ $FUNCTION() {
     return 0
 }
 if [[ "${zsh_eval_context[-1]}" == loadautofunc ]]; then
+    # Autoloaded from $fpath as _$PROGRAM (compinit): this body runs again on
+    # every later call, outside the autoload, so register the function
+    # itself now and complete this time.
+    compdef $FUNCTION $NAME
     $FUNCTION "$@"
 else
     compdef $FUNCTION $NAME

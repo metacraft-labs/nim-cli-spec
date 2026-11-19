@@ -42,6 +42,7 @@ task test, "Run the test suite":
             "test_cs_m6_render_argv",
             "test_cs_m6b_config_check",
             "test_cs_m6_splice_unbound",
+            "test_cs_m7_completion_install_locations",
             "test_suite_lists_agree"]:
     exec "nim c -r --hints:off tests/" & t & ".nim"
 

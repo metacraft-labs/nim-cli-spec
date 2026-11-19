@@ -9,13 +9,15 @@
 ## description, through the run-time tables of ``clispec/grammar``. See the
 ## README for the language, the generated API and how a consumer attaches
 ## its own declarations through the model's extension slots.
+## ``clispec/completion_install`` says where each shell loads an installed
+## completion script from, for a program's installer.
 ##
 ## Configuration files and the environment are not read here: confutils,
 ## instantiated over a clispec description, adds them as sources and
 ## delegates the command line to this library.
 import clispec/[model, dsl, errors, values, grammar, help, parser, program,
-  candidates, completers, completion, completion_scripts, styles, render,
-  config_check, splice]
+  candidates, completers, completion, completion_scripts, completion_install,
+  styles, render, config_check, splice]
 export model, dsl, errors, values, grammar, help, parser, program, candidates,
-  completers, completion, completion_scripts, styles, render, config_check,
-  splice
+  completers, completion, completion_scripts, completion_install, styles,
+  render, config_check, splice

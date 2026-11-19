@@ -32,6 +32,10 @@
 ## ``Restricted`` default of a Windows client, without changing it (see
 ## ``tests/powershell_driver.nim``).
 ##
+## Zsh runs twice: with the script sourced after ``compinit``, and with it
+## saved as ``_shx`` in a directory of ``$fpath`` for ``compinit`` to
+## autoload, where every completion after the first calls the function again.
+##
 ## Cases: a subcommand (``shx bui``), a nested one (``shx remote a``), a flag
 ## (``--jo``), an enum value after a flag (``--mode rel``), a value written
 ## ``--mode=d``, and a dynamic value that contains a space (``--note my``,
@@ -513,6 +517,33 @@ suite "e2e_cs_m5_real_shell_completion":
           checkpoint(s.transcript)
           s.stop()
         ranShells.add("zsh")
+
+  test "zsh, the script autoloaded from $fpath":
+    # The way a package or `completion_install` installs it: `_shx` in a
+    # directory of $fpath, found by compinit. The function is then called
+    # again for every completion after the first, outside the autoload, so
+    # every case after the first checks that it still completes.
+    when defined(windows):
+      skipLoud("zsh", "no POSIX pseudo-terminal on Windows")
+    else:
+      let exe = findShell(["zsh"])
+      if exe.len == 0:
+        skipLoud("zsh", "zsh is not on PATH")
+      else:
+        let functions = scratch / "site-functions"
+        createDir(functions)
+        writeScript("zsh", functions / "_shx")
+        var s = spawn("zsh-fpath", exe, ["-f", "-i"], shellEnv(),
+          scratch / "work")
+        try:
+          s.checkOutcomes(s.runShell(posixPathCheck,
+            "fpath=(" & quoteShell(functions) & " $fpath); " &
+            "autoload -U compinit && compinit -u -D", "echo CLISPEC_READ''Y",
+            20_000))
+        finally:
+          checkpoint(s.transcript)
+          s.stop()
+        ranShells.add("zsh-fpath")
 
   test "fish":
     when defined(windows):
