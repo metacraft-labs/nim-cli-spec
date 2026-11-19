@@ -25,7 +25,7 @@
 ## standard library, so the description language can check completers
 ## without importing the engine.
 
-import std/[os, strutils]
+import std/[algorithm, os, strutils]
 
 type
   CliCompletion* = object
@@ -74,7 +74,11 @@ proc listPaths(prefix: string; directoriesOnly: bool): seq[CliCompletion] {.
   ## path separator, or the current directory) whose names start with the
   ## rest of ``prefix``. Directories end with ``/``, so the user can keep
   ## typing into them. Names starting with ``.`` are listed only when the
-  ## typed part starts with ``.``.
+  ## typed part starts with ``.``. The candidates are sorted by value, byte
+  ## by byte: ``walkDir`` yields the order the filesystem's readdir chooses
+  ## (hash order on ext4, creation order on btrfs, newest first on tmpfs),
+  ## so the same directory would otherwise complete differently on another
+  ## filesystem.
   var cut = -1
   for i in countdown(prefix.high, 0):
     if prefix[i] == '/' or (DirSep != '/' and prefix[i] == DirSep):
@@ -94,14 +98,15 @@ proc listPaths(prefix: string; directoriesOnly: bool): seq[CliCompletion] {.
     if directoriesOnly and not isDir:
       continue
     result.add(CliCompletion(value: dirPart & path & (if isDir: "/" else: "")))
+  result.sort(proc (a, b: CliCompletion): int = cmp(a.value, b.value))
 
 proc cliCompleteFiles*(ctx: CliCompletionContext): seq[CliCompletion] {.
     raises: [CatchableError].} =
   ## A completer for paths: the files and directories under the directory
-  ## the prefix names.
+  ## the prefix names, sorted by value.
   listPaths(ctx.prefix, directoriesOnly = false)
 
 proc cliCompleteDirectories*(ctx: CliCompletionContext): seq[CliCompletion] {.
     raises: [CatchableError].} =
-  ## A completer for directory paths.
+  ## A completer for directory paths, sorted by value.
   listPaths(ctx.prefix, directoriesOnly = true)

@@ -6,9 +6,10 @@
 ## dynamic values (with the context it is called with), ``--flag=<partial>``
 ## words, list elements after a separator, the word after a flag that takes
 ## the next word, an optional-value flag that does not, short-flag clusters,
-## positionals in order, and the words after ``--``. Visibility is checked
-## too: hidden items and internal parameters are never offered, an internal
-## subcommand only inside its namespace.
+## positionals in order, the words after ``--``, and the shipped path
+## completers' order (sorted, whatever the directory's readdir order).
+## Visibility is checked too: hidden items and internal parameters are never
+## offered, an internal subcommand only inside its namespace.
 ##
 ## Every comparison is against the exact sequence of candidates (values and
 ## descriptions), never "contains", so an extra or a missing candidate
@@ -24,7 +25,7 @@
 ## from a real description; the completers are ordinary procs of this file.
 ## Nothing is mocked.
 
-import std/[base64, strutils, unicode, unittest]
+import std/[algorithm, base64, os, sequtils, strutils, unicode, unittest]
 
 import clispec
 import ./powershell_driver
@@ -183,6 +184,40 @@ suite "test_cs_m5_engine_completes_every_level":
     check at("remote", "add", "u") == @["upstream"]
     check lastContext.commandPath == @["remote", "add"]
     check lastContext.param == "name"
+
+  test "the path completers list a directory sorted, whatever its readdir order":
+    # A directory's entries come back from readdir in an order the
+    # filesystem chooses: hash order on ext4, creation order on btrfs,
+    # newest first on tmpfs. Thirty entries created in an order sorted
+    # neither forwards nor backwards (`k * 7 mod 30`) are, on every one of
+    # them, not listed in byte order, so this fails if the completers pass
+    # readdir's order through (reprobuild-pm issue
+    # 2026-11-16-codetracer-cs-m10-golden-completion-case-depends-on-readdir-order).
+    let root = getTempDir() / "clispec_path_order_" & $getCurrentProcessId()
+    removeDir(root)
+    createDir(root)
+    defer: removeDir(root)
+    var expectedFiles, expectedDirs: seq[string]
+    for k in 0 ..< 30:
+      let i = k * 7 mod 30
+      let name = "e" & align($i, 2, '0')
+      if i mod 3 == 0:
+        createDir(root / name)
+        expectedFiles.add root & "/" & name & "/"
+        expectedDirs.add root & "/" & name & "/"
+      else:
+        writeFile(root / name, "")
+        expectedFiles.add root & "/" & name
+    expectedFiles.sort(system.cmp[string])
+    expectedDirs.sort(system.cmp[string])
+    proc values(found: seq[CliCompletion]): seq[string] =
+      for c in found: result.add c.value
+    let ctx = CliCompletionContext(prefix: root & "/")
+    check values(cliCompleteFiles(ctx)) == expectedFiles
+    check values(cliCompleteDirectories(ctx)) == expectedDirs
+    let narrowed = CliCompletionContext(prefix: root & "/e1")
+    check values(cliCompleteFiles(narrowed)) ==
+      expectedFiles.filterIt(it.startsWith(root & "/e1"))
 
   test "a completer that raises offers nothing":
     check at("remote", "add", "--broken", "").len == 0

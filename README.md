@@ -1859,7 +1859,9 @@ type, such as a call that returns a closure). The context names the program,
 the command path, the parameter, the words before the one being completed and
 the typed `prefix`. A completer that raises offers nothing; a `complete`
 expression of another type is a compile error naming the parameter.
-`cliCompleteFiles` and `cliCompleteDirectories` complete paths.
+`cliCompleteFiles` and `cliCompleteDirectories` complete paths, listing a
+directory's entries sorted by value (byte order), never in the order the
+filesystem's readdir returns them.
 
 **The scripts.** `Tool.completionScript(shell)` (or
 `cliCompletionScript(shell, program)`) returns the script for `cshBash`,
