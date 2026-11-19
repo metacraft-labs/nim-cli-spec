@@ -82,6 +82,8 @@ const clispecTests = [
     runsCompiler: true),
   ClispecTest(source: "tests/test_retired_spellings.nim"),
   ClispecTest(source: "tests/test_cs_m6_render_argv.nim"),
+  ClispecTest(source: "tests/test_cs_m6b_config_check.nim"),
+  ClispecTest(source: "tests/test_cs_m6_splice_unbound.nim"),
   ClispecTest(source: "tests/test_suite_lists_agree.nim"),
   ClispecTest(source: "tests/e2e_cs_m5_real_shell_completion.nim",
     runsCompiler: true, realShells: true),

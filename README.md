@@ -376,6 +376,54 @@ A group whose body starts with `help "<text>"` is also a help section: it
 expands into a `group "<template name>", help = "<text>":` section, so the
 parameters it declares carry the group in the model.
 
+### Exporting a command line for another program to mount
+
+A program whose command line another program also accepts (a monitor that a
+build tool offers under one of its own commands, say) can export its
+description as a compile-time proc returning a `cli:` body. The other program
+splices the body under the `subcmd` that mounts it, so both generate their
+parser, help and completion from the same declarations.
+
+Such a proc usually builds the body with `quote`, which binds every name to
+a symbol of the proc's own scope: `afterSeparator = true` then names the
+symbol `system.true`, `seq[string]` becomes a call of the `[]` operator, and
+a group of declarations spliced in is a statement list nested inside the
+body. The `cli:` language reads a body as written, so the exporting proc
+returns `cliUnbound` of what `quote` gave it (`clispec/splice`, which imports
+only `std/macros`): symbols become the identifiers they were written as,
+`[]` calls become bracket expressions, string literals joined with `&` are
+folded into one literal, and nested statement lists are flattened, with the
+line information kept.
+
+```nim
+import std/macros
+import clispec
+
+proc sharedFlags(): NimNode {.compileTime.} =
+  quote do:
+    boolFlag verbose is bool, alias = "-v"
+
+proc toolBody(): NimNode {.compileTime.} =
+  let shared = sharedFlags()
+  cliUnbound(quote do:
+    subcmd "run", help = "Run a command " & "under the tool":
+      `shared`
+      pos command is seq[string], required = false, afterSeparator = true)
+
+macro mountTool(): untyped =
+  let body = toolBody()
+  result = quote do:
+    cliProgram(Host, "host"):
+      subcmd "tool", help = "The tool's commands":
+        `body`
+
+mountTool()
+
+let conf = Host.load(@["tool", "run", "-v", "--", "make", "all"])
+assert conf.tool.run.verbose
+assert conf.tool.run.command == @["make", "all"]
+```
+
 ## A program's own command line
 
 `cliProgram` turns a description into a configuration object type and the
@@ -1932,6 +1980,71 @@ compile time: `key` and `env` against `sources`, the naming conventions and
 their overrides, reserved keys (`schema`, `extensions`) in a program that
 declares a `configSchema`, and `merge = append` on a parameter that is not a
 list. A combine proc's signature is checked by confutils, which calls it.
+
+### Checking configuration a program writes for another
+
+A program that writes a configuration file for another program (a build
+system generating a tool's settings, an installer, a migration) can check
+what it writes against the reader's description, without reading any file
+format itself. `clispec/config_check` derives a `CliConfigTable` from a
+grammar once: every key, spelt in the chosen file source's naming
+convention, with its value type, whether it is a list and its closed value
+set. It is a plain value, so a `const` holds it and both compile-time code
+and run-time code read it. `cliCheckEntry` checks one key and value against
+it, and `cliValidateDocument` walks a whole document, in a format-neutral
+flattened form (`CliConfigDocument`, which a format adapter fills, with
+lines), once:
+
+```nim
+import std/strutils
+import clispec
+
+type Mode = enum
+  fast, safe
+
+cliProgram(Svc, "svc"):
+  configSchema "svc.config.v1"
+  convention file = snakeCase
+  flag poolSize is int, default = 4
+  flag mode is Mode, default = safe
+
+const table = cliConfigTableOf(Svc.cliGrammar)
+
+proc entry(key: string; kind: CliConfigValueKind; text: string;
+           line: int): CliConfigEntry =
+  CliConfigEntry(key: key.split('.'), line: line,
+    value: CliConfigValue(kind: kind, text: text))
+
+let doc = CliConfigDocument(entries: @[
+  entry("schema", ccvString, "svc.config.v1", 1),
+  entry("pool-size", ccvInteger, "8", 2),
+  entry("mode", ccvString, "slow", 3)])
+let issues = cliValidateDocument(table, doc)
+assert issues.len == 2
+assert cliConfigIssueMessage(issues[0], "svc.toml") ==
+  "svc.toml:2: unknown key 'pool-size' (did you mean 'pool_size'?)"
+assert cliConfigIssueMessage(issues[1], "svc.toml") ==
+  "svc.toml:3: key 'mode' has the string \"slow\"; expected one of: fast, safe"
+
+# The same check at compile time, on a value described by its type:
+const fits = cliCheckEntry(table, ["pool_size"], cliConfigShapeOf(int))
+static: assert fits.kind == cikNone
+```
+
+A description that declares a `configSchema` is a program reading files in
+clispec's own layout: every key its parameters derive or declare is valid,
+the whole file must carry the `schema` string, and the `extensions` table is
+never checked. A description without one, such as an external tool's, holds
+only the keys it spells itself with `key` (or a `perSource` entry): a
+derived key is clispec's convention, not something the tool reads. A
+consumer whose `cli:` model carries an extension gets the table's constant
+from `cliConfigTableCode(model, program, source)`, which fills in the value
+types and closed sets where the description's types are visible.
+`cliConfigTableDerivationCount()` counts the tables derived at compile time,
+so a consumer can test that it derives each description's table once however
+many snippets it checks. confutils runs the same checks when it loads a
+configuration layer (a value outside a closed set is rejected there when it
+is converted, naming the file and the line).
 
 ## Extending the model
 

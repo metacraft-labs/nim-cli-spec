@@ -51,6 +51,14 @@ library.
   words (`cliArgvOf`, `cliRenderParams`; the generated
   `Tool.canonicalArgv`): canonical spellings, `--` where a positional
   needs it, and the words that parse back to the same values.
+- `src/clispec/config_check.nim`: a description's configuration keys as a
+  table (`cliConfigTableOf`, `CliConfigTable`, derived once into a `const`)
+  and the checks a program writing a file for another runs against it
+  (`cliCheckEntry`, `cliValidateDocument`), over the format-neutral value
+  tree (`CliConfigDocument`) confutils' file formats parse into.
+- `src/clispec/splice.nim`: `cliUnbound`, which turns a `cli:` body built
+  with `quote` (a description exported for another program to mount) back
+  into the tree the language reads. Imports only `std/macros`.
 - `src/clispec/candidates.nim`: candidates, the values a source supplies for
   a parameter (the command line's with their argv index and spelling).
 - `src/clispec/values.nim`: text to typed values (`parseCliValue`).

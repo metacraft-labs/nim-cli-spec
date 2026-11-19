@@ -91,6 +91,12 @@ type
     env*: seq[string]
     configKey*: string
       ## The key in the ``file`` source.
+    keyDeclared*: bool
+      ## The description spells the key itself (``key = "<dotted.key>"`` or
+      ## a ``perSource`` entry for a file source) rather than leaving it
+      ## derived. ``clispec/config_check`` reads it for a description that
+      ## declares no ``configSchema`` (an external tool's, whose own file
+      ## format the derivation does not describe).
     sourceKeys*: seq[CliSourceSpelling]
       ## The key in each named file source (``CliParam.sourceKeys``).
     sources*: set[CliSource]
@@ -227,6 +233,14 @@ func sameParam[P](a, b: CliParam[P]): bool =
   a.name == b.name and a.sourceFile == b.sourceFile and
     a.sourceLine == b.sourceLine and a.declaredIn == b.declaredIn
 
+func declaresFileKey(perSource: openArray[CliSourceSpelling]): bool =
+  ## Whether a ``perSource`` list spells the key of a file source (any
+  ## entry but ``cli``, which is the long flag).
+  for o in perSource:
+    if o.source != CliSourceCli:
+      return true
+  false
+
 func toGrammarParam[P](p: CliParam[P]; declaredBy: int): CliGrammarParam =
   let longName = if p.kind != cpkFlag: ""
                  elif p.longName.len > 0: p.longName
@@ -242,6 +256,7 @@ func toGrammarParam[P](p: CliParam[P]; declaredBy: int): CliGrammarParam =
     acceptsNextWord: p.acceptsNextWord, refuseFalse: p.refuseFalse,
     group: p.group, visibility: p.visibility, env: p.env,
     configKey: p.configKey, sourceKeys: p.sourceKeys, sources: p.sources,
+    keyDeclared: p.keyDeclared or declaresFileKey(p.perSource),
     merge: p.merge,
     hasDefault: p.default.isSet, defaultText: displayDefault(p.default),
     defaultIsText: p.default.code.len >= 2 and p.default.code[0] == '"',
