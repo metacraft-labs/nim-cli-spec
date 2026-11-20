@@ -1891,7 +1891,8 @@ file, so an installer and its tests compute the same paths.
   and `LOCALAPPDATA`; `windows = true` for Windows' PowerShell profiles).
 - `cliSystemCompletionTargets(shell, program, family, prefix, psHome)` and
   `cliSystemCompletionDirs`: the system-wide directories for the local
-  administrator (`cpfLocal`, `/usr/local`) and for each kind of package
+  administrator (`cpfLinuxLocal` on Linux and `cpfLocal` on macOS and the
+  BSDs, both `/usr/local`) and for each kind of package
   (Debian, rpm, Arch, FreeBSD, OpenBSD and NetBSD, Homebrew, a macOS
   installer package, Nix, Windows).
 - `cliProfileBlockBody(shell, program, script)`: the text of the block that
@@ -1902,11 +1903,11 @@ file, so an installer and its tests compute the same paths.
   is a clispec script for that program, so an installer replaces only its
   own files.
 
-| Shell      | Per user                                                                                                     | System-wide (`cpfLocal`)                                   |
+| Shell      | Per user                                                                                                     | System-wide (`cpfLinuxLocal`; `cpfLocal` differs only for Fish) |
 | ---------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
 | Bash       | `${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-~/.local/share}/bash-completion}/completions/tool`; without bash-completion, also a `~/.bashrc` block that sources it | `/usr/local/share/bash-completion/completions/tool`       |
 | Zsh        | `${XDG_DATA_HOME:-~/.local/share}/zsh/site-functions/_tool`, and a `${ZDOTDIR:-~}/.zshrc` block that puts it on `$fpath` | `/usr/local/share/zsh/site-functions/_tool`               |
-| Fish       | `${XDG_CONFIG_HOME:-~/.config}/fish/completions/tool.fish`                                                   | `/usr/local/share/fish/vendor_completions.d/tool.fish`    |
+| Fish       | `${XDG_CONFIG_HOME:-~/.config}/fish/completions/tool.fish`                                                   | `/etc/fish/completions/tool.fish` (fish searches `/usr/local/share` only when `XDG_DATA_DIRS` names it); `cpfLocal`: `/usr/local/share/fish/vendor_completions.d/tool.fish` |
 | PowerShell | `${XDG_DATA_HOME:-~/.local/share}/tool/completions/tool.ps1` (`%LOCALAPPDATA%\tool\completions\tool.ps1` on Windows), loaded by a block in `$PROFILE.CurrentUserAllHosts` | the script under the prefix, loaded by a block in `$PSHOME/profile.ps1` |
 
 The module's documentation cites each shell's own documentation for these.

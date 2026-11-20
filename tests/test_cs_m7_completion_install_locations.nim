@@ -123,6 +123,37 @@ suite "test_cs_m7_completion_install_locations":
     check sysPaths(cshBash, cpfLocal, "/r/usr/local") ==
       @["/r/usr/local/share/bash-completion/completions/tool"]
 
+  test "system-wide, the local administrator's area on Linux (--system)":
+    # Bash, Zsh and PowerShell as on macOS and the BSDs, under /usr/local.
+    check sysPaths(cshBash, cpfLinuxLocal) ==
+      @["/usr/local/share/bash-completion/completions/tool"]
+    check sysPaths(cshZsh, cpfLinuxLocal) ==
+      @["/usr/local/share/zsh/site-functions/_tool"]
+    check sysPaths(cshPowerShell, cpfLinuxLocal) ==
+      @["/usr/local/share/tool/completions/tool.ps1"]
+    check cliDefaultPrefix(cpfLinuxLocal) == "/usr/local"
+    # Fish's goes in fish's configuration directory, which every fish
+    # searches; /usr/local/share/fish/vendor_completions.d is searched only
+    # when XDG_DATA_DIRS names /usr/local/share (measured on Debian 12 and
+    # Fedora 45, where a console session sets none).
+    check sysPaths(cshFish, cpfLinuxLocal) ==
+      @["/etc/fish/completions/tool.fish"]
+    # The negative control: the old location, which fish does not load.
+    check "/usr/local/share/fish/vendor_completions.d/tool.fish" notin
+      sysPaths(cshFish, cpfLinuxLocal)
+    # A test root moves the configuration directory too, and only through
+    # sysconfDir: the prefix does not carry it.
+    check cliSystemCompletionTargets(cshFish, "tool", cpfLinuxLocal,
+      "/r/usr/local", sysconfDir = "/r/etc").paths ==
+      @["/r/etc/fish/completions/tool.fish"]
+    check cliSystemCompletionTargets(cshBash, "tool", cpfLinuxLocal,
+      "/r/usr/local", sysconfDir = "/r/etc").paths ==
+      @["/r/usr/local/share/bash-completion/completions/tool"]
+    # Every other family ignores sysconfDir.
+    check cliSystemCompletionTargets(cshFish, "tool", cpfLocal,
+      sysconfDir = "/r/etc").paths ==
+      @["/usr/local/share/fish/vendor_completions.d/tool.fish"]
+
   test "system-wide, each package family":
     # Debian's zsh reads other packages' functions from vendor-completions.
     check sysPaths(cshBash, cpfDebian) ==

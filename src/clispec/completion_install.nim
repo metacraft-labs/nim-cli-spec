@@ -40,6 +40,16 @@
 ##   per user, and ``vendor_completions.d`` under the data directories
 ##   system-wide (fish's documentation, "Where to put completions",
 ##   https://fishshell.com/docs/current/completions.html#where-to-put-completions).
+##   fish takes those data directories from ``XDG_DATA_DIRS``; with it unset
+##   (a console or SSH session on Debian 12 and Fedora 45) only fish's own
+##   ``/usr/share/fish/vendor_completions.d`` is searched, never
+##   ``/usr/local/share``. So the local administrator's Linux script goes in
+##   fish's configuration directory instead, ``/etc/fish/completions``
+##   (``$__fish_sysconf_dir/completions``), which comes second in
+##   ``$fish_complete_path`` whatever the environment. The same page lists
+##   that directory as the one for completions the system administrator
+##   installs for every user; ``fish_complete_path`` is described in
+##   https://fishshell.com/docs/current/language.html#special-variables.
 ##   FreeBSD's ports use ``share/fish/completions`` (the Porter's Handbook,
 ##   "Shell Completion Files",
 ##   https://docs.freebsd.org/en/books/porters-handbook/special/#shell-completion).
@@ -77,8 +87,15 @@ type
     ## Where a system-wide script goes: the local administrator's area or
     ## one kind of package.
     cpfLocal = "local"
-      ## Installed by the local administrator on Linux, macOS or a BSD,
-      ## outside any package manager: under ``/usr/local`` by default.
+      ## Installed by the local administrator on macOS or a BSD, outside any
+      ## package manager: under ``/usr/local`` by default.
+    cpfLinuxLocal = "linux-local"
+      ## Installed by the local administrator on Linux, outside any package
+      ## manager: under ``/usr/local`` by default, except Fish's script,
+      ## which goes in fish's configuration directory
+      ## (``<sysconfDir>/fish/completions``, ``/etc/fish/completions``) because
+      ## fish does not search ``/usr/local/share`` unless ``XDG_DATA_DIRS``
+      ## names it.
     cpfDebian = "debian"      ## a Debian or Ubuntu package (``/usr``)
     cpfRpm = "rpm"            ## a Fedora, RHEL or openSUSE package (``/usr``)
     cpfArch = "arch"          ## an Arch Linux package (``/usr``)
@@ -253,22 +270,25 @@ func cliDefaultPrefix*(family: CliPlatformFamily): string =
   ## (Homebrew's ``$(brew --prefix)``, a Nix package's ``$out`` and a
   ## Windows install directory are known only to the caller).
   case family
-  of cpfLocal, cpfFreeBsd, cpfOpenBsd, cpfMacosPkg: "/usr/local"
+  of cpfLocal, cpfLinuxLocal, cpfFreeBsd, cpfOpenBsd, cpfMacosPkg: "/usr/local"
   of cpfDebian, cpfRpm, cpfArch: "/usr"
   of cpfHomebrew, cpfNix, cpfWindows: ""
 
 func cliSystemCompletionDirs*(shell: CliShell; program: string;
                               family: CliPlatformFamily;
-                              prefix = ""): seq[string] =
+                              prefix = ""; sysconfDir = "/etc"): seq[string] =
   ## The directories a system-wide script of ``shell`` goes in for
   ## ``family``, under ``prefix`` (``cliDefaultPrefix`` when empty), for the
   ## program ``program`` (whose name only PowerShell's directory holds): one,
   ## or two where a platform's shells look in two places (a macOS installer
   ## package serves Homebrew's Bash and bash-completion 2 alike), or none
-  ## where the shell does not apply (PowerShell outside ``cpfLocal`` and
-  ## ``cpfWindows``; only PowerShell on Windows). For PowerShell the
-  ## directory holds the script a profile block loads. Raises ``ValueError``
-  ## for a family without a fixed prefix when ``prefix`` is empty.
+  ## where the shell does not apply (PowerShell outside ``cpfLocal``,
+  ## ``cpfLinuxLocal`` and ``cpfWindows``; only PowerShell on Windows). For
+  ## PowerShell the directory holds the script a profile block loads.
+  ## ``sysconfDir`` is the system configuration directory, which only
+  ## ``cpfLinuxLocal``'s Fish directory is under (a test passes a re-rooted
+  ## one). Raises ``ValueError`` for a family without a fixed prefix when
+  ## ``prefix`` is empty.
   let p = if prefix.len > 0: prefix else: cliDefaultPrefix(family)
   if p.len == 0:
     raise newException(ValueError, "the " & $family &
@@ -278,8 +298,8 @@ func cliSystemCompletionDirs*(shell: CliShell; program: string;
   of cpfWindows:
     if shell == cshPowerShell:
       result.add joinWindows(p, "share", program, completionsDir)
-  of cpfLocal, cpfDebian, cpfRpm, cpfArch, cpfFreeBsd, cpfOpenBsd,
-     cpfHomebrew, cpfMacosPkg, cpfNix:
+  of cpfLocal, cpfLinuxLocal, cpfDebian, cpfRpm, cpfArch, cpfFreeBsd,
+     cpfOpenBsd, cpfHomebrew, cpfMacosPkg, cpfNix:
     case shell
     of cshBash:
       case family
@@ -296,12 +316,15 @@ func cliSystemCompletionDirs*(shell: CliShell; program: string;
       else:
         result.add joinPosix(p, "share", "zsh", "site-functions")
     of cshFish:
-      if family == cpfFreeBsd:
+      case family
+      of cpfFreeBsd:
         result.add joinPosix(p, "share", "fish", "completions")
+      of cpfLinuxLocal:
+        result.add joinPosix(sysconfDir, "fish", completionsDir)
       else:
         result.add joinPosix(p, "share", "fish", "vendor_completions.d")
     of cshPowerShell:
-      if family == cpfLocal:
+      if family in {cpfLocal, cpfLinuxLocal}:
         result.add joinPosix(p, "share", program, completionsDir)
 
 func cliPowerShellAllUsersProfile*(psHome: string; windows = false): string =
@@ -313,7 +336,8 @@ func cliPowerShellAllUsersProfile*(psHome: string; windows = false): string =
 
 func cliSystemCompletionTargets*(shell: CliShell; program: string;
                                  family: CliPlatformFamily; prefix = "";
-                                 psHome = ""): seq[CliCompletionTarget] =
+                                 psHome = ""; sysconfDir = "/etc"):
+                                 seq[CliCompletionTarget] =
   ## What a system-wide install of ``program``'s completion for ``shell``
   ## writes for ``family``: the script file in each of
   ## ``cliSystemCompletionDirs`` and, for PowerShell, a block in the
@@ -322,7 +346,8 @@ func cliSystemCompletionTargets*(shell: CliShell; program: string;
   ## PowerShell the script is in ``<prefix>/share/<program>/completions``.
   let windows = family == cpfWindows
   let name = cliCompletionFileName(shell, program)
-  for dir in cliSystemCompletionDirs(shell, program, family, prefix):
+  for dir in cliSystemCompletionDirs(shell, program, family, prefix,
+                                     sysconfDir):
     let script =
       if windows: joinWindows(dir, name) else: joinPosix(dir, name)
     result.add CliCompletionTarget(shell: shell, kind: ctkFile, path: script)
