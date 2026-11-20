@@ -174,6 +174,13 @@ library.
   `depot` pages stay byte-identical to the goldens of
   `test_cs_m5b_help_matches_design` (read from its source), and the
   invalid tier and group declarations in `tests/fixtures/cs_m2_invalid/`.
+- `tests/test_exported_load_from_another_module.nim` loads a description
+  declared with `exported = true` from another module through the `load`
+  overload that takes no `argv` (the fixture programs in
+  `tests/fixtures/exported_load/`, one module exporting two descriptions),
+  and a description that is not exported the same way. The generated
+  procedures take a `typedesc`, so their bodies are checked only where a
+  module calls them.
 - `tests/test_cs_m9_clispec_has_no_serialization_dependency.nim` fails when
   `clispec.nimble`, `flake.nix` or `repro.nim` declares a serialization
   library or a module under `src/` imports one.

@@ -727,7 +727,10 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
   let T = ident(typeName)
   let gc = ctx.grammarConst
   let rootBuilder = cliBuilderName(ctx.names, 0)
+  # The postfix ``*`` belongs on a definition's name only: a call in a
+  # generated body names the bare identifier.
   let loadName = exportedName("load", exported)
+  let loadCallee = quoted("load")
   let helpTextName = exportedName("helpText", exported)
   let helpJsonName = exportedName("helpJson", exported)
   let optionsTableName = exportedName("optionsTable", exported)
@@ -773,7 +776,7 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
     proc `loadName`(t: typedesc[`T`]; options = CliOptions()): `T` {.
         raises: [CliUsageError, CliHelpRequest].} =
       ## Parses the process's own arguments.
-      `loadName`(t, cliCommandLineParams(), options)
+      `loadCallee`(t, cliCommandLineParams(), options)
 
     proc `canonicalArgvName`(t: typedesc[`T`]; argv: openArray[string];
                              only: openArray[string] = []; group = "";
