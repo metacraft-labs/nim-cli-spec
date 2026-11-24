@@ -372,6 +372,28 @@ suite "test_cs_m5_engine_completes_every_level: the protocol":
       discard Fx.load(@["__complete", "zsh", "re"],
         CliOptions(disableCompletionEntry: true))
 
+  test "shell names: pwsh is a synonym of powershell, others are refused":
+    var shell = cshBash
+    check cliParseShell("powershell", shell)
+    check shell == cshPowerShell
+    shell = cshBash
+    check cliParseShell("pwsh", shell)
+    check shell == cshPowerShell
+    shell = cshZsh
+    check cliParseShell("PWSH", shell)
+    check shell == cshPowerShell
+    for name, want in {"bash": cshBash, "zsh": cshZsh, "fish": cshFish}.items:
+      check cliParseShell(name, shell)
+      check shell == want
+    # The same script for both spellings: the synonym is a name, not a shell.
+    var a, b: CliShell
+    check cliParseShell("pwsh", a) and cliParseShell("powershell", b)
+    check Fx.completionScript(a) == Fx.completionScript(b)
+    for name in ["tcsh", "ps1", "pwsh7", "", "power shell"]:
+      shell = cshFish
+      check not cliParseShell(name, shell)
+      check shell == cshFish
+
   test "every shell's script runs the program with the entry word":
     for shell in CliShell:
       let script = Fx.completionScript(shell)

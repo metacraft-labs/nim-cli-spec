@@ -23,6 +23,20 @@
 ##   name is the unsuffixed ``<program>``: every bash-completion 2.x loads it,
 ##   while ``<program>.bash`` needs a recent one (bash-completion's README,
 ##   Q2, Q4 and Q10, https://github.com/scop/bash-completion/blob/main/README.md).
+##   On macOS the ``~/.bashrc`` block alone is not enough: Terminal.app starts
+##   every shell as a login shell, and a login Bash reads the first of
+##   ``~/.bash_profile``, ``~/.bash_login`` and ``~/.profile`` that exists,
+##   not ``~/.bashrc``; an interactive shell that is not a login shell reads
+##   ``~/.bashrc`` only (the Bash manual, "Bash Startup Files",
+##   https://www.gnu.org/software/bash/manual/html_node/Bash-Startup-Files.html).
+##   So on macOS (``macos``) the block goes in both, and runs once when one
+##   of the files sources the other: it sets a shell variable the first time
+##   and does nothing when it finds it set. The variable is not exported, so
+##   every new shell, which inherits no ``complete`` registration either,
+##   loads the script again. The login file is ``~/.bash_profile`` unless it
+##   is absent and ``~/.bash_login`` or ``~/.profile`` exists: then the block
+##   goes in the first of those, since creating ``~/.bash_profile`` would make
+##   Bash stop reading the file it reads now (``CliCompletionTarget.alternatives``).
 ## * **Zsh**: a file ``_<program>`` whose first line is ``#compdef
 ##   <program>``, in a directory that is on ``$fpath`` when ``compinit``
 ##   runs (the zsh manual, Completion System, "Use of compinit",
@@ -50,6 +64,10 @@
 ##   that directory as the one for completions the system administrator
 ##   installs for every user; ``fish_complete_path`` is described in
 ##   https://fishshell.com/docs/current/language.html#special-variables.
+##   macOS's local administrator's script goes there too (``cpfMacosLocal``),
+##   for the same reason: fish on macOS does not search
+##   ``/usr/local/share/fish/vendor_completions.d`` either unless
+##   ``XDG_DATA_DIRS`` names ``/usr/local/share``.
 ##   FreeBSD's ports use ``share/fish/completions`` (the Porter's Handbook,
 ##   "Shell Completion Files",
 ##   https://docs.freebsd.org/en/books/porters-handbook/special/#shell-completion).
@@ -87,8 +105,9 @@ type
     ## Where a system-wide script goes: the local administrator's area or
     ## one kind of package.
     cpfLocal = "local"
-      ## Installed by the local administrator on macOS or a BSD, outside any
-      ## package manager: under ``/usr/local`` by default.
+      ## Installed by the local administrator on a BSD, outside any package
+      ## manager: under ``/usr/local`` by default. (macOS has its own family,
+      ## ``cpfMacosLocal``, which differs only in Fish's script.)
     cpfLinuxLocal = "linux-local"
       ## Installed by the local administrator on Linux, outside any package
       ## manager: under ``/usr/local`` by default, except Fish's script,
@@ -96,6 +115,11 @@ type
       ## (``<sysconfDir>/fish/completions``, ``/etc/fish/completions``) because
       ## fish does not search ``/usr/local/share`` unless ``XDG_DATA_DIRS``
       ## names it.
+    cpfMacosLocal = "macos-local"
+      ## Installed by the local administrator on macOS, outside any package
+      ## manager: under ``/usr/local``, except Fish's script, which goes in
+      ## fish's configuration directory as on Linux
+      ## (``<sysconfDir>/fish/completions``, ``/etc/fish/completions``).
     cpfDebian = "debian"      ## a Debian or Ubuntu package (``/usr``)
     cpfRpm = "rpm"            ## a Fedora, RHEL or openSUSE package (``/usr``)
     cpfArch = "arch"          ## an Arch Linux package (``/usr``)
@@ -135,6 +159,19 @@ type
     onlyWithoutLoader*: bool
       ## Write this target only when the shell's own completion loader is
       ## missing: the ``~/.bashrc`` block for a Bash without bash-completion.
+    runOnce*: bool
+      ## ``ctkProfileBlock``: the block must do its work once per shell even
+      ## when another file that holds it sources this one (macOS's Bash
+      ## blocks, in ``~/.bashrc`` and the login file). Pass it on to
+      ## ``cliProfileBlockBody``.
+    alternatives*: seq[string]
+      ## ``ctkProfileBlock``: the files the shell reads instead of ``path``
+      ## when ``path`` does not exist, in the order it looks for them (a
+      ## login Bash: ``~/.bash_login``, then ``~/.profile``). An installer
+      ## writes the block into the first of ``path`` and ``alternatives``
+      ## that exists, creating ``path`` only when none does, so that it never
+      ## makes the shell stop reading a file it read before; an uninstaller
+      ## removes the block from each of them.
 
   CliInstallEnv* = object
     ## The environment the per-user locations depend on. An empty field is
@@ -213,11 +250,13 @@ func cliCompletionFileName*(shell: CliShell; program: string): string =
 
 func cliUserCompletionTargets*(shell: CliShell; program: string;
                                env: CliInstallEnv;
-                               windows = false): seq[CliCompletionTarget] =
+                               windows = false;
+                               macos = false): seq[CliCompletionTarget] =
   ## What a per-user install of ``program``'s completion for ``shell``
   ## writes, in order: the script file, then the blocks that load it. On
   ## Windows (``windows``) only PowerShell applies, with a profile block for
-  ## each edition; elsewhere PowerShell 7's.
+  ## each edition; elsewhere PowerShell 7's. On macOS (``macos``) Bash's
+  ## block goes in ``~/.bashrc`` and in the login file, both ``runOnce``.
   let name = cliCompletionFileName(shell, program)
   if windows:
     if shell != cshPowerShell:
@@ -248,7 +287,13 @@ func cliUserCompletionTargets*(shell: CliShell; program: string;
     result.add CliCompletionTarget(shell: shell, kind: ctkFile, path: script)
     result.add CliCompletionTarget(shell: shell, kind: ctkProfileBlock,
       path: joinPosix(env.home, ".bashrc"), script: script,
-      onlyWithoutLoader: true)
+      onlyWithoutLoader: true, runOnce: macos)
+    if macos:
+      result.add CliCompletionTarget(shell: shell, kind: ctkProfileBlock,
+        path: joinPosix(env.home, ".bash_profile"), script: script,
+        onlyWithoutLoader: true, runOnce: true,
+        alternatives: @[joinPosix(env.home, ".bash_login"),
+                        joinPosix(env.home, ".profile")])
   of cshZsh:
     let script = joinPosix(dataHome, "zsh", "site-functions", name)
     let zdot = if env.zdotdir.len > 0: env.zdotdir else: env.home
@@ -270,7 +315,8 @@ func cliDefaultPrefix*(family: CliPlatformFamily): string =
   ## (Homebrew's ``$(brew --prefix)``, a Nix package's ``$out`` and a
   ## Windows install directory are known only to the caller).
   case family
-  of cpfLocal, cpfLinuxLocal, cpfFreeBsd, cpfOpenBsd, cpfMacosPkg: "/usr/local"
+  of cpfLocal, cpfLinuxLocal, cpfMacosLocal, cpfFreeBsd, cpfOpenBsd,
+     cpfMacosPkg: "/usr/local"
   of cpfDebian, cpfRpm, cpfArch: "/usr"
   of cpfHomebrew, cpfNix, cpfWindows: ""
 
@@ -283,11 +329,11 @@ func cliSystemCompletionDirs*(shell: CliShell; program: string;
   ## or two where a platform's shells look in two places (a macOS installer
   ## package serves Homebrew's Bash and bash-completion 2 alike), or none
   ## where the shell does not apply (PowerShell outside ``cpfLocal``,
-  ## ``cpfLinuxLocal`` and ``cpfWindows``; only PowerShell on Windows). For
-  ## PowerShell the directory holds the script a profile block loads.
-  ## ``sysconfDir`` is the system configuration directory, which only
-  ## ``cpfLinuxLocal``'s Fish directory is under (a test passes a re-rooted
-  ## one). Raises ``ValueError`` for a family without a fixed prefix when
+  ## ``cpfLinuxLocal``, ``cpfMacosLocal`` and ``cpfWindows``; only PowerShell
+  ## on Windows). For PowerShell the directory holds the script a profile
+  ## block loads. ``sysconfDir`` is the system configuration directory,
+  ## which only the Fish directory of ``cpfLinuxLocal`` and ``cpfMacosLocal``
+  ## is under (a test passes a re-rooted one). Raises ``ValueError`` for a family without a fixed prefix when
   ## ``prefix`` is empty.
   let p = if prefix.len > 0: prefix else: cliDefaultPrefix(family)
   if p.len == 0:
@@ -298,8 +344,8 @@ func cliSystemCompletionDirs*(shell: CliShell; program: string;
   of cpfWindows:
     if shell == cshPowerShell:
       result.add joinWindows(p, "share", program, completionsDir)
-  of cpfLocal, cpfLinuxLocal, cpfDebian, cpfRpm, cpfArch, cpfFreeBsd,
-     cpfOpenBsd, cpfHomebrew, cpfMacosPkg, cpfNix:
+  of cpfLocal, cpfLinuxLocal, cpfMacosLocal, cpfDebian, cpfRpm, cpfArch,
+     cpfFreeBsd, cpfOpenBsd, cpfHomebrew, cpfMacosPkg, cpfNix:
     case shell
     of cshBash:
       case family
@@ -319,12 +365,12 @@ func cliSystemCompletionDirs*(shell: CliShell; program: string;
       case family
       of cpfFreeBsd:
         result.add joinPosix(p, "share", "fish", "completions")
-      of cpfLinuxLocal:
+      of cpfLinuxLocal, cpfMacosLocal:
         result.add joinPosix(sysconfDir, "fish", completionsDir)
       else:
         result.add joinPosix(p, "share", "fish", "vendor_completions.d")
     of cshPowerShell:
-      if family in {cpfLocal, cpfLinuxLocal}:
+      if family in {cpfLocal, cpfLinuxLocal, cpfMacosLocal}:
         result.add joinPosix(p, "share", program, completionsDir)
 
 func cliPowerShellAllUsersProfile*(psHome: string; windows = false): string =
@@ -381,12 +427,29 @@ func parentPath(path: string): string =
       return (if i == 0: path[0 .. 0] else: path[0 ..< i])
   path
 
-func cliProfileBlockBody*(shell: CliShell; program, script: string): string =
+func runOnceVariable(program: string): string =
+  ## The shell variable a ``runOnce`` Bash block sets: ``program`` with every
+  ## character that cannot be in a variable name replaced by ``_``.
+  result = "__clispec_completion_"
+  for c in program:
+    result.add(if c in {'a'..'z', 'A'..'Z', '0'..'9'}: c else: '_')
+
+func cliProfileBlockBody*(shell: CliShell; program, script: string;
+                          runOnce = false): string =
   ## The text of the rc or profile block that loads ``program``'s installed
   ## completion ``script`` for ``shell`` (the body only: the caller adds its
   ## own markers around it). Every name and path is quoted for the shell.
   ##
-  ## * Bash: sources the script when it is readable.
+  ## * Bash: sources the script when it is readable. With ``runOnce`` (the
+  ##   target's ``runOnce``, macOS) only in a Bash (the login file may be
+  ##   ``~/.profile``, which other shells read too) and only the first time
+  ##   the shell meets the block: it sets an unexported variable,
+  ##   ``__clispec_completion_<program>``, and skips its body when it is
+  ##   already set, so a block in a file that sources another holding it
+  ##   runs once. ``export -n`` keeps the variable out of the environment
+  ##   even under ``set -a``: a shell started from this one inherits no
+  ##   ``complete`` registration and must load the script again, which an
+  ##   inherited variable would stop.
   ## * Zsh: puts the script's directory first on ``$fpath`` (once), so
   ##   ``compinit`` finds it, and, when ``compinit`` has already run
   ##   (``compdef`` exists), autoloads the function and registers it at once.
@@ -396,7 +459,15 @@ func cliProfileBlockBody*(shell: CliShell; program, script: string): string =
   case shell
   of cshBash:
     let q = shellQuote(script)
-    "if [ -r " & q & " ]; then . " & q & "; fi\n"
+    let load = "if [ -r " & q & " ]; then . " & q & "; fi\n"
+    if not runOnce:
+      load
+    else:
+      let v = runOnceVariable(program)
+      "if [ -n \"${BASH_VERSION-}\" ] && [ -z \"${" & v & "-}\" ]; then\n" &
+        "  " & v & "=1; export -n " & v & "\n" &
+        "  " & load &
+        "fi\n"
   of cshZsh:
     let dir = shellQuote(parentPath(script))
     let fn = shellQuote(cliCompletionFileName(cshZsh, program))

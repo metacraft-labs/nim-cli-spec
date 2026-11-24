@@ -154,6 +154,77 @@ suite "test_cs_m7_completion_install_locations":
       sysconfDir = "/r/etc").paths ==
       @["/usr/local/share/fish/vendor_completions.d/tool.fish"]
 
+  test "system-wide, the local administrator's area on macOS (--system)":
+    # Bash, Zsh and PowerShell as on the BSDs, under /usr/local.
+    for shell in [cshBash, cshZsh, cshPowerShell]:
+      check sysPaths(shell, cpfMacosLocal) == sysPaths(shell, cpfLocal)
+    check cliDefaultPrefix(cpfMacosLocal) == "/usr/local"
+    # Fish's goes in fish's configuration directory, as on Linux: fish on
+    # macOS does not search /usr/local/share/fish/vendor_completions.d
+    # unless XDG_DATA_DIRS names /usr/local/share.
+    check sysPaths(cshFish, cpfMacosLocal) ==
+      @["/etc/fish/completions/tool.fish"]
+    # The negative control: the row macOS had before, which fish does not
+    # load there.
+    check "/usr/local/share/fish/vendor_completions.d/tool.fish" notin
+      sysPaths(cshFish, cpfMacosLocal)
+    check cliSystemCompletionTargets(cshFish, "tool", cpfMacosLocal,
+      "/r/usr/local", sysconfDir = "/r/etc").paths ==
+      @["/r/etc/fish/completions/tool.fish"]
+    # The BSDs' local row is unchanged.
+    check sysPaths(cshFish, cpfLocal) ==
+      @["/usr/local/share/fish/vendor_completions.d/tool.fish"]
+
+  test "per user on macOS: Bash's block in ~/.bashrc and the login file":
+    let env = envOf({"HOME": "/Users/u"})
+    let bash = cliUserCompletionTargets(cshBash, "tool", env, macos = true)
+    check bash.paths == @[
+      "/Users/u/.local/share/bash-completion/completions/tool",
+      "/Users/u/.bashrc", "/Users/u/.bash_profile"]
+    for t in bash[1 .. 2]:
+      check t.kind == ctkProfileBlock
+      check t.script == bash[0].path
+      check t.onlyWithoutLoader
+      check t.runOnce
+    check bash[1].alternatives.len == 0
+    # A login Bash reads the first of these that exists.
+    check bash[2].alternatives ==
+      @["/Users/u/.bash_login", "/Users/u/.profile"]
+    # The other shells are as elsewhere.
+    for shell in [cshZsh, cshFish, cshPowerShell]:
+      check cliUserCompletionTargets(shell, "tool", env, macos = true) ==
+        cliUserCompletionTargets(shell, "tool", env)
+    # Linux (and the BSDs): one block, in ~/.bashrc, not run-once.
+    let linux = cliUserCompletionTargets(cshBash, "tool", env)
+    check linux.paths == @[
+      "/Users/u/.local/share/bash-completion/completions/tool",
+      "/Users/u/.bashrc"]
+    check not linux[1].runOnce
+    check linux[1].alternatives.len == 0
+    # Windows wins over macos: Bash has nothing there.
+    check cliUserCompletionTargets(cshBash, "tool", env, windows = true,
+      macos = true).len == 0
+
+  test "a run-once Bash block runs in a Bash, the first time only":
+    let body = cliProfileBlockBody(cshBash, "tool", "/h/c/tool",
+      runOnce = true)
+    check body ==
+      "if [ -n \"${BASH_VERSION-}\" ] && " &
+        "[ -z \"${__clispec_completion_tool-}\" ]; then\n" &
+      "  __clispec_completion_tool=1; export -n __clispec_completion_tool\n" &
+      "  if [ -r '/h/c/tool' ]; then . '/h/c/tool'; fi\n" &
+      "fi\n"
+    # The variable is a valid name whatever the program is called.
+    check "__clispec_completion_my_tool_s__x=1" in
+      cliProfileBlockBody(cshBash, "my tool's;$x", "/s", runOnce = true)
+    # Without runOnce (Linux) the block is unchanged.
+    check cliProfileBlockBody(cshBash, "tool", "/h/c/tool") ==
+      "if [ -r '/h/c/tool' ]; then . '/h/c/tool'; fi\n"
+    # runOnce is Bash's: the other shells' blocks do not change.
+    for shell in [cshZsh, cshFish, cshPowerShell]:
+      check cliProfileBlockBody(shell, "tool", "/h/x", runOnce = true) ==
+        cliProfileBlockBody(shell, "tool", "/h/x")
+
   test "system-wide, each package family":
     # Debian's zsh reads other packages' functions from vendor-completions.
     check sysPaths(cshBash, cpfDebian) ==

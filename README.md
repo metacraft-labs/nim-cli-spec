@@ -1880,6 +1880,12 @@ and the user installs it:
 | Fish       | save it as `~/.config/fish/completions/tool.fish`                                                                |
 | PowerShell | `tool completion powershell \| Out-String \| Invoke-Expression` in `$PROFILE`                                    |
 
+`cliParseShell` reads the shell names `bash`, `zsh`, `fish` and `powershell`,
+and `pwsh` (PowerShell 7's executable name) as a synonym of `powershell`, so
+a program that declares its `completion <shell>` positional with
+`values = ["bash", "zsh", "fish", "powershell", "pwsh"]` lists the synonym in
+its help and gets the same script for both.
+
 **Install locations.** `clispec/completion_install` is the table of where
 each shell loads an installed script from, for a program's own installer
 (a `completion install` command, a package build, an install script). It is
@@ -1892,29 +1898,47 @@ file, so an installer and its tests compute the same paths.
   writes, the script and the rc or profile blocks that load it, from a
   `CliInstallEnv` (`cliInstallEnv(lookup)` fills it from `HOME`,
   `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `ZDOTDIR`, `BASH_COMPLETION_USER_DIR`
-  and `LOCALAPPDATA`; `windows = true` for Windows' PowerShell profiles).
+  and `LOCALAPPDATA`; `windows = true` for Windows' PowerShell profiles,
+  `macos = true` for macOS's Bash blocks, below).
 - `cliSystemCompletionTargets(shell, program, family, prefix, psHome)` and
   `cliSystemCompletionDirs`: the system-wide directories for the local
-  administrator (`cpfLinuxLocal` on Linux and `cpfLocal` on macOS and the
-  BSDs, both `/usr/local`) and for each kind of package
+  administrator (`cpfLinuxLocal` on Linux, `cpfMacosLocal` on macOS and
+  `cpfLocal` on the BSDs, all `/usr/local`) and for each kind of package
   (Debian, rpm, Arch, FreeBSD, OpenBSD and NetBSD, Homebrew, a macOS
   installer package, Nix, Windows).
-- `cliProfileBlockBody(shell, program, script)`: the text of the block that
-  loads an installed script, every name and path quoted.
+- `cliProfileBlockBody(shell, program, script, runOnce)`: the text of the
+  block that loads an installed script, every name and path quoted; pass
+  the target's `runOnce`.
 - `cliBashCompletionLoaders()`: where bash-completion's loader is looked
   for (without it, the per-user Bash file needs the `~/.bashrc` block).
 - `cliIsGeneratedCompletionScript(content, shell, program)`: whether a file
   is a clispec script for that program, so an installer replaces only its
   own files.
 
-| Shell      | Per user                                                                                                     | System-wide (`cpfLinuxLocal`; `cpfLocal` differs only for Fish) |
+| Shell      | Per user                                                                                                     | System-wide (`cpfLinuxLocal` and `cpfMacosLocal`; `cpfLocal` differs only for Fish) |
 | ---------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| Bash       | `${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-~/.local/share}/bash-completion}/completions/tool`; without bash-completion, also a `~/.bashrc` block that sources it | `/usr/local/share/bash-completion/completions/tool`       |
+| Bash       | `${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-~/.local/share}/bash-completion}/completions/tool`; without bash-completion, also a `~/.bashrc` block that sources it (on macOS also in the login file, below) | `/usr/local/share/bash-completion/completions/tool`       |
 | Zsh        | `${XDG_DATA_HOME:-~/.local/share}/zsh/site-functions/_tool`, and a `${ZDOTDIR:-~}/.zshrc` block that puts it on `$fpath` | `/usr/local/share/zsh/site-functions/_tool`               |
 | Fish       | `${XDG_CONFIG_HOME:-~/.config}/fish/completions/tool.fish`                                                   | `/etc/fish/completions/tool.fish` (fish searches `/usr/local/share` only when `XDG_DATA_DIRS` names it); `cpfLocal`: `/usr/local/share/fish/vendor_completions.d/tool.fish` |
 | PowerShell | `${XDG_DATA_HOME:-~/.local/share}/tool/completions/tool.ps1` (`%LOCALAPPDATA%\tool\completions\tool.ps1` on Windows), loaded by a block in `$PROFILE.CurrentUserAllHosts` | the script under the prefix, loaded by a block in `$PSHOME/profile.ps1` |
 
 The module's documentation cites each shell's own documentation for these.
+
+**Bash on macOS.** Terminal.app starts every shell as a login shell, and a
+login Bash reads the first of `~/.bash_profile`, `~/.bash_login` and
+`~/.profile` that exists, never `~/.bashrc`, while a shell that is
+interactive but not a login shell reads `~/.bashrc` only
+([Bash Startup Files](https://www.gnu.org/software/bash/manual/html_node/Bash-Startup-Files.html)).
+With `macos = true` the Bash block therefore goes in `~/.bashrc` and in the
+login file: `~/.bash_profile`, or, when that is absent and `~/.bash_login` or
+`~/.profile` exists, the first of those (the target's `alternatives`), so an
+installer never creates a `~/.bash_profile` that would hide them. Both
+blocks are `runOnce`: the block runs in a Bash only, sets the unexported
+variable `__clispec_completion_<program>` and does nothing when it finds it
+already set, so a login file that sources `~/.bashrc` (a common setup) loads
+the script once. A new shell does not inherit the variable (the block runs
+`export -n` on it, which holds under `set -a` too), and needs the script
+again: it does not inherit `complete` registrations either.
 
 **PowerShell and the execution policy.** On Windows, PowerShell's
 [execution policy](https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_execution_policies)
