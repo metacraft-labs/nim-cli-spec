@@ -487,6 +487,136 @@ assert main(@["build", "--jobs", "many", "app"]) == 2
 assert main(@["--help"]) == 0
 ```
 
+### A program described in its project's `repro.nim`
+
+A program does not have to write its description next to its code. A build
+description that speaks the `cli:` language can declare it, and the program
+reads it from there, so the build tool and the program share one
+description. [Reprobuild](https://github.com/metacraft-labs/reprobuild)'s
+`repro.nim` does this: an `executable` in its `package` block takes a `cli:`
+section, and for each one the `package` macro emits an exported template
+`<name>CliDescription(generator, T)`. The template expands to
+`generator(T, "<program>", exported = true):` followed by the section's body,
+unchanged. Clispec does not know about `repro.nim`; it is the generator. The
+program picks it: `cliProgram`, confutils' `cliConfiguration`, or
+nim-entrypoints' `cliProgramWithEntryPoint`, which is `cliProgram` plus that
+library's run-time entry selector.
+
+Reprobuild's `repro-cmake-dyndep-fragment` is such a program. Its command line
+is declared in reprobuild's root `repro.nim` (lines 50 and 649-658 at commit
+[`2d2a63cff`](https://github.com/metacraft-labs/reprobuild/blob/2d2a63cffe1094c3dd9380e50e4e747c041ba787/repro.nim#L649-L658)):
+
+<!-- readme-check: skip: an excerpt of reprobuild's repro.nim; it compiles only with reprobuild's project DSL on the path -->
+
+```nim
+package reprobuild:
+  # ...
+  executable reproCmakeDyndepFragment:
+    name: "repro-cmake-dyndep-fragment"
+    cli:
+      help "Writes the dynamic graph fragment of CMake's module scanner output"
+      flag out is string, required = true, valueName = "fragment",
+        help = "The repro-dynamic-graph-v1 fragment to write"
+      flag map is string, required = true, valueName = "map",
+        help = "The action map: one '<primary-output>\\t<action-id>' per line"
+      pos ddi is seq[string], repeated = true, valueName = "ddi",
+        help = "The scanner outputs (.ddi) to convert"
+```
+
+The program imports that file and instantiates the template, then parses in
+its `main:` (from
+[`apps/repro-cmake-dyndep-fragment/repro_cmake_dyndep_fragment.nim`](https://github.com/metacraft-labs/reprobuild/blob/2d2a63cffe1094c3dd9380e50e4e747c041ba787/apps/repro-cmake-dyndep-fragment/repro_cmake_dyndep_fragment.nim)
+at the same commit, trimmed where it says `# ...`):
+
+<!-- readme-check: skip: an excerpt of a reprobuild program; it imports reprobuild's repro.nim and nim-entrypoints, which this check does not put on the path -->
+
+```nim
+import std/[json, os, strutils, tables]
+import repro_project_dsl/mode
+# ... a static check that repro.nim is compiled in the thin mode ...
+import clispec, entrypoints, entrypoints/[clispec, describe]
+import ../../repro
+from repro_core/paths import extendedPath
+
+reproCmakeDyndepFragmentCliDescription(cliProgramWithEntryPoint, DyndepArgs)
+
+describeProgram(DyndepArgs)
+
+# ...
+
+proc parseCommandLine(): DyndepArgs =
+  ## The process's command line, parsed from the description. Help is
+  ## printed on stdout and ends the process with 0; a usage error is printed
+  ## as clispec's error block and ends it with the error's code.
+  try:
+    result = DyndepArgs.load()
+    # ... an empty --out or --map is a usage error too ...
+  except CliHelpRequest as e:
+    DyndepArgs.printHelp(e)
+    quit 0
+  except CliUsageError as e:
+    DyndepArgs.printError(e)
+    quit e.exitCode
+
+# ...
+
+main:
+  let args = parseCommandLine()
+  writeFragment(args.out, args.map, args.ddi)
+```
+
+- `import ../../repro` imports the build description. Imported with no mode
+  define, it compiles in the thin mode of reprobuild's DSL, in which
+  `package` emits the `<name>CliDescription` templates and nothing else of
+  the build, so the program does not compile the build tool.
+- The template call generates the configuration type `DyndepArgs` and its
+  parser, help and completion, as `cliProgramWithEntryPoint` would with the
+  section's body written in the program.
+- `DyndepArgs.load()` with no argument parses the process's arguments. Help
+  and usage errors are handled as in any clispec program
+  ([Errors](#errors)): help on stdout and exit 0, clispec's error block on
+  stderr and its exit code (2) for a command line it rejects.
+- `main:` and `describeProgram` come from
+  [nim-entrypoints](https://github.com/metacraft-labs/nim-entrypoints):
+  `main:` is the program's ordinary entry, and `describeProgram` adds the
+  entries that describe the program to the tools that build and install it,
+  shell completion among them.
+
+In a reprobuild checkout, `just build` in its dev shell (`nix develop`) builds
+the program to `build/bin/repro-cmake-dyndep-fragment`, which then runs as
+`repro-cmake-dyndep-fragment --out <fragment> --map <map> <ddi>...`;
+`--help` prints the help generated from the section above. Reprobuild's test
+`tests/integration/test_cs_m14_idiomatic_program.nim` compiles the program
+and runs it.
+
+This check compiles neither excerpt, because both need reprobuild. The
+section's body handed to `cliProgram` directly, which is what the template
+expands to apart from the generator, compiles with clispec alone:
+
+```nim
+import clispec
+
+cliProgram(DyndepArgs, "repro-cmake-dyndep-fragment", exported = true):
+  help "Writes the dynamic graph fragment of CMake's module scanner output"
+  flag out is string, required = true, valueName = "fragment",
+    help = "The repro-dynamic-graph-v1 fragment to write"
+  flag map is string, required = true, valueName = "map",
+    help = "The action map: one '<primary-output>\\t<action-id>' per line"
+  pos ddi is seq[string], repeated = true, valueName = "ddi",
+    help = "The scanner outputs (.ddi) to convert"
+
+let args = DyndepArgs.load(@["--out", "deps.frag", "--map", "actions.map",
+  "a.ddi", "b.ddi"])
+assert args.out == "deps.frag" and args.map == "actions.map"
+assert args.ddi == @["a.ddi", "b.ddi"]
+
+try:
+  discard DyndepArgs.load(@["--out", "deps.frag", "a.ddi"])
+  assert false, "--map is required"
+except CliUsageError as e:
+  assert e.exitCode == 2
+```
+
 ### The configuration object
 
 Each command gets an object type with one field per parameter it declares,
