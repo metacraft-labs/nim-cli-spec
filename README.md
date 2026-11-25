@@ -519,17 +519,17 @@ expressions; those of a `seq[T]` or `Option[T]` parameter are values of `T`.
 Generated for `Tool` (exported when written
 `cliProgram(Tool, "tool", exported = true):`):
 
-| Procedure                                                                          | Does                                                                                                                                                  |
-| ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Tool.load(argv, options = CliOptions())`                                          | parses `argv` (without the program name)                                                                                                              |
-| `Tool.load(options = CliOptions())`                                                | parses the process's own arguments                                                                                                                    |
+| Procedure                                                                          | Does                                                                                                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Tool.load(argv, options = CliOptions())`                                          | parses `argv` (without the program name)                                                                                                                                                                                                                                 |
+| `Tool.load(options = CliOptions())`                                                | parses the process's own arguments                                                                                                                                                                                                                                       |
 | `Tool.helpText(path = [], layout, long, styled, all)` / `Tool.helpJson(path = [])` | the help of the command reached by the subcommand words `path` (`long`: the `--help` page; `styled`: in the `portable16` palette; `all`: `secondary` subcommands too; `Tool.helpText(path, style)` renders with a `CliStyle`, see [Colour and width](#colour-and-width)) |
-| `Tool.optionsTable(path = [], layout, group = "", long, styled)`                   | just the rows of that command's options table (see [Help](#help))                                                                                     |
-| `Tool.printHelp(e, stream = stdout)` / `Tool.printError(e, stream = stderr)`       | print a help request or a usage error as `cliPrintHelp` / `cliPrintError` do, under the program's own colour configuration (see [Colour and width](#colour-and-width)) |
-| `Tool.complete(words, cursor = -1)`                                                | the completion candidates for `words[cursor]` (the last word by default)                                                                              |
-| `Tool.completionScript(shell)` / `Tool.completionReply(args)`                      | a shell's completion script; the answer to a script's request                                                                                         |
-| `Tool.cliGrammar` / `Tool.cliModel`                                                | the parser's tables and the model, both constants                                                                                                     |
-| `Tool.canonicalArgv(argv, only = [], group = "", commandWords = true)`             | `argv` written back in canonical form, or just the parameters `only` names (see [Writing a command line back](#writing-a-command-line-back))          |
+| `Tool.optionsTable(path = [], layout, group = "", long, styled)`                   | just the rows of that command's options table (see [Help](#help))                                                                                                                                                                                                        |
+| `Tool.printHelp(e, stream = stdout)` / `Tool.printError(e, stream = stderr)`       | print a help request or a usage error as `cliPrintHelp` / `cliPrintError` do, under the program's own colour configuration (see [Colour and width](#colour-and-width))                                                                                                   |
+| `Tool.complete(words, cursor = -1)`                                                | the completion candidates for `words[cursor]` (the last word by default)                                                                                                                                                                                                 |
+| `Tool.completionScript(shell)` / `Tool.completionReply(args)`                      | a shell's completion script; the answer to a script's request                                                                                                                                                                                                            |
+| `Tool.cliGrammar` / `Tool.cliModel`                                                | the parser's tables and the model, both constants                                                                                                                                                                                                                        |
+| `Tool.canonicalArgv(argv, only = [], group = "", commandWords = true)`             | `argv` written back in canonical form, or just the parameters `only` names (see [Writing a command line back](#writing-a-command-line-back))                                                                                                                             |
 
 `CliOptions` sets the program name used in messages, the exit code of usage
 errors (`usageExitCode`, 2 when not set), `disableHelpFlag`, the word
@@ -636,7 +636,7 @@ parser reading the words supplies it again. The spellings:
   other; a `retired` spelling never, since the parser refuses it;
 - a value attached, `--name=value`, so a value that starts with `-`, is
   `--` or is empty stays that flag's value (under `parsing
-  equalsTakesNext`, an empty value of a `format = separate` flag is written
+equalsTakesNext`, an empty value of a `format = separate` flag is written
   as two words, `--name` and the empty word);
 - a switch as `--name` or `--no-name` (`--name=false` when it is not
   negatable), a counted flag once per occurrence, an `optionalValue` flag
@@ -1159,8 +1159,8 @@ replacement is what the user meant).
   is an invalid value, not an unknown flag. A one-letter `-t` also
   matches a word it starts (`-t4`). When the declaration that matched is
   not the spelling itself, the message quotes it (`unknown flag
-  '--report' for 'tool build' ('--report=none' is a retired spelling; use
-  --measure=none)`).
+'--report' for 'tool build' ('--report=none' is a retired spelling; use
+--measure=none)`).
 - **Matching** follows `flagMatching` for flags and `commandMatching` for
   words, as for live spellings.
 - **Never offered.** A retired spelling is not listed by help, not offered
@@ -1496,8 +1496,8 @@ stderr)`, which `cliProgram` generates, and the library's
 `cliPrintHelp(e, stream = stdout)` and `cliPrintError(e, stream = stderr)`
 decide, for the stream they write to, whether to style the page, in which
 palette, and how wide it is; the generated ones under the program's own
-colour configuration, the library's under the build's (see *Compile-time
-knobs* below). Styling never changes the text: the styled
+colour configuration, the library's under the build's (see _Compile-time
+knobs_ below). Styling never changes the text: the styled
 page with its escape sequences removed (`cliStripStyles`) is the plain page,
 byte for byte, so colour never says anything the words do not, and the
 layout, measured on the visible text (`cliVisibleLen`), is the same.
@@ -1552,14 +1552,14 @@ the background is unknown and the page gets `portable16`.
 **Palettes.** SGR parameters (`cliPortable16`, `cliDark24`, `cliDark256`,
 `cliLight24`, `cliLight256`):
 
-| Element | portable16 | dark, 24-bit | dark, 256 | light, 24-bit | light, 256 |
-|---|---|---|---|---|---|
-| `heading` | `1;34` | `1;38;2;82;198;137` | `1;38;5;42` | `1;38;2;18;129;81` | `1;38;5;22` |
-| `literal` | `1` | `1;38;2;83;192;210` | `1;38;5;44` | `1;38;2;9;125;140` | `1;38;5;23` |
-| `placeholder` | `35` | `38;2;150;183;189` | `38;5;152` | `38;2;87;118;124` | `38;5;242` |
-| `error` | `1;31` | `1;38;2;255;147;139` | `1;38;5;217` | `1;38;2;214;47;53` | `1;38;5;160` |
-| `invalid` | `4;35` | `38;2;227;168;1` | `38;5;178` | `38;2;145;107;2` | `38;5;94` |
-| `tip` | `1;34` | `1;38;2;82;198;137` | `1;38;5;42` | `1;38;2;18;129;81` | `1;38;5;22` |
+| Element       | portable16 | dark, 24-bit         | dark, 256    | light, 24-bit      | light, 256   |
+| ------------- | ---------- | -------------------- | ------------ | ------------------ | ------------ |
+| `heading`     | `1;34`     | `1;38;2;82;198;137`  | `1;38;5;42`  | `1;38;2;18;129;81` | `1;38;5;22`  |
+| `literal`     | `1`        | `1;38;2;83;192;210`  | `1;38;5;44`  | `1;38;2;9;125;140` | `1;38;5;23`  |
+| `placeholder` | `35`       | `38;2;150;183;189`   | `38;5;152`   | `38;2;87;118;124`  | `38;5;242`   |
+| `error`       | `1;31`     | `1;38;2;255;147;139` | `1;38;5;217` | `1;38;2;214;47;53` | `1;38;5;160` |
+| `invalid`     | `4;35`     | `38;2;227;168;1`     | `38;5;178`   | `38;2;145;107;2`   | `38;5;94`    |
+| `tip`         | `1;34`     | `1;38;2;82;198;137`  | `1;38;5;42`  | `1;38;2;18;129;81` | `1;38;5;22`  |
 
 `portable16` (depth 16, or the background unknown) uses only 16-colour
 codes that read on dark and light backgrounds alike. The tuned palettes
@@ -1588,16 +1588,16 @@ off or fixed leaves no code behind: its variables are not read, the query
 is not compiled, and a palette that can never be chosen is not in the
 program.
 
-| Define | `cliProgram` parameter | Values | Default | When fixed or off |
-|---|---|---|---|---|
-| `clispec_colors` | `colors` | `auto`, `always`, `never` | `auto` | `never`: nothing is styled, no styling or detection code is compiled, and `CliOptions.color` is ignored; `always`: no detection (rules 2 to 6), `CliOptions.color` still applies |
-| `clispec_color_env` | `colorEnv` | on/off | on | rules 2 to 5 are gone, as is `FORCE_COLOR`'s depth |
-| `clispec_color_depth` | `colorDepth` | `auto`, `16`, `256`, `24` | `auto` | that depth; nothing is read to detect it, and only its palettes are compiled |
-| `clispec_background` | `background` | `auto`, `dark`, `light`, `unknown` | `auto` | that background; no source is read, only its palettes are compiled (`unknown`: `portable16` alone, and no depth is detected) |
-| `clispec_colorfgbg` | `colorFgBg` | on/off | on | `COLORFGBG` is not read |
-| `clispec_background_query` | `backgroundQuery` | on/off | on | no query: no terminal I/O beyond the page |
-| `clispec_user_colors` | `userColors` | on/off | **off** | `CLISPEC_COLORS`, `<PROGRAM>_COLORS` and their `bg=` exist only when on |
-| `clispec_palette` | `palette` | entries as in the users' variables | empty | the developer's restyling, over every palette and under the users' overrides; checked when the program is built (`bg` is refused: use `clispec_background` / `background`) |
+| Define                     | `cliProgram` parameter | Values                             | Default | When fixed or off                                                                                                                                                                |
+| -------------------------- | ---------------------- | ---------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clispec_colors`           | `colors`               | `auto`, `always`, `never`          | `auto`  | `never`: nothing is styled, no styling or detection code is compiled, and `CliOptions.color` is ignored; `always`: no detection (rules 2 to 6), `CliOptions.color` still applies |
+| `clispec_color_env`        | `colorEnv`             | on/off                             | on      | rules 2 to 5 are gone, as is `FORCE_COLOR`'s depth                                                                                                                               |
+| `clispec_color_depth`      | `colorDepth`           | `auto`, `16`, `256`, `24`          | `auto`  | that depth; nothing is read to detect it, and only its palettes are compiled                                                                                                     |
+| `clispec_background`       | `background`           | `auto`, `dark`, `light`, `unknown` | `auto`  | that background; no source is read, only its palettes are compiled (`unknown`: `portable16` alone, and no depth is detected)                                                     |
+| `clispec_colorfgbg`        | `colorFgBg`            | on/off                             | on      | `COLORFGBG` is not read                                                                                                                                                          |
+| `clispec_background_query` | `backgroundQuery`      | on/off                             | on      | no query: no terminal I/O beyond the page                                                                                                                                        |
+| `clispec_user_colors`      | `userColors`           | on/off                             | **off** | `CLISPEC_COLORS`, `<PROGRAM>_COLORS` and their `bg=` exist only when on                                                                                                          |
+| `clispec_palette`          | `palette`              | entries as in the users' variables | empty   | the developer's restyling, over every palette and under the users' overrides; checked when the program is built (`bg` is refused: use `clispec_background` / `background`)       |
 
 On/off takes `on`, `yes`, `true`, `1` and `off`, `no`, `false`, `0`,
 `none`; the enum values are matched in any case. A parameter's value is a
@@ -1923,12 +1923,12 @@ file, so an installer and its tests compute the same paths.
   is a clispec script for that program, so an installer replaces only its
   own files.
 
-| Shell      | Per user                                                                                                     | System-wide (`cpfLinuxLocal` and `cpfMacosLocal`; `cpfLocal` differs only for Fish) |
-| ---------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| Bash       | `${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-~/.local/share}/bash-completion}/completions/tool`; without bash-completion, also a `~/.bashrc` block that sources it (on macOS also in the login file, below) | `/usr/local/share/bash-completion/completions/tool`       |
-| Zsh        | `${XDG_DATA_HOME:-~/.local/share}/zsh/site-functions/_tool`, and a `${ZDOTDIR:-~}/.zshrc` block that puts it on `$fpath` | `/usr/local/share/zsh/site-functions/_tool`               |
-| Fish       | `${XDG_CONFIG_HOME:-~/.config}/fish/completions/tool.fish`                                                   | `/etc/fish/completions/tool.fish` (fish searches `/usr/local/share` only when `XDG_DATA_DIRS` names it); `cpfLocal`: `/usr/local/share/fish/vendor_completions.d/tool.fish` |
-| PowerShell | `${XDG_DATA_HOME:-~/.local/share}/tool/completions/tool.ps1` (`%LOCALAPPDATA%\tool\completions\tool.ps1` on Windows), loaded by a block in `$PROFILE.CurrentUserAllHosts` | the script under the prefix, loaded by a block in `$PSHOME/profile.ps1` |
+| Shell      | Per user                                                                                                                                                                                                     | System-wide (`cpfLinuxLocal` and `cpfMacosLocal`; `cpfLocal` differs only for Fish)                                                                                         |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bash       | `${BASH_COMPLETION_USER_DIR:-${XDG_DATA_HOME:-~/.local/share}/bash-completion}/completions/tool`; without bash-completion, also a `~/.bashrc` block that sources it (on macOS also in the login file, below) | `/usr/local/share/bash-completion/completions/tool`                                                                                                                         |
+| Zsh        | `${XDG_DATA_HOME:-~/.local/share}/zsh/site-functions/_tool`, and a `${ZDOTDIR:-~}/.zshrc` block that puts it on `$fpath`                                                                                     | `/usr/local/share/zsh/site-functions/_tool`                                                                                                                                 |
+| Fish       | `${XDG_CONFIG_HOME:-~/.config}/fish/completions/tool.fish`                                                                                                                                                   | `/etc/fish/completions/tool.fish` (fish searches `/usr/local/share` only when `XDG_DATA_DIRS` names it); `cpfLocal`: `/usr/local/share/fish/vendor_completions.d/tool.fish` |
+| PowerShell | `${XDG_DATA_HOME:-~/.local/share}/tool/completions/tool.ps1` (`%LOCALAPPDATA%\tool\completions\tool.ps1` on Windows), loaded by a block in `$PROFILE.CurrentUserAllHosts`                                    | the script under the prefix, loaded by a block in `$PSHOME/profile.ps1`                                                                                                     |
 
 The module's documentation cites each shell's own documentation for these.
 
