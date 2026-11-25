@@ -87,6 +87,8 @@ const clispecTests = [
   ClispecTest(source: "tests/test_cs_m7_completion_install_locations.nim"),
   ClispecTest(source: "tests/test_exported_load_from_another_module.nim",
     runsCompiler: true),
+  ClispecTest(source: "tests/test_run_time_copy_names_no_build_path.nim",
+    runsCompiler: true),
   ClispecTest(source: "tests/test_suite_lists_agree.nim"),
   ClispecTest(source: "tests/e2e_cs_m5_real_shell_completion.nim",
     runsCompiler: true, realShells: true),

@@ -6,6 +6,7 @@
 ## compiler's AST and line information, and the test feeds it both.
 
 import std/[macros, strutils, tables, unittest]
+from std/os import extractFilename
 
 import clispec
 
@@ -26,6 +27,17 @@ proc paramNames(cmd: PlainCliCommand): seq[string] =
     result.add(param.name)
 
 const thisFile = currentSourcePath()
+const thisFileName = thisFile.extractFilename
+  ## What a ``plainCliModel`` constant records: it is the model's run-time
+  ## copy, which names a declaration's file without its directories
+  ## (``cliRunTimeCopy``).
+
+macro compileTimeSourceFile(body: untyped): untyped =
+  ## The file the first parameter of a ``cli:`` body records in the model a
+  ## macro holds while the description compiles.
+  let model = parseCliModel[NoCliExtension, NoCliExtension](body,
+    NoCliExtension())
+  newLit(model.root.params[0].sourceFile)
 
 suite "parameter declarations":
 
@@ -109,11 +121,18 @@ suite "parameter declarations":
       "quiet"]
 
   test "every declaration records its own source line":
-    check cmd.paramNamed("source").sourceFile == thisFile
+    check cmd.paramNamed("source").sourceFile == thisFileName
     check cmd.paramNamed("output").sourceLine >
       cmd.paramNamed("source").sourceLine
     check cmd.paramNamed("verbose").sourceLine >
       cmd.paramNamed("output").sourceLine
+
+  test "the model a macro holds records the file's full path":
+    # Compile-time diagnostics position themselves with it.
+    const file = compileTimeSourceFile:
+      flag only is int
+    check file == thisFile
+    check thisFileName != thisFile
 
 suite "flag-only and positional-only arguments":
 
@@ -203,7 +222,7 @@ suite "commands and scopes":
 
   test "a command records the line of its body":
     let clean = model.commandAt(["clean"])
-    check clean.sourceFile == thisFile
+    check clean.sourceFile == thisFileName
     check clean.sourceLine == clean.paramNamed("all").sourceLine
 
 suite "names that are Nim keywords":

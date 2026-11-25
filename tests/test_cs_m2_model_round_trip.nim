@@ -15,6 +15,7 @@
 ## here rather than going unnoticed.
 
 import std/[macros, tables, unittest]
+from std/os import extractFilename
 
 import clispec
 
@@ -36,7 +37,9 @@ proc strictest(values: openArray[int]): int {.used.} =
 
 const defaultJobs = 4
 
-const thisFile = currentSourcePath()
+const thisFile = currentSourcePath().extractFilename
+  ## The model below is a constant, the run-time copy, which records a
+  ## declaration's file by its name (``cliRunTimeCopy``).
 
 const model = plainCliModel:
   help "A fixture program"

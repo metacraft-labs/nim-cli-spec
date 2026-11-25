@@ -306,6 +306,14 @@ assert model.root.params[2].sourceKeys[0].spelling == "base-url"
 model turns the text back into an AST with `parseExpr`, in the scope that holds
 the description, so the identifiers resolve as the author wrote them.
 
+**Where a declaration was written.** Parameters, commands, groups, retired
+spellings and expressions record the file and line they were written on. A
+macro reading the model at compile time sees the file as the compiler read it,
+an absolute path, and every compile error about the description names it. The
+copy a program carries at run time (`Tool.cliGrammar`, `Tool.cliModel`, a
+`plainCliModel` constant) records the file's name only (`cliRunTimeCopy`), so
+a program's binary names no directory of the machine that built it.
+
 **Invalid declarations are compile errors** naming the parameter (or the
 command): a name declared twice in one command (Nim's style-insensitive
 comparison, inherited parameters included), a `short`, `alias` or `--<name>`

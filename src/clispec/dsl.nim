@@ -2063,7 +2063,10 @@ proc cliModelValue*[C, P](model: CliModel[C, P]): NimNode =
   ## of the model, then an assignment of each ``helpExpr`` /
   ## ``longHelpExpr`` to its text. Place it where the description's
   ## constants are visible (a ``const`` at the description's scope). With no
-  ## such expression it is just ``newLit(model)``.
+  ## such expression it is just ``newLit(model)``. The value is the
+  ## model's run-time copy (``cliRunTimeCopy``): each ``sourceFile`` is the
+  ## file's name, not the build host's path to it; the positions the
+  ## evaluated expressions are given for diagnostics are the full ones.
   var assigns: seq[NimNode] = @[]
   let m = genSym(nskVar, "model")
   proc fill(scope: NimNode; params: seq[CliParam[P]]) =
@@ -2080,9 +2083,10 @@ proc cliModelValue*[C, P](model: CliModel[C, P]): NimNode =
   for k, cmd in model.commands:
     fill(nnkBracketExpr.newTree(newDotExpr(m, ident("commands")), newLit(k)),
       cmd.params)
+  let copy = cliRunTimeCopy(model)
   if assigns.len == 0:
-    return newLit(model)
-  var body = newStmtList(newVarStmt(m, newLit(model)))
+    return newLit(copy)
+  var body = newStmtList(newVarStmt(m, newLit(copy)))
   for a in assigns:
     body.add(a)
   body.add(m)

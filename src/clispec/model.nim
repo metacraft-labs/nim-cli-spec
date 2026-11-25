@@ -660,6 +660,42 @@ func isSet*(e: CliExpr): bool =
   ## Whether the expression was given.
   e.code.len > 0
 
+func cliRunTimeSourceFile*(file: string): string =
+  ## The source file a run-time copy of a description records (see
+  ## ``cliRunTimeCopy``): ``file``'s last component, without the
+  ## directories before it. Both ``/`` and ``\`` end a directory, whatever
+  ## the host, so one file gives the same name on every build host.
+  var start = 0
+  for i, c in file:
+    if c in {'/', '\\'}:
+      start = i + 1
+  file[start .. ^1]
+
+func cliRunTimeCopy*[T](value: T): T =
+  ## ``value`` (a model, a grammar or any part of one) as a program carries
+  ## it at run time: every ``sourceFile`` is reduced to the file's name
+  ## (``cliRunTimeSourceFile``); lines, columns and everything else are
+  ## kept.
+  ##
+  ## The compiler records a declaration's file as the absolute path it read
+  ## it from, which names the build host's checkout. Diagnostics about the
+  ## description are reported while it compiles, from the model the macro
+  ## holds, and need that path; the copy that becomes a constant of the
+  ## program (``cliModelValue``, the grammar ``cliProgram`` generates) needs
+  ## none of it, and with it the program's bytes would depend on where it
+  ## was built. A consumer's ``ext`` values are left as they are: the
+  ## library never looks inside them.
+  result = value
+  when T is object or T is tuple:
+    for name, field in fieldPairs(result):
+      when name == "sourceFile":
+        field = cliRunTimeSourceFile(field)
+      elif name != "ext":
+        field = cliRunTimeCopy(field)
+  elif T is seq:
+    for item in result.mitems:
+      item = cliRunTimeCopy(item)
+
 const
   CliSourceCli* = "cli"
     ## The source name of the command line in conventions and overrides.

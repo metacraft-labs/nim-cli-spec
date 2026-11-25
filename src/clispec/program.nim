@@ -571,7 +571,9 @@ proc grammarConstCode[P](ctx: GenContext; decls: seq[CliParam[P]]): NimNode =
   ## set's texts.
   let g = ctx.g
   let gv = genSym(nskVar, "grammar")
-  var body = newStmtList(newVarStmt(gv, newLit(g)))
+  # The constant is the run-time copy, which names no build-host path
+  # (``cliRunTimeCopy``).
+  var body = newStmtList(newVarStmt(gv, newLit(cliRunTimeCopy(g))))
   for id, decl in decls:
     let fieldType = parseExpr(g.params[id].nimType)
     let param = nnkBracketExpr.newTree(newDotExpr(gv, ident("params")),

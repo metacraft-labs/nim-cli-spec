@@ -525,7 +525,7 @@ proc cliConfigTableCode*[C, P](model: CliModel[C, P]; program: string;
     p.completer = ""
     p.alsoSets = @[]
   let gv = genSym(nskVar, "configGrammar")
-  var body = newStmtList(newVarStmt(gv, newLit(g)))
+  var body = newStmtList(newVarStmt(gv, newLit(cliRunTimeCopy(g))))
   for id, p in g.params:
     if not holdsKey(g, p):
       continue
