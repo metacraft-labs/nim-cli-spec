@@ -216,13 +216,19 @@ type
 
   GenContext = object
     g: CliGrammar
+    locations: CliGrammarLocations
+      ## Where the grammar's parts were written, for diagnostics only.
     names: CliGeneratedNames
     exported: bool
     grammarConst: NimNode
 
-proc problemAt(message, file: string; line: int) =
+proc problemAt(message: string; at: CliSourceLocation) =
+  ## A compile error placed where ``at`` says (with no position of its own
+  ## when the location is not known; see "Source locations" in
+  ## ``clispec/model``).
   let n = newEmptyNode()
-  n.setLineInfo(file, line, 0)
+  if at.isSet:
+    n.setLineInfo(at.file, at.line, at.column)
   error(message, n)
 
 proc cliObjectHolds*(g: CliGrammar; command: int): seq[int] =
@@ -432,7 +438,7 @@ proc typeDecls(ctx: GenContext; command: int): seq[NimNode] =
         problemAt("clispec: " & (if cmd.path.len == 0: "the root command"
           else: "command '" & cmd.path.join(" ") & "'") &
           ": the configuration object field '" & field & "' would hold " &
-          "both " & s.what & " and " & what, cmd.sourceFile, cmd.sourceLine)
+          "both " & s.what & " and " & what, cliAt(ctx.locations.commands, command))
     seen.add((norm, what))
   for id in cliObjectHolds(g, command):
     let p = g.params[id]
@@ -571,9 +577,8 @@ proc grammarConstCode[P](ctx: GenContext; decls: seq[CliParam[P]]): NimNode =
   ## set's texts.
   let g = ctx.g
   let gv = genSym(nskVar, "grammar")
-  # The constant is the run-time copy, which names no build-host path
-  # (``cliRunTimeCopy``).
-  var body = newStmtList(newVarStmt(gv, newLit(cliRunTimeCopy(g))))
+  # The grammar records no source location, so the constant names none.
+  var body = newStmtList(newVarStmt(gv, newLit(g)))
   for id, decl in decls:
     let fieldType = parseExpr(g.params[id].nimType)
     let param = nnkBracketExpr.newTree(newDotExpr(gv, ident("params")),
@@ -584,11 +589,14 @@ proc grammarConstCode[P](ctx: GenContext; decls: seq[CliParam[P]]): NimNode =
       infix(fieldType, "is", ident("seq"))))
     body.add(newAssignment(newDotExpr(param, ident("configType")),
       newCall(ident("cliConfigTypeOf"), fieldType)))
-    for (field, e) in [("help", decl.helpExpr),
-                      ("longHelp", decl.longHelpExpr)]:
+    let locs = cliParamLocations(ctx.locations, id)
+    for (field, e, at) in [("help", decl.helpExpr, locs.helpExpr),
+                           ("longHelp", decl.longHelpExpr,
+                            locs.longHelpExpr)]:
       if e.isSet:
         let value = parseExpr(e.code)
-        value.setLineInfo(e.sourceFile, e.sourceLine, e.sourceColumn)
+        if at.isSet:
+          value.setLineInfo(at.file, at.line, at.column)
         body.add(newAssignment(newDotExpr(param, ident(field)), value))
     let elemType = newCall(ident("cliElementType"), fieldType)
     if decl.values.len > 0:
@@ -647,8 +655,8 @@ proc valueCheckProc[P](ctx: GenContext; decls: seq[CliParam[P]]): NimNode =
   result.addPragma(nnkExprColonExpr.newTree(ident("raises"),
     nnkBracket.newTree()))
 
-proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
-                           exported: bool;
+proc cliProgramCode*[C, P](located: CliLocatedModel[C, P];
+                           typeName, program: string; exported: bool;
                            colorConfig = cliColorDefaults): NimNode =
   ## The code ``cliProgram`` generates, for a consumer macro that builds its
   ## own model (with an extension): the model's type checks, the
@@ -657,19 +665,24 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
   ## ``cliGrammar`` and ``cliModel`` procedures for ``typeName``.
   ## ``program`` is the name help and errors use; ``colorConfig`` the
   ## program's colour configuration (``CliProgramArgs.colorConfig``), which
-  ## ``load`` and the printers are compiled for. Place the result at the
+  ## ``load`` and the printers are compiled for. ``located`` is the
+  ## compile-time model ``parseCliModel`` returns: its diagnostics are
+  ## placed where it says, and only its ``model`` is emitted (see "Source
+  ## locations" in ``clispec/model``). Place the result at the
   ## description's scope, which must import ``clispec``.
+  let model = located.model
   var problems: seq[CliGrammarProblem] = @[]
   var decls: seq[CliParam[P]] = @[]
-  let g = cliGrammarOf(model, program, problems, decls)
+  var locations: CliGrammarLocations
+  let g = cliGrammarOf(located, program, problems, decls, locations)
   for problem in problems:
-    problemAt(problem.message, problem.sourceFile, problem.sourceLine)
+    problemAt(problem.message, problem.at)
   if model.configSchema.len > 0:
     # A program that loads configuration files: their top-level ``schema``
     # string and ``extensions`` table belong to the file itself, so no
     # parameter may use those keys. (A description that loads no file, an
     # external tool's for one, may name a parameter ``extensions``.)
-    for p in decls:
+    for id, p in decls:
       var keys = @[p.configKey]
       for k in p.sourceKeys:
         keys.add(k.spelling)
@@ -679,10 +692,10 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
           problemAt("clispec: parameter '" & p.name & "': configuration " &
             "key '" & key & "' is reserved: a configuration file's " &
             "`schema` string and its `extensions` table are not " &
-            "parameters; give the parameter another `key`", p.sourceFile,
-            p.sourceLine)
+            "parameters; give the parameter another `key`",
+            cliParamLocations(locations, id).at)
           break
-  var ctx = GenContext(g: g, exported: exported,
+  var ctx = GenContext(g: g, locations: locations, exported: exported,
     grammarConst: genSym(nskConst, typeName & "Grammar"),
     names: cliGeneratedNames(g, typeName))
   for k in 0 ..< g.commands.len:
@@ -691,10 +704,9 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
           ctx.names.typeNames[k] == ctx.names.typeNames[kk]:
         problemAt("clispec: commands '" & g.commands[kk].path.join(" ") &
           "' and '" & g.commands[k].path.join(" ") & "' would both be " &
-          "the type " & ctx.names.typeNames[k], g.commands[k].sourceFile,
-          g.commands[k].sourceLine)
+          "the type " & ctx.names.typeNames[k], cliAt(locations.commands, k))
   result = newStmtList()
-  for check in cliModelTypeChecks(model):
+  for check in cliModelTypeChecks(located):
     result.add(check)
   var typeSection = nnkTypeSection.newTree()
   for k in 0 ..< g.commands.len:
@@ -745,7 +757,7 @@ proc cliProgramCode*[C, P](model: CliModel[C, P]; typeName, program: string;
   let canonicalArgvName = exportedName("canonicalArgv", exported)
   let modelConst = genSym(nskConst, typeName & "Model")
   result.add(nnkConstSection.newTree(nnkConstDef.newTree(modelConst,
-    newEmptyNode(), cliModelValue(model))))
+    newEmptyNode(), cliModelValue(located))))
   let valueCheck = cliValueCheckName(ctx.names)
   let colorConst = cliColorConfigName(ctx.names)
   let printHelpName = exportedName("printHelp", exported)

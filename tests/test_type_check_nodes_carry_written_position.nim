@@ -23,16 +23,16 @@ macro unpositionedNodes(body: untyped): untyped =
   ## The nodes of the generated checks whose line differs from the line the
   ## wrong argument was written on, as ``"<kind>@<line>"`` entries (a
   ## ``seq[string]`` literal).
-  let model = parseCliModel[NoCliExtension, NoCliExtension](body,
+  let located = parseCliModel[NoCliExtension, NoCliExtension](body,
     NoCliExtension())
-  let want = model.commands[0].params[0].default.sourceLine
+  let want = located.locations.commands[0].params[0].default.line
   var bad: seq[string] = @[]
   proc walk(n: NimNode) =
     if n.lineInfoObj.line != want:
       bad.add($n.kind & "@" & $n.lineInfoObj.line & " (want " & $want & ")")
     for child in n:
       walk(child)
-  walk(cliModelTypeChecks(model))
+  walk(cliModelTypeChecks(located))
   result = newLit(bad)
 
 suite "cliModelTypeChecks positions every node of a check":

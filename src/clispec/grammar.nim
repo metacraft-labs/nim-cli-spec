@@ -177,8 +177,6 @@ type
       ## declaration order.
     ownParams*: seq[int]
       ## The parameters the command itself declares.
-    sourceFile*: string
-    sourceLine*: int
 
   CliGrammar* = object
     ## A whole command tree.
@@ -207,10 +205,28 @@ type
       ## The opt-in command-line rules (``CliModel.parseRules``).
 
   CliGrammarProblem* = object
-    ## A description that is a valid model but not a parseable program.
+    ## A description that is a valid model but not a parseable program: a
+    ## compile-time diagnostic, never part of a program.
     message*: string
-    sourceFile*: string
-    sourceLine*: int
+    at*: CliSourceLocation
+      ## Where the command the problem is about was written (empty for a
+      ## model with no locations).
+
+  CliGrammarLocations* = object
+    ## Where the parts of a grammar were written, for a generator's
+    ## compile-time diagnostics (the grammar itself records no location; see
+    ## "Source locations" in ``clispec/model``).
+    commands*: seq[CliSourceLocation]
+      ## Of ``CliGrammar.commands[k]``.
+    params*: seq[CliParamLocations]
+      ## Of ``CliGrammar.params[id]``, its declaration and expressions.
+
+func cliParamLocations*(locations: CliGrammarLocations;
+                        id: int): CliParamLocations =
+  ## Where parameter ``id`` of the grammar was written; empty when not
+  ## recorded.
+  if id >= 0 and id < locations.params.len: locations.params[id]
+  else: CliParamLocations()
 
 func displayDefault(e: CliExpr): string =
   ## A default as help shows it: a string literal without its quotes,
@@ -229,9 +245,14 @@ func stripAlias(alias: string): string =
   while result.endsWith("="):
     result.setLen(result.len - 1)
 
-func sameParam[P](a, b: CliParam[P]): bool =
-  a.name == b.name and a.sourceFile == b.sourceFile and
-    a.sourceLine == b.sourceLine and a.declaredIn == b.declaredIn
+func sameParam[P](a, b: CliParam[P];
+                  aAt, bAt: CliSourceLocation): bool =
+  ## Whether two entries of two scopes' parameter lists are one declaration
+  ## (the second scope inherited it). Where the declarations were written
+  ## tells apart two of one name declared by scopes that share a path (a
+  ## ``call:`` and the scope holding it); a model with no locations compares
+  ## the rest only.
+  a.name == b.name and a.declaredIn == b.declaredIn and aAt == bAt
 
 func declaresFileKey(perSource: openArray[CliSourceSpelling]): bool =
   ## Whether a ``perSource`` list spells the key of a file source (any
@@ -304,14 +325,20 @@ func cliRestParam*(g: CliGrammar; command: int): tuple[id, index: int] =
       return (id, index)
   (-1, -1)
 
-proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
+proc cliGrammarOf*[C, P](located: CliLocatedModel[C, P]; program: string;
                          problems: var seq[CliGrammarProblem];
-                         declarations: var seq[CliParam[P]]): CliGrammar =
-  ## The grammar of ``model``. What makes the model unparseable as a
+                         declarations: var seq[CliParam[P]];
+                         locations: var CliGrammarLocations): CliGrammar =
+  ## The grammar of ``located.model``. What makes the model unparseable as a
   ## program's own command line is appended to ``problems`` (see the module
-  ## documentation); the grammar returned then is incomplete.
-  ## ``declarations[id]`` is set to the model's declaration of parameter
-  ## ``id``, for a generator that needs its expressions.
+  ## documentation), each placed where its command was written; the grammar
+  ## returned then is incomplete. ``declarations[id]`` is set to the
+  ## model's declaration of parameter ``id``, for a generator that needs its
+  ## expressions, and ``locations`` to where each command and parameter of
+  ## the grammar was written, for its diagnostics.
+  template model: untyped = located.model
+  let modelLocations = located.locations
+  locations = CliGrammarLocations()
   result.program = program
   result.groups = model.groups
   result.configSchema = model.configSchema
@@ -348,10 +375,14 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
   # Lay the tree out in pre-order, so the root is at 0 and every parent
   # precedes its children. ``scopes[k]`` is the model scope at index ``k``.
   var scopes: seq[CliCommand[C, P]] = @[]
+  var scopeLocations: seq[CliCommandLocations] = @[]
   proc place(g: var CliGrammar; slot, parent: int;
              scopes: var seq[CliCommand[C, P]];
+             scopeLocations: var seq[CliCommandLocations];
              problems: var seq[CliGrammarProblem]) =
     let cmd = if slot == rootSlot: model.root else: model.commands[slot]
+    let cmdLocations = cliCommandLocations(modelLocations,
+      if slot == rootSlot: -1 else: slot)
     let index = g.commands.len
     if parent >= 0:
       if g.commands[parent].isCall:
@@ -359,15 +390,14 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
           cmd.path.join(" ") & "' is declared inside a call: scope; a " &
           "call: is what runs when no subcommand word is given, so it " &
           "cannot have subcommands of its own",
-          sourceFile: cmd.sourceFile, sourceLine: cmd.sourceLine))
+          at: cmdLocations.at))
         return
       if cmd.anonymous:
         if g.commands[parent].callChild >= 0:
           problems.add(CliGrammarProblem(message: "clispec: " &
             (if cmd.path.len == 0: "the root command"
              else: "command '" & cmd.path.join(" ") & "'") &
-            " has two call: scopes", sourceFile: cmd.sourceFile,
-            sourceLine: cmd.sourceLine))
+            " has two call: scopes", at: cmdLocations.at))
           return
         g.commands[parent].callChild = index
       else:
@@ -378,12 +408,14 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
       visibility: cmd.visibility,
       shadowedByWord: cmd.shadowedByWord, group: cmd.group, tier: cmd.tier,
       isCall: cmd.anonymous,
-      parent: parent, callChild: -1,
-      sourceFile: cmd.sourceFile, sourceLine: cmd.sourceLine))
+      parent: parent, callChild: -1))
     scopes.add(cmd)
+    scopeLocations.add(cmdLocations)
     for kid in kids[slot]:
-      place(g, kid, index, scopes, problems)
-  place(result, rootSlot, -1, scopes, problems)
+      place(g, kid, index, scopes, scopeLocations, problems)
+  place(result, rootSlot, -1, scopes, scopeLocations, problems)
+  for k in 0 ..< result.commands.len:
+    locations.commands.add(scopeLocations[k].at)
   # Parameters: a scope's list starts with what it inherited (a prefix of
   # its parent's final list) and continues with its own.
   for k in 0 ..< result.commands.len:
@@ -394,7 +426,9 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
       let parentScope = scopes[parent]
       while inherited < scope.params.len and
           inherited < parentScope.params.len and
-          sameParam(scope.params[inherited], parentScope.params[inherited]):
+          sameParam(scope.params[inherited], parentScope.params[inherited],
+            cliParamLocations(scopeLocations[k], inherited).at,
+            cliParamLocations(scopeLocations[parent], inherited).at):
         inc inherited
     for j in 0 ..< scope.params.len:
       if j < inherited:
@@ -403,6 +437,7 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
         let id = result.params.len
         result.params.add(toGrammarParam(scope.params[j], k))
         declarations.add(scope.params[j])
+        locations.params.add(cliParamLocations(scopeLocations[k], j))
         result.commands[k].params.add(id)
         result.commands[k].ownParams.add(id)
   # Implications name a parameter of the declaring scope.
@@ -441,13 +476,12 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
         problems.add(CliGrammarProblem(message: "clispec: parameter '" &
           p.name & "': " & label & " takes the rest of the command line " &
           "in an earlier positional, so no positional can follow it",
-          sourceFile: cmd.sourceFile, sourceLine: cmd.sourceLine))
+          at: locations.commands[k]))
       if afterSeparatorSeen.len > 0 and p.afterSeparator:
         problems.add(CliGrammarProblem(message: "clispec: parameter '" &
           p.name & "': " & label & " has two afterSeparator positionals ('" &
           afterSeparatorSeen & "' and '" & p.name & "'); the words after " &
-          "-- fill one", sourceFile: cmd.sourceFile,
-          sourceLine: cmd.sourceLine))
+          "-- fill one", at: locations.commands[k]))
       elif afterSeparatorSeen.len > 0:
         # The words after ``--`` are the afterSeparator positional's alone,
         # so a positional after it could only take words from before
@@ -455,8 +489,7 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
         problems.add(CliGrammarProblem(message: "clispec: parameter '" &
           p.name & "': " & label & " gives the words after -- to '" &
           afterSeparatorSeen & "' (afterSeparator), which must be its " &
-          "last positional", sourceFile: cmd.sourceFile,
-          sourceLine: cmd.sourceLine))
+          "last positional", at: locations.commands[k]))
       if p.afterSeparator:
         if afterSeparatorSeen.len == 0:
           afterSeparatorSeen = p.name
@@ -464,14 +497,13 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
           problems.add(CliGrammarProblem(message: "clispec: parameter '" &
             p.name & "': afterSeparator takes the words after --, but " &
             "under parsing loneDashesAreFlags -- is an unknown flag, so " &
-            "nothing could fill it", sourceFile: cmd.sourceFile,
-            sourceLine: cmd.sourceLine))
+            "nothing could fill it", at: locations.commands[k]))
       if p.rest:
         if repeatedSeen:
           problems.add(CliGrammarProblem(message: "clispec: parameter '" &
             p.name & "': a rest positional cannot follow a repeated one " &
             "in " & label & ", which would never stop taking words",
-            sourceFile: cmd.sourceFile, sourceLine: cmd.sourceLine))
+            at: locations.commands[k]))
         restSeen = true
       if p.repeated:
         repeatedSeen = true
@@ -490,7 +522,7 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
                 a.path.join(" ") & "': the word '" & wa & "' matches '" &
                 wb & "' of command '" & b.path.join(" ") & "' under " &
                 "commandMatching " & $result.commandMatching,
-                sourceFile: a.sourceFile, sourceLine: a.sourceLine))
+                at: locations.commands[child]))
     for id in cmd.params:
       let p = result.params[id]
       if p.kind != cpkPositional:
@@ -499,21 +531,26 @@ proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
         problems.add(CliGrammarProblem(message: "clispec: parameter '" &
           p.name & "': " & label & " has subcommands, so the word after it " &
           "is read as a subcommand word; declare its positionals in its " &
-          "call: scope", sourceFile: cmd.sourceFile,
-          sourceLine: cmd.sourceLine))
+          "call: scope", at: locations.commands[k]))
       if p.repeated:
         inc lists
     if lists > 1:
       problems.add(CliGrammarProblem(message: "clispec: " & label &
         " has more than one repeated positional, so the words cannot be " &
-        "divided between them", sourceFile: cmd.sourceFile,
-        sourceLine: cmd.sourceLine))
+        "divided between them", at: locations.commands[k]))
 
-proc cliGrammarOf*[C, P](model: CliModel[C, P]; program: string;
+proc cliGrammarOf*[C, P](located: CliLocatedModel[C, P]; program: string;
+                         problems: var seq[CliGrammarProblem];
+                         declarations: var seq[CliParam[P]]): CliGrammar =
+  ## ``cliGrammarOf`` for a caller that does not need the locations.
+  var locations: CliGrammarLocations
+  cliGrammarOf(located, program, problems, declarations, locations)
+
+proc cliGrammarOf*[C, P](located: CliLocatedModel[C, P]; program: string;
                          problems: var seq[CliGrammarProblem]): CliGrammar =
   ## ``cliGrammarOf`` for a caller that does not need the declarations.
   var declarations: seq[CliParam[P]] = @[]
-  cliGrammarOf(model, program, problems, declarations)
+  cliGrammarOf(located, program, problems, declarations)
 
 func cliChildNamed*(g: CliGrammar; command: int; word: string): int =
   ## The subcommand of ``command`` that answers to ``word`` (its name or one

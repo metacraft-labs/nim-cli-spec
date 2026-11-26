@@ -33,12 +33,41 @@
 ## model is a plain value (it is built inside a macro and turned into a
 ## constant with ``newLit``), and a ``NimNode`` cannot live in a constant, so
 ## each expression is kept as a ``CliExpr``: its source text exactly as the
-## compiler's ``repr`` prints the untyped AST, plus where it was written. A
-## macro that generates code from the model turns it back into an AST with
-## ``parseExpr(e.code)`` and, for diagnostics, ``setLineInfo``. The parsed AST
+## compiler's ``repr`` prints the untyped AST. A macro that generates code
+## from the model turns it back into an AST with ``parseExpr(e.code)`` and,
+## for diagnostics, ``setLineInfo`` with the position the located model
+## records for it (see "Source locations" below). The parsed AST
 ## is untyped, so its identifiers bind where the generated code is placed;
 ## generators place it in the scope that holds the description, which is
 ## where the author wrote the expression.
+##
+## Source locations
+## ================
+##
+## Where each part of a description was written (its file, line and, for an
+## expression, column) is for the diagnostics reported while the description
+## compiles, and for nothing else. None of the model's types records it:
+## ``CliModel``, ``CliCommand``, ``CliParam``, ``CliExpr``, ``CliGroup``,
+## ``CliRetired`` and the other parts of a model, and the grammar built from
+## one (``clispec/grammar``), have no field a location could be written in.
+## So the model and grammar a program carries at run time (``Tool.cliModel``,
+## ``Tool.cliGrammar``, a ``plainCliModel`` constant) hold no file name, path,
+## line or column, and nothing a program prints can name one.
+##
+## The locations are kept beside the model, in a ``CliModelLocations`` that
+## mirrors it: ``locations.root`` and ``locations.commands[k]`` are the
+## locations of ``model.root`` and ``model.commands[k]``, their ``params[j]``
+## those of the command's ``params[j]`` (with one entry per expression of the
+## parameter), their ``retired[j]`` those of its ``retired[j]``, and
+## ``locations.groups[j]`` that of ``model.groups[j]``. The DSL parser
+## (``parseCliModel`` in ``clispec/dsl``) returns the two together as a
+## ``CliLocatedModel``, the compile-time model; the generators that report
+## diagnostics take it, and emit only its ``model`` into the program. A
+## location missing from the mirror (a model built by hand, or an index past
+## its end) is the empty ``CliSourceLocation``, and a diagnostic about that
+## part has no position of its own: the compiler gives a node a macro made
+## without one the position of the user's node the macro read last, which
+## need not be the part the diagnostic is about.
 ##
 ## Names and configuration keys
 ## ============================
@@ -236,9 +265,6 @@ type
     code*: string
       ## The expression's source text, as ``repr`` prints the untyped AST.
       ## Empty when the argument was not given.
-    sourceFile*: string
-    sourceLine*: int
-    sourceColumn*: int
 
   CliImplication* = object
     ## One ``<param> = <value>`` entry of ``implies``.
@@ -368,8 +394,6 @@ type
     ## together under one heading in help. One title holds one or the other.
     name*: string
     help*: string
-    sourceFile*: string
-    sourceLine*: int
 
   CliExample* = object
     ## An ``example "<command line>", help = "<text>"`` statement of a
@@ -390,8 +414,6 @@ type
     replacement*: string
       ## What to use instead, as the error shows it
       ## (``--new-name``, ``tool switch <branch>``).
-    sourceFile*: string
-    sourceLine*: int
 
   NoCliExtension* = object
     ## The empty extension: a model that carries nothing beyond what the
@@ -526,10 +548,6 @@ type
       ## The path of the command that declared the parameter. A parameter
       ## inherited by nested commands keeps the path of the scope that
       ## declared it, which is what its configuration key is derived from.
-    sourceFile*: string
-    sourceLine*: int
-      ## Where the declaration was written, from the compiler's line
-      ## information.
     ext*: P
       ## The consumer's own declarations about this parameter.
 
@@ -597,8 +615,6 @@ type
       ## directly under ``cli:``. A ``call:`` counts, although it adds no
       ## ``path`` segment, so ``depth`` and ``path`` together place a scope
       ## in the tree.
-    sourceFile*: string
-    sourceLine*: int
     ext*: C
       ## The consumer's own declarations about this command. A nested scope
       ## starts with a copy of its parent's ``ext``, so a consumer's
@@ -642,6 +658,58 @@ type
   PlainCliCommand* = CliCommand[NoCliExtension, NoCliExtension]
   PlainCliModel* = CliModel[NoCliExtension, NoCliExtension]
 
+  CliSourceLocation* = object
+    ## Where a part of a description was written, from the compiler's line
+    ## information: for compile-time diagnostics only (see "Source
+    ## locations" above). The empty value means the location is not known.
+    file*: string
+      ## The file as the compiler read it (an absolute path).
+    line*: int
+    column*: int
+      ## 0 when only the line is recorded (a declaration).
+
+  CliParamLocations* = object
+    ## Where one parameter declaration and each expression in it were
+    ## written. Each field is named after the ``CliParam`` field it locates.
+    at*: CliSourceLocation
+      ## The declaration's statement.
+    helpExpr*: CliSourceLocation
+    longHelpExpr*: CliSourceLocation
+    default*: CliSourceLocation
+    optionalValue*: CliSourceLocation
+    complete*: CliSourceLocation
+    combine*: CliSourceLocation
+    values*: seq[CliSourceLocation]
+      ## Of ``CliParam.values[j]``.
+    implies*: seq[CliSourceLocation]
+      ## Of ``CliParam.implies[j].value``.
+
+  CliCommandLocations* = object
+    ## Where one scope and what it holds were written.
+    at*: CliSourceLocation
+      ## The scope's body.
+    params*: seq[CliParamLocations]
+      ## Of ``CliCommand.params[j]`` (an inherited parameter's are those of
+      ## its declaration).
+    retired*: seq[CliSourceLocation]
+      ## Of ``CliCommand.retired[j]``.
+
+  CliModelLocations* = object
+    ## Where every part of a model was written, mirroring it (see "Source
+    ## locations" above).
+    root*: CliCommandLocations
+      ## Of ``CliModel.root``.
+    commands*: seq[CliCommandLocations]
+      ## Of ``CliModel.commands[k]``.
+    groups*: seq[CliSourceLocation]
+      ## Of ``CliModel.groups[j]``.
+
+  CliLocatedModel*[C, P] = object
+    ## The compile-time model: a model and where each part of it was
+    ## written. Only ``model`` ever becomes part of a program.
+    model*: CliModel[C, P]
+    locations*: CliModelLocations
+
 func cliRetiredIsFlag*(r: CliRetired): bool =
   ## Whether a retired spelling is a flag (it starts with ``-``) rather than
   ## a subcommand word.
@@ -660,41 +728,40 @@ func isSet*(e: CliExpr): bool =
   ## Whether the expression was given.
   e.code.len > 0
 
-func cliRunTimeSourceFile*(file: string): string =
-  ## The source file a run-time copy of a description records (see
-  ## ``cliRunTimeCopy``): ``file``'s last component, without the
-  ## directories before it. Both ``/`` and ``\`` end a directory, whatever
-  ## the host, so one file gives the same name on every build host.
-  var start = 0
-  for i, c in file:
-    if c in {'/', '\\'}:
-      start = i + 1
-  file[start .. ^1]
+func isSet*(at: CliSourceLocation): bool =
+  ## Whether the location is known.
+  at.file.len > 0
 
-func cliRunTimeCopy*[T](value: T): T =
-  ## ``value`` (a model, a grammar or any part of one) as a program carries
-  ## it at run time: every ``sourceFile`` is reduced to the file's name
-  ## (``cliRunTimeSourceFile``); lines, columns and everything else are
-  ## kept.
-  ##
-  ## The compiler records a declaration's file as the absolute path it read
-  ## it from, which names the build host's checkout. Diagnostics about the
-  ## description are reported while it compiles, from the model the macro
-  ## holds, and need that path; the copy that becomes a constant of the
-  ## program (``cliModelValue``, the grammar ``cliProgram`` generates) needs
-  ## none of it, and with it the program's bytes would depend on where it
-  ## was built. A consumer's ``ext`` values are left as they are: the
-  ## library never looks inside them.
-  result = value
-  when T is object or T is tuple:
-    for name, field in fieldPairs(result):
-      when name == "sourceFile":
-        field = cliRunTimeSourceFile(field)
-      elif name != "ext":
-        field = cliRunTimeCopy(field)
-  elif T is seq:
-    for item in result.mitems:
-      item = cliRunTimeCopy(item)
+func cliLocated*[C, P](model: CliModel[C, P]): CliLocatedModel[C, P] =
+  ## ``model`` with no location known, for a generator given a model built
+  ## by hand: its diagnostics have no position of their own (see "Source
+  ## locations" above).
+  CliLocatedModel[C, P](model: model)
+
+func cliCommandLocations*(locations: CliModelLocations;
+                          slot: int): CliCommandLocations =
+  ## The locations of ``model.commands[slot]``, or of ``model.root`` when
+  ## ``slot`` is negative; empty when not recorded. (A slot past the
+  ## mirror's end is never the root's: a mirror shorter than its model
+  ## leaves the commands it lacks unlocated rather than placing them at the
+  ## root.)
+  if slot < 0:
+    locations.root
+  elif slot < locations.commands.len:
+    locations.commands[slot]
+  else:
+    CliCommandLocations()
+
+func cliParamLocations*(locations: CliCommandLocations;
+                        j: int): CliParamLocations =
+  ## The locations of the command's ``params[j]``; empty when not recorded.
+  if j >= 0 and j < locations.params.len: locations.params[j]
+  else: CliParamLocations()
+
+func cliAt*(locations: openArray[CliSourceLocation];
+            j: int): CliSourceLocation =
+  ## ``locations[j]``, or the empty location past its end.
+  if j >= 0 and j < locations.len: locations[j] else: CliSourceLocation()
 
 const
   CliSourceCli* = "cli"

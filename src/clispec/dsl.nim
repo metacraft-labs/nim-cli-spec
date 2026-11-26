@@ -455,10 +455,23 @@ proc cliCommandLabel*(path: seq[string]; isRoot = true): string =
 
 proc cliExprOf*(node: NimNode): CliExpr =
   ## Keeps an expression of the description in the model: its source text
-  ## and where it was written (see "Expressions" in ``clispec/model``).
+  ## (see "Expressions" in ``clispec/model``). Where it was written is
+  ## ``cliExprLocationOf(node)``, which the located model keeps beside it.
+  CliExpr(code: node.repr)
+
+proc cliExprLocationOf*(node: NimNode): CliSourceLocation =
+  ## Where the expression ``node`` was written: its file, line and column,
+  ## for compile-time diagnostics (see "Source locations" in
+  ## ``clispec/model``).
   let info = node.lineInfoObj()
-  CliExpr(code: node.repr, sourceFile: info.filename, sourceLine: info.line,
-    sourceColumn: info.column)
+  CliSourceLocation(file: info.filename, line: info.line,
+    column: info.column)
+
+proc cliLocationOf*(node: NimNode): CliSourceLocation =
+  ## Where the statement ``node`` was written: its file and line (a
+  ## declaration's diagnostics name no column).
+  let info = node.lineInfoObj()
+  CliSourceLocation(file: info.filename, line: info.line)
 
 proc constExprText(n: NimNode): string =
   ## The source text of a constant expression, parenthesised so that
@@ -520,22 +533,23 @@ proc cliFoldedStr(node: NimNode; what: string): string =
       "it is used at compile time and the macro cannot evaluate an " &
       "expression here", node)
 
-proc cliConstStr*(node: NimNode; text: var string; expr: var CliExpr) =
+proc cliConstStr*(node: NimNode; text: var string; expr: var CliExpr;
+                  at: var CliSourceLocation) =
   ## A text argument that may be a constant string expression (``help``,
   ## ``longHelp``): a string literal or ``&`` of literals is folded into
   ## ``text``; anything else (a ``const``, a ``when`` expression, ``&`` of
   ## those) is kept in ``expr`` for a generator to evaluate at compile time
-  ## where the description is (``cliModelValue``), and ``text`` is left
-  ## empty.
+  ## where the description is (``cliModelValue``), with where it was
+  ## written in ``at``, and ``text`` is left empty.
   var folded = ""
   if foldStrLit(node, folded):
     text = folded
     expr = CliExpr()
+    at = CliSourceLocation()
   else:
     text = ""
-    let info = node.lineInfoObj()
-    expr = CliExpr(code: constExprText(node), sourceFile: info.filename,
-      sourceLine: info.line, sourceColumn: info.column)
+    expr = CliExpr(code: constExprText(node))
+    at = cliExprLocationOf(node)
 
 proc cliStrList(node: NimNode; param, what: string): seq[string] =
   ## A string literal, or a bracketed list of string literals, each
@@ -777,16 +791,18 @@ proc parsePerSource(value: NimNode; param: string; kind: CliParamKind):
           "' twice", item)
     result.add(CliSourceSpelling(source: source, spelling: spelling))
 
-proc parseCliParam*[P](node: NimNode): CliParam[P] =
-  ## Parses one ``pos`` / ``flag`` / ``boolFlag`` declaration. Named
-  ## arguments the declaration kind does not take go to the extension hook
-  ## ``parseCliParamExtension`` (see the module documentation), and are
-  ## ignored when it does not claim them. Declarations that cannot mean
+proc parseCliParam*[P](node: NimNode;
+                       locations: var CliParamLocations): CliParam[P] =
+  ## Parses one ``pos`` / ``flag`` / ``boolFlag`` declaration, and sets
+  ## ``locations`` to where it and each expression in it were written.
+  ## Named arguments the declaration kind does not take go to the extension
+  ## hook ``parseCliParamExtension`` (see the module documentation), and
+  ## are ignored when it does not claim them. Declarations that cannot mean
   ## anything are compile errors naming the parameter (see "Invalid
   ## declarations" in the module documentation).
   mixin parseCliParamExtension
   let kindName = cliCalleeName(node).normalize
-  let info = node.lineInfoObj()
+  locations = CliParamLocations(at: cliLocationOf(node))
   if kindName == "pos":
     if node.len < 2:
       error("pos requires a parameter name", node)
@@ -854,9 +870,10 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
     var consumed = true
     case key
     of "help":
-      cliConstStr(value, result.help, result.helpExpr)
+      cliConstStr(value, result.help, result.helpExpr, locations.helpExpr)
     of "longhelp":
-      cliConstStr(value, result.longHelp, result.longHelpExpr)
+      cliConstStr(value, result.longHelp, result.longHelpExpr,
+        locations.longHelpExpr)
     of "valuename":
       result.valueName = cliStrLit(value, "valueName")
       if result.valueName.len == 0:
@@ -888,6 +905,7 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
           text: item[1].strVal))
     of "default":
       result.default = cliExprOf(value)
+      locations.default = cliExprLocationOf(value)
       defaultNode = value
     of "env":
       result.env = cliStrList(value, name, "env")
@@ -900,8 +918,10 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
         requireLiteralFits(name, "values entry", elementTypeOf(result.nimType),
           item)
         result.values.add(cliExprOf(item))
+        locations.values.add(cliExprLocationOf(item))
     of "complete":
       result.complete = cliExprOf(value)
+      locations.complete = cliExprLocationOf(value)
     of "key":
       let text = cliStrLit(value, "key")
       if text.len == 0 or text.startsWith(".") or text.endsWith(".") or
@@ -922,6 +942,7 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
       else:
         result.merge = cmrCombine
         result.combine = cliExprOf(value)
+        locations.combine = cliExprLocationOf(value)
     of "separator":
       result.separator = cliStrLit(value, "separator")
       if result.separator.len == 0:
@@ -938,6 +959,7 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
             "<parameter> = <value>, got: " & item.repr, item)
         result.implies.add(CliImplication(param: cliIdentText(item[0]),
           value: cliExprOf(item[1])))
+        locations.implies.add(cliExprLocationOf(item[1]))
     of "visibility":
       result.visibility = cliVisibilityLit(value, "parameter '" & name & "'")
     of "perconvention":
@@ -954,6 +976,7 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
     of "optionalvalue":
       requireLiteralFits(name, "optionalValue", result.nimType, value)
       result.optionalValue = cliExprOf(value)
+      locations.optionalValue = cliExprLocationOf(value)
     of "negatable":
       result.negatable = strictBoolLit(value, name, spelled)
     of "counted":
@@ -1067,8 +1090,12 @@ proc parseCliParam*[P](node: NimNode): CliParam[P] =
       cliParamError(name, "refuseFalse and negatable contradict each " &
         "other: a negatable switch takes a false value as --no-" &
         result.name, refuseFalseNode)
-  result.sourceFile = info.filename
-  result.sourceLine = info.line
+
+proc parseCliParam*[P](node: NimNode): CliParam[P] =
+  ## ``parseCliParam`` for a caller that does not keep where the
+  ## declaration was written.
+  var locations: CliParamLocations
+  parseCliParam[P](node, locations)
 
 proc cliDeclaredParamNames*(body: NimNode): seq[string] =
   ## The name of every parameter declared anywhere in ``body``, nested
@@ -1131,14 +1158,18 @@ proc flagSpellings(param: CliParam): seq[string] =
   if param.short != '\0' and ("-" & param.short) notin result:
     result.add("-" & param.short)
 
-proc checkNewParam[P](params: seq[CliParam[P]]; param: CliParam[P];
+proc checkNewParam[P](params: seq[CliParam[P]];
+                      locations: seq[CliParamLocations]; param: CliParam[P];
                       label: string; node: NimNode) =
-  ## ``param`` is about to join ``params`` (what its command already sees):
-  ## its name, spellings and configuration key must be its own.
+  ## ``param`` is about to join ``params`` (what its command already sees,
+  ## written where ``locations`` say): its name, spellings and
+  ## configuration key must be its own.
   let normName = nimIdentNormalize(param.name)
   let mine = flagSpellings(param)
-  for other in params:
-    let where = " (" & other.sourceFile & ":" & $other.sourceLine & ")"
+  for j, other in params:
+    let otherAt = (if j < locations.len: locations[j].at
+                   else: CliSourceLocation())
+    let where = " (" & otherAt.file & ":" & $otherAt.line & ")"
     if nimIdentNormalize(other.name) == normName:
       cliParamError(param.name, "declared twice in " &
         label & "; the other declaration is '" & other.name &
@@ -1167,21 +1198,24 @@ proc checkNewParam[P](params: seq[CliParam[P]]; param: CliParam[P];
             "' is already used by '" & other.name & "' in " & label & where,
             node)
 
-proc noteGroup(groups: var seq[CliGroup]; name, help: string; node: NimNode) =
-  ## Records a ``group`` section. A group may be opened in several scopes;
-  ## its help, given once or given identically, is the group's.
-  for group in groups.mitems:
+proc noteGroup(groups: var seq[CliGroup];
+               locations: var seq[CliSourceLocation]; name, help: string;
+               node: NimNode) =
+  ## Records a ``group`` section, and in ``locations`` where it was first
+  ## opened. A group may be opened in several scopes; its help, given once
+  ## or given identically, is the group's.
+  for j, group in groups.mpairs:
     if group.name == name:
       if help.len > 0:
         if group.help.len > 0 and group.help != help:
+          let at = cliAt(locations, j)
           error("clispec: group '" & name & "' is given two different " &
-            "help texts (the other at " & group.sourceFile & ":" &
-            $group.sourceLine & ")", node)
+            "help texts (the other at " & at.file & ":" & $at.line & ")",
+            node)
         group.help = help
       return
-  let info = node.lineInfoObj()
-  groups.add(CliGroup(name: name, help: help, sourceFile: info.filename,
-    sourceLine: info.line))
+  groups.add(CliGroup(name: name, help: help))
+  locations.add(cliLocationOf(node))
 
 proc parseCommandHeader(stmt: NimNode; isCall: bool;
                         path: seq[string]): CliCommandHeader =
@@ -1288,9 +1322,6 @@ proc parseRetired(stmt: NimNode; label: string): CliRetired =
     "replacement = \"<text>\""
   if stmt.kind notin {nnkCommand, nnkCall} or stmt.len < 2:
     error("clispec: " & label & ": " & shape, stmt)
-  let info = stmt.lineInfoObj()
-  result.sourceFile = info.filename
-  result.sourceLine = info.line
   result.spelling = cliFoldedStr(stmt[1], "clispec: " & label &
     ": a retired spelling")
   let spelling = result.spelling
@@ -1336,11 +1367,13 @@ proc parseRetired(stmt: NimNode; label: string): CliRetired =
     error("clispec: " & label & ": the replacement of retired '" &
       spelling & "' is empty", stmt)
 
-proc nodeAt(file: string; line: int): NimNode =
+proc nodeAt(at: CliSourceLocation): NimNode =
   ## A node that carries only a source position, for a diagnostic about a
-  ## declaration whose AST is no longer at hand.
+  ## declaration whose AST is no longer at hand. With no location known it
+  ## carries none of its own (see "Source locations" in ``clispec/model``).
   result = newEmptyNode()
-  result.setLineInfo(file, line, 0)
+  if at.isSet:
+    result.setLineInfo(at.file, at.line, at.column)
 
 type
   ScopeContext = object
@@ -1351,20 +1384,27 @@ type
     naming: CliNaming
 
 proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
-                          parent: CliCommand[C, P]; wholeBody: NimNode;
+                          parent: CliCommand[C, P];
+                          parentLocations: CliCommandLocations;
+                          wholeBody: NimNode;
                           header: CliCommandHeader;
                           commands: var seq[CliCommand[C, P]];
                           groups: var seq[CliGroup];
-                          naming: CliNaming): CliCommand[C, P]
+                          naming: CliNaming;
+                          locations: var CliModelLocations;
+                          cmdLocations: var CliCommandLocations):
+    CliCommand[C, P]
 
-proc addScopeParam[C, P](cmd: var CliCommand[C, P]; stmt: NimNode;
-                         group: string; ctx: ScopeContext) =
+proc addScopeParam[C, P](cmd: var CliCommand[C, P];
+                         cmdLocations: var CliCommandLocations;
+                         stmt: NimNode; group: string; ctx: ScopeContext) =
   ## Parses a parameter declaration of the scope and adds it to ``cmd``,
   ## with what only the scope knows: its placement under ``cli:``, its group,
   ## the declaring path, and its spellings in every source: the
   ## configuration keys derived from the path and the long flag, each in its
   ## source's convention with the parameter's overrides applied.
-  var param = parseCliParam[P](stmt)
+  var paramLocations: CliParamLocations
+  var param = parseCliParam[P](stmt, paramLocations)
   if ctx.isRoot and param.kind == cpkFlag:
     param.placement = capBeforeSubcommand
   param.group = group
@@ -1395,14 +1435,17 @@ proc addScopeParam[C, P](cmd: var CliCommand[C, P]; stmt: NimNode;
   if param.kind == cpkFlag:
     param.longName = cliSpelling(param.name, CliSourceCli,
       ctx.naming.flagConvention, param.perSource, param.perConvention)
-  checkNewParam(cmd.params, param, cliCommandLabel(ctx.path, ctx.isRoot),
-    stmt)
+  checkNewParam(cmd.params, cmdLocations.params, param,
+    cliCommandLabel(ctx.path, ctx.isRoot), stmt)
   cmd.params.add(param)
+  cmdLocations.params.add(paramLocations)
 
-proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
+proc walkScope[C, P](cmd: var CliCommand[C, P];
+                     cmdLocations: var CliCommandLocations; stmts: NimNode;
                      group: string; ctx: ScopeContext;
                      commands: var seq[CliCommand[C, P]];
-                     groups: var seq[CliGroup]; helpGiven: var bool;
+                     groups: var seq[CliGroup];
+                     locations: var CliModelLocations; helpGiven: var bool;
                      longHelpGiven: var bool;
                      childWords: var seq[tuple[word, owner: string]]) =
   ## Reads the statements of a scope (or of a ``group`` inside it) in
@@ -1412,7 +1455,7 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
     let head = cliCalleeName(stmt).normalize
     case head
     of "pos", "flag", "boolflag":
-      addScopeParam(cmd, stmt, group, ctx)
+      addScopeParam(cmd, cmdLocations, stmt, group, ctx)
     of "call", "subcmd":
       let isCall = head == "call"
       if stmt.len < 2 or stmt[^1].kind != nnkStmtList or
@@ -1464,8 +1507,10 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
             "the word help under parsing helpWord or version under " &
             "parsing versionWord, and this one answers to neither",
             childHeader.shadowedNode)
+      var childLocations: CliCommandLocations
       discard parseScopeImpl[C, P](stmt[^1], childPath, false, cmd,
-        ctx.wholeBody, childHeader, commands, groups, ctx.naming)
+        cmdLocations, ctx.wholeBody, childHeader, commands, groups,
+        ctx.naming, locations, childLocations)
     of "group":
       if group.len > 0:
         error("clispec: group '" & group & "' cannot contain another " &
@@ -1481,9 +1526,9 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
         let helpValue = cliNamedArg(stmt[i], "help")
         if not helpValue.isNil:
           groupHelp = cliStrLit(helpValue, "group help")
-      noteGroup(groups, title, groupHelp, stmt)
-      walkScope[C, P](cmd, stmt[^1], title, ctx, commands, groups, helpGiven,
-        longHelpGiven, childWords)
+      noteGroup(groups, locations.groups, title, groupHelp, stmt)
+      walkScope[C, P](cmd, cmdLocations, stmt[^1], title, ctx, commands,
+        groups, locations, helpGiven, longHelpGiven, childWords)
     of "keystyle", "configschema", "convention", "flagmatching",
         "commandmatching", "parsing":
       # Read by ``parseCliModel`` before the scope is walked; valid only
@@ -1527,6 +1572,7 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
             error("clispec: " & label & ": retired '" & r.spelling &
               "' is declared twice", stmt)
         cmd.retired.add(r)
+        cmdLocations.retired.add(cliLocationOf(stmt))
       elif head == "longhelp":
         if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2:
           error("clispec: longHelp is written longHelp \"<text>\"", stmt)
@@ -1543,14 +1589,21 @@ proc walkScope[C, P](cmd: var CliCommand[C, P]; stmts: NimNode;
           wholeBody: ctx.wholeBody))
 
 proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
-                          parent: CliCommand[C, P]; wholeBody: NimNode;
+                          parent: CliCommand[C, P];
+                          parentLocations: CliCommandLocations;
+                          wholeBody: NimNode;
                           header: CliCommandHeader;
                           commands: var seq[CliCommand[C, P]];
                           groups: var seq[CliGroup];
-                          naming: CliNaming): CliCommand[C, P] =
-  let info = body.lineInfoObj()
-  result.sourceFile = info.filename
-  result.sourceLine = info.line
+                          naming: CliNaming;
+                          locations: var CliModelLocations;
+                          cmdLocations: var CliCommandLocations):
+    CliCommand[C, P] =
+  # ``cmdLocations`` mirrors the scope (``CliCommandLocations``): it starts
+  # with the locations of what the scope inherits, and every parameter and
+  # retired spelling added to the scope adds its own.
+  cmdLocations = CliCommandLocations(at: cliLocationOf(body),
+    params: parentLocations.params)
   result.path = path
   result.name = if path.len == 0: "" else: path[^1]
   result.params = parent.params
@@ -1570,19 +1623,20 @@ proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
   # The subcommand words opened in this scope (names and aliases), each with
   # the subcommand that owns it, for the collision check.
   var childWords: seq[tuple[word, owner: string]] = @[]
-  walkScope[C, P](result, body, "",
+  walkScope[C, P](result, cmdLocations, body, "",
     ScopeContext(isRoot: isRoot, path: path, wholeBody: wholeBody,
       naming: naming),
-    commands, groups, helpGiven, longHelpGiven, childWords)
+    commands, groups, locations, helpGiven, longHelpGiven, childWords)
 
   # ``implies`` may name any parameter the implying one's command sees once
   # its scope is complete, but not itself.
   for i in inherited ..< result.params.len:
     let param = result.params[i]
+    let paramAt = nodeAt(cliParamLocations(cmdLocations, i).at)
     for implication in param.implies:
       if nimIdentNormalize(implication.param) == nimIdentNormalize(param.name):
         error("clispec: parameter '" & param.name & "': implies itself",
-          nodeAt(param.sourceFile, param.sourceLine))
+          paramAt)
       var found = false
       for other in result.params:
         if nimIdentNormalize(other.name) ==
@@ -1593,18 +1647,19 @@ proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
         error("clispec: parameter '" & param.name & "': implies '" &
           implication.param & "', which is not a parameter of " &
           cliCommandLabel(path, isRoot),
-          nodeAt(param.sourceFile, param.sourceLine))
+          paramAt)
   # ``alsoSets`` names a parameter of the same command, not itself.
   for i in inherited ..< result.params.len:
     let param = result.params[i]
+    let paramAt = nodeAt(cliParamLocations(cmdLocations, i).at)
     var targets: seq[string] = @[]
     for a in param.alsoSets:
       if nimIdentNormalize(a.param) == nimIdentNormalize(param.name):
         error("clispec: parameter '" & param.name & "': alsoSets names " &
-          "the parameter itself", nodeAt(param.sourceFile, param.sourceLine))
+          "the parameter itself", paramAt)
       if nimIdentNormalize(a.param) in targets:
         error("clispec: parameter '" & param.name & "': alsoSets names '" &
-          a.param & "' twice", nodeAt(param.sourceFile, param.sourceLine))
+          a.param & "' twice", paramAt)
       targets.add(nimIdentNormalize(a.param))
       var found = false
       for other in result.params:
@@ -1615,24 +1670,46 @@ proc parseScopeImpl[C, P](body: NimNode; path: seq[string]; isRoot: bool;
         error("clispec: parameter '" & param.name & "': alsoSets names '" &
           a.param & "', which is not a parameter of " &
           cliCommandLabel(path, isRoot),
-          nodeAt(param.sourceFile, param.sourceLine))
+          paramAt)
   if not isRoot:
     commands.add(result)
+    locations.commands.add(cmdLocations)
+
+proc parseCliScope*[C, P](body: NimNode; path: seq[string]; isRoot: bool;
+                          parent: CliCommand[C, P];
+                          parentLocations: CliCommandLocations;
+                          wholeBody: NimNode;
+                          commands: var seq[CliCommand[C, P]];
+                          groups: var seq[CliGroup];
+                          naming: CliNaming;
+                          locations: var CliModelLocations;
+                          cmdLocations: var CliCommandLocations):
+    CliCommand[C, P] =
+  ## Parses one scope — the root ``cli:`` body, or a ``call:`` /
+  ## ``subcmd`` body — in source order and returns its command. The scope
+  ## starts from ``parent``'s parameters and extension (what the enclosing
+  ## scope had declared when this one opened; ``parentLocations`` says where
+  ## they were written). Every nested scope is appended to ``commands``
+  ## after the scopes nested inside it, and its locations to
+  ## ``locations.commands``; the root is not appended. ``group`` sections
+  ## are recorded in ``groups`` and ``locations.groups``. ``cmdLocations``
+  ## is set to the locations of the returned command. Keys and long flags
+  ## are spelt in the conventions of ``naming``.
+  parseScopeImpl[C, P](body, path, isRoot, parent, parentLocations,
+    wholeBody, CliCommandHeader(), commands, groups, naming, locations,
+    cmdLocations)
 
 proc parseCliScope*[C, P](body: NimNode; path: seq[string]; isRoot: bool;
                           parent: CliCommand[C, P]; wholeBody: NimNode;
                           commands: var seq[CliCommand[C, P]];
                           groups: var seq[CliGroup];
                           naming = CliNaming()): CliCommand[C, P] =
-  ## Parses one scope — the root ``cli:`` body, or a ``call:`` /
-  ## ``subcmd`` body — in source order and returns its command. The scope
-  ## starts from ``parent``'s parameters and extension (what the enclosing
-  ## scope had declared when this one opened). Every nested scope is
-  ## appended to ``commands`` after the scopes nested inside it; the root is
-  ## not appended. ``group`` sections are recorded in ``groups``. Keys and
-  ## long flags are spelt in the conventions of ``naming``.
-  parseScopeImpl[C, P](body, path, isRoot, parent, wholeBody,
-    CliCommandHeader(), commands, groups, naming)
+  ## ``parseCliScope`` for a caller that does not keep where the
+  ## declarations were written.
+  var locations: CliModelLocations
+  var cmdLocations: CliCommandLocations
+  parseCliScope[C, P](body, path, isRoot, parent, CliCommandLocations(),
+    wholeBody, commands, groups, naming, locations, cmdLocations)
 
 proc parseCliScope*[C, P](body: NimNode; path: seq[string]; isRoot: bool;
                           parent: CliCommand[C, P]; wholeBody: NimNode;
@@ -1676,24 +1753,30 @@ proc nestedIn(inner, outer: CliCommand): bool =
   # sibling answering to the same word would be a duplicate subcommand).
   inner.depth >= outer.depth
 
-proc checkRetired[C, P](model: CliModel[C, P]) =
+proc checkRetired[C, P](model: CliModel[C, P];
+                        locations: CliModelLocations) =
   ## The rules of ``retired`` statements that need the whole tree: a
   ## retired flag applies to its command and every command nested in it, so
   ## none of them may accept it or retire it again; a retired word needs
   ## its command to expect a subcommand word that nothing else takes.
   var scopes = @[model.root]
   scopes.add(model.commands)
+  var scopeLocations = @[locations.root]
+  scopeLocations.add(locations.commands)
   proc label(c: CliCommand[C, P]): string =
     if c.anonymous:
       "the call: of " & cliCommandLabel(c.path, c.path.len == 0)
     else:
       cliCommandLabel(c.path, c.depth == 0)
-  for owner in scopes:
-    for r in owner.retired:
-      let at = nodeAt(r.sourceFile, r.sourceLine)
+  for ownerSlot, owner in scopes:
+    let ownerLocations = (if ownerSlot < scopeLocations.len:
+                            scopeLocations[ownerSlot]
+                          else: CliCommandLocations())
+    for rj, r in owner.retired:
+      let at = nodeAt(cliAt(ownerLocations.retired, rj))
       if cliRetiredIsFlag(r):
         let name = cliRetiredFlagParts(r).name
-        for scope in scopes:
+        for scopeSlot, scope in scopes:
           # A ``call:``'s flags are also read where its holder expects a
           # subcommand word, so its retired flags apply there too.
           let holder = owner.anonymous and scope.path == owner.path and
@@ -1707,12 +1790,15 @@ proc checkRetired[C, P](model: CliModel[C, P]) =
               "; a retired spelling must be one no command it applies " &
               "to accepts", at)
           if scope.depth > owner.depth:
-            for other in scope.retired:
+            for oj, other in scope.retired:
               if other.spelling == r.spelling:
+                let otherAt = (if scopeSlot < scopeLocations.len:
+                                 cliAt(scopeLocations[scopeSlot].retired, oj)
+                               else: CliSourceLocation())
                 error("clispec: " & label(scope) & ": retired '" &
                   r.spelling & "' is already declared by " & label(owner) &
                   ", whose retired flags apply to every command nested " &
-                  "in it", nodeAt(other.sourceFile, other.sourceLine))
+                  "in it", nodeAt(otherAt))
         continue
       # A subcommand word: where the command expects one, unclaimed.
       var children: seq[CliCommand[C, P]] = @[]
@@ -1750,10 +1836,17 @@ proc checkRetired[C, P](model: CliModel[C, P]) =
             r.spelling & "' asks for the " & reserved & " under parsing " &
             $rule & ", so it could never be refused", at)
 
-proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
-  ## Parses a whole ``cli:`` body. ``rootExt`` is the root command's
-  ## extension value before any statement is read — the consumer's
-  ## defaults, which every scope inherits unless a statement changes them.
+proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliLocatedModel[C, P] =
+  ## Parses a whole ``cli:`` body into its compile-time model: the model
+  ## (``result.model``) and where each part of it was written
+  ## (``result.locations``; see "Source locations" in ``clispec/model``).
+  ## Hand the whole value to the generators that report diagnostics
+  ## (``cliModelTypeChecks``, ``cliGrammarOf``, ``cliProgramCode``,
+  ## ``cliModelValue``); only its ``model`` becomes part of a program.
+  ## ``rootExt`` is the root command's extension value before any statement
+  ## is read — the consumer's defaults, which every scope inherits unless a
+  ## statement changes them.
+  template model: untyped = result.model
   var root: CliCommand[C, P]
   root.ext = rootExt
   # The program-wide statements come first: the conventions decide every
@@ -1771,7 +1864,7 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
         error("clispec: the convention of source 'file' is given twice " &
           "(keyStyle is convention file = ...)", stmt)
       fileSeen = true
-      result.keyStyle = cliConventionLit(stmt[1], "keyStyle")
+      model.keyStyle = cliConventionLit(stmt[1], "keyStyle")
     of "convention":
       if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2 or
           stmt[1].kind != nnkExprEqExpr:
@@ -1785,11 +1878,11 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
         if name.len == 0 or name in [CliSourceCli, CliSourceFile]:
           error("clispec: a named file source is a non-empty string other " &
             "than \"cli\" and \"file\", got: " & target.repr, target)
-        for seen in result.fileSources:
+        for seen in model.fileSources:
           if seen.source == name:
             error("clispec: the convention of source '" & name &
               "' is given twice", stmt)
-        result.fileSources.add(CliSourceConvention(source: name,
+        model.fileSources.add(CliSourceConvention(source: name,
           convention: convention))
       elif target.kind in {nnkIdent, nnkSym, nnkAccQuoted} and
           cliIdentText(target).normalize == "cli":
@@ -1797,14 +1890,14 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
           error("clispec: the convention of source 'cli' is given twice",
             stmt)
         cliSeen = true
-        result.flagConvention = convention
+        model.flagConvention = convention
       elif target.kind in {nnkIdent, nnkSym, nnkAccQuoted} and
           cliIdentText(target).normalize == "file":
         if fileSeen:
           error("clispec: the convention of source 'file' is given twice " &
             "(keyStyle is convention file = ...)", stmt)
         fileSeen = true
-        result.keyStyle = convention
+        model.keyStyle = convention
       else:
         error("clispec: convention names the source cli, file or a file " &
           "source's name as a string (\"project\"), not " & target.repr,
@@ -1813,10 +1906,10 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
       if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2:
         error("clispec: configSchema is written configSchema \"<id>\"",
           stmt)
-      if result.configSchema.len > 0:
+      if model.configSchema.len > 0:
         error("clispec: configSchema is given twice", stmt)
-      result.configSchema = cliStrLit(stmt[1], "configSchema")
-      if result.configSchema.len == 0:
+      model.configSchema = cliStrLit(stmt[1], "configSchema")
+      if model.configSchema.len == 0:
         error("clispec: configSchema must not be empty", stmt[1])
     of "flagmatching":
       if stmt.kind notin {nnkCommand, nnkCall} or stmt.len != 2:
@@ -1829,7 +1922,7 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
       for m in CliFlagMatching:
         if nimIdentNormalize(cliIdentText(stmt[1])) ==
             nimIdentNormalize($m):
-          result.flagMatching = m
+          model.flagMatching = m
           found = true
       if not found:
         error("clispec: flagMatching must be exact, ignoreCase or " &
@@ -1845,7 +1938,7 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
       for m in CliFlagMatching:
         if nimIdentNormalize(cliIdentText(stmt[1])) ==
             nimIdentNormalize($m):
-          result.commandMatching = m
+          model.commandMatching = m
           found = true
       if not found:
         error("clispec: commandMatching must be exact, ignoreCase or " &
@@ -1864,9 +1957,9 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
           if stmt[k].kind in {nnkIdent, nnkSym, nnkAccQuoted} and
               nimIdentNormalize(cliIdentText(stmt[k])) ==
                 nimIdentNormalize($r):
-            if r in result.parseRules:
+            if r in model.parseRules:
               error("clispec: parsing names " & $r & " twice", stmt[k])
-            result.parseRules.incl(r)
+            model.parseRules.incl(r)
             if r == cprExactOneLetterFlags:
               exactLettersNode = stmt[k]
             found = true
@@ -1879,31 +1972,34 @@ proc parseCliModel*[C, P](body: NimNode; rootExt: C): CliModel[C, P] =
             "exactOneLetterFlags)", stmt[k])
     else:
       discard
-  if exactLettersNode != nil and result.flagMatching == cfmExact:
+  if exactLettersNode != nil and model.flagMatching == cfmExact:
     error("clispec: parsing exactOneLetterFlags keeps one-letter flag " &
       "spellings exact under flagMatching ignoreCase or ignoreStyle, and " &
       "changes nothing under flagMatching exact; declare one of those " &
       "modes or drop the rule", exactLettersNode)
-  result.root = parseCliScope[C, P](body, @[], true, root, body,
-    result.commands, result.groups, cliNamingOf(result))
-  checkRetired(result)
+  var rootLocations: CliCommandLocations
+  model.root = parseCliScope[C, P](body, @[], true, root,
+    CliCommandLocations(), body, model.commands, model.groups,
+    cliNamingOf(model), result.locations, rootLocations)
+  result.locations.root = rootLocations
+  checkRetired(model, result.locations)
   # A heading lists parameters or subcommands, never both: on one page the
   # two kinds of rows would come under two headings of the same title.
-  for group in result.groups:
+  for groupIndex, group in model.groups:
     var commandAt, paramAt = ""
-    for cmd in result.commands:
+    for cmd in model.commands:
       if commandAt.len == 0 and cmd.group == group.name:
         commandAt = cliCommandLabel(cmd.path)
       for p in cmd.params:
         if paramAt.len == 0 and p.group == group.name:
           paramAt = "parameter '" & p.name & "'"
-    for p in result.root.params:
+    for p in model.root.params:
       if paramAt.len == 0 and p.group == group.name:
         paramAt = "parameter '" & p.name & "'"
     if commandAt.len > 0 and paramAt.len > 0:
       error("clispec: group '" & group.name & "' lists both " & commandAt &
         " and " & paramAt & "; a group lists subcommands or parameters, " &
-        "not both", nodeAt(group.sourceFile, group.sourceLine))
+        "not both", nodeAt(cliAt(result.locations.groups, groupIndex)))
 
 # ---------------------------------------------------------------------------
 # Type checks of the expressions a model holds.
@@ -1960,7 +2056,21 @@ proc cliFailWhenNot*(cond: NimNode; message: string; file: string; line,
       setDeepLineInfo(child)
   setDeepLineInfo(result)
 
-proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
+proc cliFailWhenNot*(cond: NimNode; message: string;
+                     at: CliSourceLocation): NimNode =
+  ## ``cliFailWhenNot`` reported where ``at`` says. With no location known
+  ## the error has no position of its own (see "Source locations" in
+  ## ``clispec/model``).
+  if at.isSet:
+    cliFailWhenNot(cond, message, at.file, at.line, at.column)
+  else:
+    let pragma = nnkPragma.newTree(nnkExprColonExpr.newTree(ident("error"),
+      newLit(message)))
+    nnkWhenStmt.newTree(nnkElifBranch.newTree(
+      nnkPrefix.newTree(ident("not"), nnkPar.newTree(cond)),
+      newStmtList(pragma)))
+
+proc cliModelTypeChecks*[C, P](located: CliLocatedModel[C, P]): NimNode =
   ## Code that checks, where it is placed, what the parser cannot check from
   ## spellings alone: that ``default``, ``optionalValue``, ``values`` entries
   ## and ``implies`` values are values of their parameter's type, that a
@@ -1973,13 +2083,20 @@ proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
   ## call ``cliAccepts`` and ``cliElementAccepts``, so that scope must see
   ## ``clispec/dsl``.
   result = newStmtList()
-  var seen: seq[string] = @[]
+  let model = located.model
+  var seen: seq[tuple[at: CliSourceLocation; name: string]] = @[]
   var scopes = @[model.root]
   scopes.add(model.commands)
-  for cmd in scopes:
-    for param in cmd.params:
-      let id = param.sourceFile & ":" & $param.sourceLine & ":" & param.name
-      if id in seen:
+  var scopeLocations = @[located.locations.root]
+  scopeLocations.add(located.locations.commands)
+  for k, cmd in scopes:
+    let cmdLocations = (if k < scopeLocations.len: scopeLocations[k]
+                        else: CliCommandLocations())
+    for j, param in cmd.params:
+      # A parameter every scope that inherits it lists is checked once.
+      let locs = cliParamLocations(cmdLocations, j)
+      let id = (locs.at, param.name)
+      if locs.at.isSet and id in seen:
         continue
       seen.add(id)
       let name = param.name
@@ -1989,20 +2106,18 @@ proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
         let d = param.default
         result.add(cliFailWhenNot(newCall(bindSym("cliAccepts"), typeNode,
           parseExpr(d.code)), prefix & "default `" & d.code &
-          "` is not a valid " & param.nimType, d.sourceFile, d.sourceLine,
-          d.sourceColumn))
+          "` is not a valid " & param.nimType, locs.default))
       if param.optionalValue.isSet:
         let o = param.optionalValue
         result.add(cliFailWhenNot(newCall(bindSym("cliAccepts"), typeNode,
           parseExpr(o.code)), prefix & "optionalValue `" & o.code &
-          "` is not a valid " & param.nimType, o.sourceFile, o.sourceLine,
-          o.sourceColumn))
-      for v in param.values:
+          "` is not a valid " & param.nimType, locs.optionalValue))
+      for vj, v in param.values:
         result.add(cliFailWhenNot(newCall(bindSym("cliElementAccepts"),
           typeNode, parseExpr(v.code)), prefix & "values entry `" & v.code &
-          "` is not a valid value of " & param.nimType, v.sourceFile,
-          v.sourceLine, v.sourceColumn))
-      for implication in param.implies:
+          "` is not a valid value of " & param.nimType,
+          cliAt(locs.values, vj)))
+      for ij, implication in param.implies:
         var targetType = ""
         for other in cmd.params:
           if nimIdentNormalize(other.name) ==
@@ -2015,78 +2130,80 @@ proc cliModelTypeChecks*[C, P](model: CliModel[C, P]): NimNode =
           parseExpr(targetType), parseExpr(v.code)), prefix & "implies " &
           implication.param & " = `" & v.code & "`, which is not a valid " &
           targetType & " (the type of '" & implication.param & "')",
-          v.sourceFile, v.sourceLine, v.sourceColumn))
-      for (what, e) in [("help", param.helpExpr),
-                        ("longHelp", param.longHelpExpr)]:
+          cliAt(locs.implies, ij)))
+      for (what, e, at) in [("help", param.helpExpr, locs.helpExpr),
+                            ("longHelp", param.longHelpExpr,
+                             locs.longHelpExpr)]:
         if e.isSet:
           result.add(cliFailWhenNot(newCall(bindSym("cliIsConstString"),
             parseExpr(e.code)), prefix & what & " = `" & e.code & "` is " &
-            "not a constant string expression", e.sourceFile, e.sourceLine,
-            e.sourceColumn))
+            "not a constant string expression", at))
       if param.refuseFalse:
         result.add(cliFailWhenNot(infix(typeNode, "is", ident("bool")),
           prefix & "refuseFalse applies to a switch (a bool), not " &
-          param.nimType, param.sourceFile, param.sourceLine, 0))
+          param.nimType, locs.at))
       if param.counted:
         result.add(cliFailWhenNot(infix(typeNode, "is", ident("SomeInteger")),
           prefix & "counted requires an integer type, not " & param.nimType,
-          param.sourceFile, param.sourceLine, 0))
+          locs.at))
       if param.rest:
         result.add(cliFailWhenNot(infix(typeNode, "is", ident("seq")),
           prefix & "rest takes the rest of the command line, so its type " &
-          "is a list (a seq), not " & param.nimType, param.sourceFile,
-          param.sourceLine, 0))
+          "is a list (a seq), not " & param.nimType, locs.at))
       if param.afterSeparator:
         result.add(cliFailWhenNot(infix(typeNode, "is", ident("seq")),
           prefix & "afterSeparator takes the words after --, so its type " &
-          "is a list (a seq), not " & param.nimType, param.sourceFile,
-          param.sourceLine, 0))
+          "is a list (a seq), not " & param.nimType, locs.at))
       if param.negatable:
         result.add(cliFailWhenNot(infix(typeNode, "is", ident("bool")),
           prefix & "negatable requires bool, not " & param.nimType,
-          param.sourceFile, param.sourceLine, 0))
+          locs.at))
       if param.merge == cmrAppend and not param.counted:
         result.add(cliFailWhenNot(infix(typeNode, "is", ident("seq")),
           prefix & "merge = append concatenates lists; " & param.nimType &
-          " is not a seq", param.sourceFile, param.sourceLine, 0))
+          " is not a seq", locs.at))
       if param.complete.isSet:
         let c = param.complete
         result.add(cliFailWhenNot(newCall(bindSym("cliCompleterFits"),
           parseExpr(c.code)), prefix & "complete = `" & c.code & "` is " &
           "not a completer; it must be a CliCompleter: proc (ctx: " &
-          "CliCompletionContext): seq[CliCompletion]", c.sourceFile,
-          c.sourceLine, c.sourceColumn))
+          "CliCompletionContext): seq[CliCompletion]", locs.complete))
 
-proc cliModelValue*[C, P](model: CliModel[C, P]): NimNode =
-  ## An expression whose value is ``model`` with every ``help`` and
+proc cliModelValue*[C, P](located: CliLocatedModel[C, P]): NimNode =
+  ## An expression whose value is ``located.model`` with every ``help`` and
   ## ``longHelp`` written as a constant expression evaluated: ``newLit``
   ## of the model, then an assignment of each ``helpExpr`` /
-  ## ``longHelpExpr`` to its text. Place it where the description's
-  ## constants are visible (a ``const`` at the description's scope). With no
-  ## such expression it is just ``newLit(model)``. The value is the
-  ## model's run-time copy (``cliRunTimeCopy``): each ``sourceFile`` is the
-  ## file's name, not the build host's path to it; the positions the
-  ## evaluated expressions are given for diagnostics are the full ones.
+  ## ``longHelpExpr`` to its text, positioned where the expression was
+  ## written for the compiler's diagnostics. Place it where the
+  ## description's constants are visible (a ``const`` at the description's
+  ## scope). With no such expression it is just ``newLit(located.model)``.
+  ## Only the model is emitted: the value records no source location (see
+  ## "Source locations" in ``clispec/model``).
+  let model = located.model
   var assigns: seq[NimNode] = @[]
   let m = genSym(nskVar, "model")
-  proc fill(scope: NimNode; params: seq[CliParam[P]]) =
+  proc fill(scope: NimNode; params: seq[CliParam[P]];
+            locations: CliCommandLocations) =
     for j, p in params:
       let slot = nnkBracketExpr.newTree(newDotExpr(scope, ident("params")),
         newLit(j))
-      for (field, e) in [("help", p.helpExpr), ("longHelp", p.longHelpExpr)]:
+      let locs = cliParamLocations(locations, j)
+      for (field, e, at) in [("help", p.helpExpr, locs.helpExpr),
+                             ("longHelp", p.longHelpExpr, locs.longHelpExpr)]:
         if e.isSet:
           let value = parseExpr(e.code)
-          value.setLineInfo(e.sourceFile, e.sourceLine, e.sourceColumn)
+          if at.isSet:
+            value.setLineInfo(at.file, at.line, at.column)
           assigns.add(newAssignment(newDotExpr(slot.copyNimTree,
             ident(field)), value))
-  fill(newDotExpr(m, ident("root")), model.root.params)
+  fill(newDotExpr(m, ident("root")), model.root.params,
+    located.locations.root)
   for k, cmd in model.commands:
     fill(nnkBracketExpr.newTree(newDotExpr(m, ident("commands")), newLit(k)),
-      cmd.params)
-  let copy = cliRunTimeCopy(model)
+      cmd.params, cliCommandLocations(located.locations, k))
   if assigns.len == 0:
-    return newLit(copy)
-  var body = newStmtList(newVarStmt(m, newLit(copy)))
+    return newLit(model)
+  var body = newStmtList(newVarStmt(m, newLit(model)))
   for a in assigns:
     body.add(a)
   body.add(m)
@@ -2100,16 +2217,18 @@ macro plainCliModel*(body: untyped): untyped =
   ##   const model = plainCliModel:
   ##     subcmd "run":
   ##       pos script is string
-  let model = parseCliModel[NoCliExtension, NoCliExtension](body,
+  ##
+  ## The constant is a ``PlainCliModel``, which records no source location.
+  let located = parseCliModel[NoCliExtension, NoCliExtension](body,
     NoCliExtension())
-  let checks = cliModelTypeChecks(model)
+  let checks = cliModelTypeChecks(located)
   if checks.len == 0:
-    result = cliModelValue(model)
+    result = cliModelValue(located)
   else:
     result = nnkStmtListExpr.newTree()
     for check in checks:
       result.add(check)
-    result.add(cliModelValue(model))
+    result.add(cliModelValue(located))
 
 # ---------------------------------------------------------------------------
 # Parameter groups.

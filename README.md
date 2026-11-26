@@ -306,13 +306,19 @@ assert model.root.params[2].sourceKeys[0].spelling == "base-url"
 model turns the text back into an AST with `parseExpr`, in the scope that holds
 the description, so the identifiers resolve as the author wrote them.
 
-**Where a declaration was written.** Parameters, commands, groups, retired
-spellings and expressions record the file and line they were written on. A
-macro reading the model at compile time sees the file as the compiler read it,
-an absolute path, and every compile error about the description names it. The
-copy a program carries at run time (`Tool.cliGrammar`, `Tool.cliModel`, a
-`plainCliModel` constant) records the file's name only (`cliRunTimeCopy`), so
-a program's binary names no directory of the machine that built it.
+**Where a declaration was written.** The file, line and column each
+parameter, command, group, retired spelling and expression was written on are
+for compile-time diagnostics only, and none of the model's or the grammar's
+types has a field for them. `parseCliModel` returns a `CliLocatedModel`: the
+model, and beside it a `CliModelLocations` that mirrors it entry for entry and
+records each location as the compiler read it (an absolute path). The
+generators that report errors about a description (`cliModelTypeChecks`,
+`cliGrammarOf`, `cliProgramCode`, `cliConfigTableCode`) take the located model
+and place every error at the file and line it is about, and they emit only the
+model. So what a program carries at run time (`Tool.cliGrammar`,
+`Tool.cliModel`, a `plainCliModel` constant) holds no file name, path, line or
+column, and nothing a program prints (help, JSON help, errors, completion
+scripts) names the file its description was written in.
 
 **Invalid declarations are compile errors** naming the parameter (or the
 command): a name declared twice in one command (Nim's style-insensitive
@@ -363,8 +369,8 @@ that is not the last positional of its command (which also rules out two
 in one command) or is declared under `parsing loneDashesAreFlags`.
 
 The parser rejects what it can tell from spellings. Whether an expression is a
-value of a type needs the compiler, so `cliModelTypeChecks(model)` generates
-those checks as code; `plainCliModel` places them in its output, and a
+value of a type needs the compiler, so `cliModelTypeChecks(located)` (over the
+located model `parseCliModel` returns) generates those checks as code; `plainCliModel` places them in its output, and a
 consumer's own macro places them in its output the same way.
 
 ### Parameter groups
@@ -672,7 +678,8 @@ which the generated `load` fills in (a library that calls the parser itself
 passes `cliWithValueCheck(options, <the generated check>)`, as confutils
 does). A consumer
 whose model carries an extension generates the same code from its own macro
-with `cliProgramCode(model, typeName, program, exported, colorConfig)`
+with `cliProgramCode(located, typeName, program, exported, colorConfig)`
+(`located` is what `parseCliModel` returns)
 (`cliProgramArgs` reads a `cliProgram`-style call, colour parameters
 included, into `CliProgramArgs`).
 
@@ -2287,7 +2294,7 @@ proc parseCliCommandExtension(cmd: var CliCommand[DocCommand, DocParam];
     return true
 
 macro docModel(body: untyped): untyped =
-  newLit(parseCliModel[DocCommand, DocParam](body, DocCommand()))
+  newLit(parseCliModel[DocCommand, DocParam](body, DocCommand()).model)
 
 const model = docModel:
   summary "builds things"

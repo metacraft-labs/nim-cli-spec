@@ -15,7 +15,6 @@
 ## here rather than going unnoticed.
 
 import std/[macros, tables, unittest]
-from std/os import extractFilename
 
 import clispec
 
@@ -36,10 +35,6 @@ proc strictest(values: openArray[int]): int {.used.} =
   0
 
 const defaultJobs = 4
-
-const thisFile = currentSourcePath().extractFilename
-  ## The model below is a constant, the run-time copy, which records a
-  ## declaration's file by its name (``cliRunTimeCopy``).
 
 const model = plainCliModel:
   help "A fixture program"
@@ -84,13 +79,11 @@ proc paramNamed(cmd: PlainCliCommand; name: string): PlainCliParam =
   raise newException(KeyError, "no parameter " & name & " in " & $cmd.path)
 
 proc checkExpr(e: CliExpr; code: string; param: PlainCliParam) =
-  ## An expression is kept as its source text, attributed to the line it was
-  ## written on (the declaration's line or a continuation line).
+  ## An expression is kept as its source text. Where it was written is not
+  ## part of the model (test_dsl_model checks the positions the located
+  ## model records beside it).
+  discard param
   check e.code == code
-  check e.sourceFile == thisFile
-  check e.sourceLine >= param.sourceLine
-  check e.sourceLine <= param.sourceLine + 2
-  check e.sourceColumn > 0
 
 proc checkUnset(e: CliExpr) =
   check not e.isSet
@@ -139,7 +132,6 @@ suite "test_cs_m2_model_round_trip":
     check model.groups.len == 1
     check model.groups[0].name == "Output"
     check model.groups[0].help == "Where results go"
-    check model.groups[0].sourceFile == thisFile
 
   test "config: help, short, env, sources without file, internal":
     let p = root.paramNamed("config")
@@ -325,7 +317,7 @@ macro groupedModel(body: untyped): untyped =
       for expanded in expandCliParamGroups(stmt, groups, stack):
         rest.add(expanded)
   newLit(parseCliModel[NoCliExtension, NoCliExtension](rest,
-    NoCliExtension()))
+    NoCliExtension()).model)
 
 suite "parameter groups with help":
 

@@ -498,10 +498,12 @@ func cliConfigTypeFor*[T](t: typedesc[T]): CliConfigType =
   ## ``cliConfigTypeOf`` (``clispec/values``), for generated code.
   cliConfigTypeOf(T)
 
-proc cliConfigTableCode*[C, P](model: CliModel[C, P]; program: string;
+proc cliConfigTableCode*[C, P](located: CliLocatedModel[C, P];
+                               program: string;
                                source = CliSourceFile): NimNode =
   ## The code of an expression whose value is the ``CliConfigTable`` of
-  ## ``model`` in ``source``, for a macro that builds its own model (with an
+  ## ``located.model`` (the compile-time model ``parseCliModel`` returns) in
+  ## ``source``, for a macro that builds its own model (with an
   ## extension) and wants the table as a constant: ``cliConfigTableOf``
   ## over the model's grammar, with the facts only the compiler knows filled
   ## in for every parameter that has a key: its value type
@@ -516,7 +518,7 @@ proc cliConfigTableCode*[C, P](model: CliModel[C, P]; program: string;
   ## commands, help texts or completers).
   var problems: seq[CliGrammarProblem] = @[]
   var decls: seq[CliParam[P]] = @[]
-  var g = cliGrammarOf(model, program, problems, decls)
+  var g = cliGrammarOf(located, program, problems, decls)
   g.commands = @[]
   g.groups = @[]
   for p in g.params.mitems:
@@ -525,7 +527,8 @@ proc cliConfigTableCode*[C, P](model: CliModel[C, P]; program: string;
     p.completer = ""
     p.alsoSets = @[]
   let gv = genSym(nskVar, "configGrammar")
-  var body = newStmtList(newVarStmt(gv, newLit(cliRunTimeCopy(g))))
+  # The grammar records no source location, so the constant names none.
+  var body = newStmtList(newVarStmt(gv, newLit(g)))
   for id, p in g.params:
     if not holdsKey(g, p):
       continue

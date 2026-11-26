@@ -6,7 +6,6 @@
 ## compiler's AST and line information, and the test feeds it both.
 
 import std/[macros, strutils, tables, unittest]
-from std/os import extractFilename
 
 import clispec
 
@@ -27,17 +26,15 @@ proc paramNames(cmd: PlainCliCommand): seq[string] =
     result.add(param.name)
 
 const thisFile = currentSourcePath()
-const thisFileName = thisFile.extractFilename
-  ## What a ``plainCliModel`` constant records: it is the model's run-time
-  ## copy, which names a declaration's file without its directories
-  ## (``cliRunTimeCopy``).
 
-macro compileTimeSourceFile(body: untyped): untyped =
-  ## The file the first parameter of a ``cli:`` body records in the model a
-  ## macro holds while the description compiles.
-  let model = parseCliModel[NoCliExtension, NoCliExtension](body,
-    NoCliExtension())
-  newLit(model.root.params[0].sourceFile)
+macro compileTimeModel(body: untyped): untyped =
+  ## The compile-time model of a ``cli:`` body (``parseCliModel``'s
+  ## ``CliLocatedModel``), as a constant: beside the model, it keeps where
+  ## each part was written, which compile-time diagnostics position
+  ## themselves with. (No program carries one; ``plainCliModel`` emits only
+  ## the model.)
+  newLit(parseCliModel[NoCliExtension, NoCliExtension](body,
+    NoCliExtension()))
 
 suite "parameter declarations":
 
@@ -120,19 +117,43 @@ suite "parameter declarations":
       "defines", "config", "level", "late", "early", "oldStyle", "verbose",
       "quiet"]
 
-  test "every declaration records its own source line":
-    check cmd.paramNamed("source").sourceFile == thisFileName
-    check cmd.paramNamed("output").sourceLine >
-      cmd.paramNamed("source").sourceLine
-    check cmd.paramNamed("verbose").sourceLine >
-      cmd.paramNamed("output").sourceLine
-
-  test "the model a macro holds records the file's full path":
-    # Compile-time diagnostics position themselves with it.
-    const file = compileTimeSourceFile:
-      flag only is int
-    check file == thisFile
-    check thisFileName != thisFile
+  test "every declaration records where it was written, at compile time":
+    const located = compileTimeModel:
+      pos source is string
+      flag output is string,
+        default = "out" & ".txt", values = ["a.txt", "out.txt"]
+      boolFlag verbose is bool, implies = [output = "v.txt"]
+      group "Output", help = "Where results go":
+        boolFlag quiet is bool
+      retired "--old", replacement = "--output"
+    let params = located.model.root.params
+    let at = located.locations.root.params
+    # The mirror has one entry per parameter, value and implication.
+    check at.len == params.len
+    check params[1].name == "output"
+    check at[1].values.len == params[1].values.len
+    check at[2].implies.len == params[2].implies.len
+    check at[0].at.file == thisFile
+    check at[1].at.line == at[0].at.line + 1
+    check at[2].at.line == at[1].at.line + 2
+    # A declaration is located by its line only.
+    check at[0].at.column == 0
+    # An expression is attributed to the line it was written on (here a
+    # continuation line) and its column.
+    check params[1].default.code == "\"out\" & \".txt\""
+    let d = at[1].default
+    check d.file == thisFile
+    check d.line == at[1].at.line + 1
+    check d.column > 0
+    check at[1].values[0].line == d.line
+    check at[1].values[1].column > at[1].values[0].column
+    check at[2].implies[0].line == at[2].at.line
+    check at[2].implies[0].column > 0
+    check located.locations.groups.len == located.model.groups.len
+    check located.locations.groups[0].file == thisFile
+    check located.locations.groups[0].line == at[2].at.line + 1
+    check located.locations.root.retired[0].line ==
+      located.locations.groups[0].line + 2
 
 suite "flag-only and positional-only arguments":
 
@@ -220,10 +241,16 @@ suite "commands and scopes":
     check clean.paramNamed("config").placement == capBeforeSubcommand
     check clean.paramNamed("all").placement == capAfterSubcommand
 
-  test "a command records the line of its body":
-    let clean = model.commandAt(["clean"])
-    check clean.sourceFile == thisFileName
-    check clean.sourceLine == clean.paramNamed("all").sourceLine
+  test "a command records the line of its body, at compile time":
+    const located = compileTimeModel:
+      subcmd "clean":
+        boolFlag all is bool
+    let clean = located.model.commands[^1]
+    let cleanAt = located.locations.commands[^1]
+    check located.locations.commands.len == located.model.commands.len
+    check clean.path == @["clean"]
+    check cleanAt.at.file == thisFile
+    check cleanAt.at.line == cleanAt.params[0].at.line
 
 suite "names that are Nim keywords":
 

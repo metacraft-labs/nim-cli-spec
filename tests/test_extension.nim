@@ -73,7 +73,7 @@ proc parseCliCommandExtension(cmd: var DocCli; stmt: NimNode;
 
 macro docModel(body: untyped): untyped =
   newLit(parseCliModel[DocCommand, DocParam](body,
-    DocCommand(summary: "(no summary)")))
+    DocCommand(summary: "(no summary)")).model)
 
 proc paramNamed(cmd: DocCli; name: string): CliParam[DocParam] =
   for param in cmd.params:
