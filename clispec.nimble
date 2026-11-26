@@ -44,7 +44,8 @@ task test, "Run the test suite":
             "test_cs_m6_splice_unbound",
             "test_cs_m7_completion_install_locations",
             "test_exported_load_from_another_module",
-            "test_run_time_copy_names_no_build_path",
+            "test_program_carries_no_source_location",
+            "test_run_time_types_have_no_location_fields",
             "test_suite_lists_agree"]:
     exec "nim c -r --hints:off tests/" & t & ".nim"
 
